@@ -1,21 +1,20 @@
 ---
-name: daily-run-skill
+name: daily_run_skill
 description: >
   股票大师每日复盘与热门标的分析技能。
-  结合 agent-reach 抓取全网最新科技/存储/玻璃基板等行业资讯，
-  并调用 daily_stock_analysis (DSA) 自动化拉取 K 线数据、计算 MA 均线/量比/20日位置等技术指标，
-  最后结合大模型生成深度的个股 AI 决策报告与操作策略。
+  使用 agent-reach 和网页抓取能力（Jina Reader、V2EX API 等）分析市场热门方向并定位对应股票代码，
+  然后调用 daily_stock_analysis (DSA) 自动化拉取 K 线并执行技术面与 AI 决策分析。
 triggers:
-  - analyze: 每日复盘/股票分析/大盘复盘/热门方向/分析股票/分析市场/复盘/分析
+  - analyze: 股票大师/每日复盘/股票分析/大盘复盘/热门方向/分析股票/分析市场/复盘/分析
   - stock: 股票/个股/板块/技术面/K线/均线
 metadata:
   openclaw:
     homepage: https://github.com/Panniantong/Agent-Reach
 ---
 
-# 股票大师每日复盘与热门标的分析技能 (daily-run-skill)
+# 股票大师每日复盘与热门标的分析技能 (daily_run_skill)
 
-本技能定义了如何结合 **agent-reach** 抓取全网最新科技/存储/玻璃基板等行业资讯，并调用 **daily_stock_analysis (DSA)** 自动化拉取 K 线数据、计算 MA 均线/量比/20日位置等技术指标，最后结合大模型生成深度的个股 AI 决策报告与操作策略。
+本技能定义了如何作为**股票大师**，结合 **agent-reach** 的网页抓取能力定位市场热门方向及股票代码，并调用 **daily_stock_analysis (DSA)** 执行自动化 K 线拉取、技术面计算与 AI 决策分析的完整工作流。
 
 ## 🚀 自动化工作流
 
