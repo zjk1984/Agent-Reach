@@ -303,6 +303,25 @@ def run_scheduled(
                             block[key] = wl_result.portfolio[key]
                     snap["portfolio"] = block
 
+            from agent_reach.daily_run.close_code_review import run_close_code_review
+
+            pf_for_review = load_portfolio()
+            code_review_result = run_close_code_review(
+                portfolio=pf_for_review,
+                snapshot=snap,
+                settings=settings,
+                scans=state.scans,
+                trades=state.trades,
+            )
+            if code_review_result.portfolio_changed and code_review_result.portfolio:
+                save_portfolio(code_review_result.portfolio)
+                snap["watchlist"] = code_review_result.portfolio.get("watchlist", [])
+                block = snap.get("portfolio") or {}
+                for key in ("holdings", "cash", "cash_ratio", "total", "watchlist"):
+                    if key in code_review_result.portfolio:
+                        block[key] = code_review_result.portfolio[key]
+                snap["portfolio"] = block
+
             run_result = run_close(
                 snap,
                 baseline,
@@ -312,7 +331,9 @@ def run_scheduled(
                 intraday_scans=state.scans,
                 intraday_trades=state.trades,
                 watchlist_adjust=wl_result.to_dict() if wl_result else None,
+                code_review=code_review_result.to_dict(),
             )
+            run_result["code_review"] = code_review_result.to_dict()
             if wl_result is not None:
                 run_result["watchlist_adjust"] = wl_result.to_dict()
 

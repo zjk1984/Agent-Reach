@@ -170,6 +170,21 @@
     "enabled": true
   },
 
+  "close_code_review": {
+    "enabled": true,
+    "auto_fix_portfolio": true,
+    "run_smoke_tests": false,
+    "walk_modules": [
+      "portfolio_manager.py",
+      "watchlist_manager.py",
+      "intraday.py",
+      "schedule.py",
+      "workflows.py",
+      "close_improvements.py",
+      "close_code_review.py"
+    ]
+  },
+
   "trade_calendar": {
     "enabled": true,
     "skip_on_holiday": true

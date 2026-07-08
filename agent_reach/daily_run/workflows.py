@@ -9,6 +9,7 @@ from typing import Any, Optional
 
 from agent_reach.daily_run.pipeline import evaluate_snapshot, render_markdown
 from agent_reach.daily_run.settings import load_settings
+from agent_reach.daily_run.close_code_review import render_code_review_markdown
 from agent_reach.daily_run.close_improvements import (
     generate_close_improvements,
     render_improvements_markdown,
@@ -101,6 +102,7 @@ def run_close(
     intraday_scans: Optional[list[dict[str, Any]]] = None,
     intraday_trades: Optional[list[dict[str, Any]]] = None,
     watchlist_adjust: Optional[dict[str, Any]] = None,
+    code_review: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Close workflow: Team-First experts → verify baseline vs current → Feishu push."""
     cfg = settings or load_settings()
@@ -157,10 +159,27 @@ def run_close(
     )
     imp_md = render_improvements_markdown(improvements, enabled=improvements_enabled)
 
+    code_review_cfg = cfg.get("close_code_review") or {}
+    code_review_enabled = code_review_cfg.get("enabled", True) is not False
+    code_md = ""
+    if code_review is not None:
+        from agent_reach.daily_run.close_code_review import CodeReviewResult, CodeFinding
+
+        findings = [CodeFinding(**f) for f in (code_review.get("findings") or [])]
+        review_obj = CodeReviewResult(
+            findings=findings,
+            fixes_applied=list(code_review.get("fixes_applied") or []),
+            portfolio_changed=bool(code_review.get("portfolio_changed")),
+            smoke_tests=code_review.get("smoke_tests"),
+        )
+        code_md = render_code_review_markdown(review_obj, enabled=code_review_enabled)
+
     verify_md = render_verify_markdown(verify)
     body_parts = extra_parts + [verify_md]
     if imp_md:
         body_parts.append(imp_md)
+    if code_md:
+        body_parts.append(code_md)
     md = "\n\n---\n\n".join(body_parts) if body_parts else verify_md
 
     feishu_result = None
@@ -180,6 +199,7 @@ def run_close(
         "research": research_results,
         "experience_path": str(exp_path),
         "improvements": improvements.to_dict(),
+        "code_review": code_review,
         "feishu": feishu_result,
     }
 
