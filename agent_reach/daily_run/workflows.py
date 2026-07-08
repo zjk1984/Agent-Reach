@@ -9,8 +9,9 @@ from typing import Any, Optional
 
 from agent_reach.daily_run.pipeline import evaluate_snapshot, render_markdown
 from agent_reach.daily_run.settings import load_settings
-from agent_reach.daily_run.close_research import render_research_markdown
+from agent_reach.daily_run.close_research import render_research_markdown, run_exa_research
 from agent_reach.daily_run.curve_analysis import analyze_intraday_curve, render_curve_markdown
+from agent_reach.daily_run.experience import append_experience_entry, render_experience_markdown
 from agent_reach.daily_run.team import render_team_markdown, run_team_first
 from agent_reach.daily_run.verify import render_verify_markdown, verify_snapshots
 
@@ -106,21 +107,33 @@ def run_close(
         team_md = render_team_markdown(enriched)
 
     verify = verify_snapshots(baseline, enriched, cfg)
+    verify_dict = verify.to_dict()
 
     extra_parts: list[str] = []
     if team_md:
         extra_parts.append(team_md)
 
+    curve = None
     mss_actual = enriched.get("mss_intraday_actual") or []
     if mss_actual:
         pred = baseline.get("mss_range")
         pred_tuple = (float(pred[0]), float(pred[1])) if pred and len(pred) == 2 else None
-        curve = analyze_intraday_curve([float(x) for x in mss_actual if x is not None], predicted_range=pred_tuple)
+        curve = analyze_intraday_curve(
+            [float(x) for x in mss_actual if x is not None], predicted_range=pred_tuple
+        )
         extra_parts.append(render_curve_markdown(curve))
 
-    research_md = render_research_markdown(enriched)
+    research_results = run_exa_research(enriched, cfg)
+    research_md = render_research_markdown(enriched, research_results=research_results, settings=cfg)
     if research_md:
         extra_parts.append(research_md)
+
+    exp_path = append_experience_entry(
+        enriched, verify_dict, curve=curve, research=research_results, settings=cfg
+    )
+    exp_md = render_experience_markdown(limit=3)
+    if exp_md:
+        extra_parts.append(exp_md)
 
     md = "\n\n---\n\n".join(extra_parts + [render_verify_markdown(verify)]) if extra_parts else render_verify_markdown(verify)
 
@@ -134,10 +147,12 @@ def run_close(
         feishu_result = _push_markdown(card_title, md, cfg, cfg_obj, template=tpl)
 
     return {
-        "verify": verify.to_dict(),
+        "verify": verify_dict,
         "snapshot": enriched,
         "markdown": md,
         "team_markdown": team_md,
+        "research": research_results,
+        "experience_path": str(exp_path),
         "feishu": feishu_result,
     }
 

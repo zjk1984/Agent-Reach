@@ -329,7 +329,25 @@ agent-reach daily-run schedule run close
 | 09:30–15:00 **10 次**扫描 | 盘中 S1–S10 + 条件调仓 T_n + 飞书 |
 | 15:30 | 收盘复盘（Team + 曲线 + Exa 模板 + 验证） |
 
-定时任务默认 **doctor 预检**、**macro_collector 实时因子**、**MSS 蒙特卡洛预测**。
+定时任务默认 **doctor 预检**、**macro_collector 实时因子**、**MSS 蒙特卡洛预测**、**A 股交易日历跳过休市**。
+
+### Phase 5 — Exa / Channel / 经验沉淀
+
+```bash
+# 收盘自动 Exa 调研（需 mcporter + Exa MCP）
+agent-reach daily-run close -i eod_snapshot.json
+
+# 经验库
+cat ~/.agent-reach/daily_run/experience/experience.jsonl
+cat ~/.agent-reach/daily_run/experience/rules_summary.json
+
+# 休市配置（可选）
+cp config/daily_run_holidays.example.json ~/.agent-reach/daily_run/holidays.json
+```
+
+- **Exa 自动调用**：收盘 `run_exa_research()` → 飞书卡片展示摘要与链接
+- **Channel 专家**：macro/sentiment 默认雪球 + Exa 增强评分
+- **经验 writeback**：收盘结论写入 `experience.jsonl` + `rules_summary.json`
 
 ---
 

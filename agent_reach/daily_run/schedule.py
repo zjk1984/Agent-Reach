@@ -152,6 +152,15 @@ def run_scheduled(
     cfg_obj = config or Config()
     settings = load_settings()
     t0 = time.perf_counter()
+
+    from agent_reach.daily_run.trade_calendar import is_trading_day
+
+    trading_ok, trading_reason = is_trading_day(settings=settings)
+    if not trading_ok:
+        result = {"job": job, "skipped": True, "reason": trading_reason}
+        save_run_manifest(job, result, duration_ms=0)
+        return result
+
     doctor = _doctor_channels(cfg_obj)
 
     try:

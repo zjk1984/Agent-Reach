@@ -108,7 +108,12 @@
       "sentiment",
       "identifier"
     ],
-    "parallel": true
+    "parallel": true,
+    "channel_enrich": true,
+    "exa_research_on_close": true,
+    "max_exa_queries": 3,
+    "exa_timeout": 45,
+    "max_exa_queries_per_expert": 1
   },
 
   "team": {
@@ -145,5 +150,16 @@
     "trade_min_scans": 3,
     "trade_every_n_scans": 2,
     "morning_doctor": true
+  },
+
+  "trade_calendar": {
+    "enabled": true,
+    "skip_on_holiday": true
+  },
+
+  "experience": {
+    "enabled": true,
+    "max_rules": 50,
+    "max_entries": 200
   }
 }
