@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from agent_reach.daily_run.snapshot_builder import _normalize_code
+from agent_reach.daily_run.symbols import build_enriched_symbols, copy_portfolio
 
 
 @dataclass
@@ -166,8 +167,8 @@ def apply_auto_adjust(
     if action == "buy" and (blocked or friction_blocked):
         return ApplyResult(applied=False, portfolio=portfolio, message="买入信号被风控或摩擦成本阻断")
 
-    pf = _copy_portfolio(portfolio)
-    enriched = _enriched_symbols(snapshot)
+    pf = copy_portfolio(portfolio)
+    enriched = build_enriched_symbols(snapshot)
 
     if action == "sell":
         return _apply_sell(pf, enriched, settings, decision, allow_watchlist_changes=allow_watchlist_changes)
@@ -361,18 +362,7 @@ def _recalc_totals(pf: dict[str, Any], enriched: dict[str, dict[str, Any]]) -> N
 
 
 def _enriched_symbols(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    out: dict[str, dict[str, Any]] = {}
-    for h in (snapshot.get("portfolio") or {}).get("holdings") or []:
-        code = _normalize_code(str(h.get("code", "")))
-        out[code] = dict(h)
-    for w in snapshot.get("watchlist") or []:
-        code = _normalize_code(str(w.get("code", "")))
-        out[code] = {**out.get(code, {}), **dict(w)}
-    code = snapshot.get("code")
-    if code:
-        c = _normalize_code(str(code))
-        out[c] = {**out.get(c, {}), **{k: snapshot[k] for k in ("price", "name", "change_pct", "ma20") if k in snapshot}}
-    return out
+    return build_enriched_symbols(snapshot)
 
 
 def _price_for(row: dict[str, Any], enriched: dict[str, dict[str, Any]]) -> Optional[float]:
@@ -414,13 +404,6 @@ def _round_lot(code: str, shares: int) -> int:
         return (shares // lot) * lot if shares >= lot else 0
     lot = 100
     return (shares // lot) * lot
-
-
-def _copy_portfolio(portfolio: dict[str, Any]) -> dict[str, Any]:
-    pf = dict(portfolio)
-    pf["holdings"] = [dict(h) for h in (portfolio.get("holdings") or [])]
-    pf["watchlist"] = [dict(w) for w in (portfolio.get("watchlist") or [])]
-    return pf
 
 
 def _decision_reason(decision: Any, fallback: str) -> str:

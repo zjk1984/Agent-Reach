@@ -67,6 +67,9 @@ def run_morning(
     audit = evaluation["audit"]
     gate = evaluation["gate"]
     report = evaluation["report"]
+    team_md = render_team_markdown(enriched)
+    report_md = render_markdown(report)
+    full_md = team_md + "\n\n---\n\n" + report_md
 
     feishu_result = None
     if push:
@@ -75,16 +78,15 @@ def run_morning(
         if not gate.passed:
             raise RuntimeError(f"质量门禁未通过：{gate.summary()}")
         card_title = title or _morning_title(report)
-        body = render_team_markdown(enriched) + "\n\n---\n\n" + render_markdown(report)
-        feishu_result = _push_markdown(card_title, body, cfg, config, report_type="premarket")
+        feishu_result = _push_markdown(card_title, full_md, cfg, config, report_type="premarket")
         steps.append("push")
 
     return {
         "steps": steps,
         "snapshot": enriched,
         "evaluation": evaluation,
-        "markdown": render_team_markdown(enriched) + "\n\n---\n\n" + render_markdown(report),
-        "team_markdown": render_team_markdown(enriched),
+        "markdown": full_md,
+        "team_markdown": team_md,
         "feishu": feishu_result,
     }
 
@@ -132,7 +134,30 @@ def run_close(
         )
         extra_parts.append(render_curve_markdown(curve))
 
-    research_results = run_exa_research(enriched, cfg)
+    scans = intraday_scans or enriched.get("intraday_scans") or []
+    close_imp_cfg = cfg.get("close_improvements") or {}
+    improvements_enabled = close_imp_cfg.get("enabled", True) is not False
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _run_improvements():
+        return generate_close_improvements(
+            baseline=baseline,
+            current=enriched,
+            verify=verify_dict,
+            settings=cfg,
+            curve=curve,
+            scans=scans,
+            trades=intraday_trades or [],
+            watchlist_adjust=watchlist_adjust,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        research_fut = pool.submit(run_exa_research, enriched, cfg)
+        imp_fut = pool.submit(_run_improvements)
+        research_results = research_fut.result()
+        improvements = imp_fut.result()
+
     research_md = render_research_markdown(enriched, research_results=research_results, settings=cfg)
     if research_md:
         extra_parts.append(research_md)
@@ -144,19 +169,6 @@ def run_close(
     if exp_md:
         extra_parts.append(exp_md)
 
-    scans = intraday_scans or enriched.get("intraday_scans") or []
-    close_imp_cfg = cfg.get("close_improvements") or {}
-    improvements_enabled = close_imp_cfg.get("enabled", True) is not False
-    improvements = generate_close_improvements(
-        baseline=baseline,
-        current=enriched,
-        verify=verify_dict,
-        settings=cfg,
-        curve=curve,
-        scans=scans,
-        trades=intraday_trades or [],
-        watchlist_adjust=watchlist_adjust,
-    )
     imp_md = render_improvements_markdown(improvements, enabled=improvements_enabled)
 
     code_review_cfg = cfg.get("close_code_review") or {}

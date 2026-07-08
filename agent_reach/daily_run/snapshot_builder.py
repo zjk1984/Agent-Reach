@@ -58,32 +58,40 @@ def _normalize_code(code: str) -> str:
 
 
 def fetch_quotes_map(codes: list[str], config=None) -> dict[str, dict[str, Any]]:
-    """Batch fetch quotes for multiple codes (xueqiu per-symbol + AKShare batch fallback)."""
+    """Batch fetch quotes for multiple codes (parallel xueqiu + AKShare batch fallback)."""
     unique = list(dict.fromkeys(_normalize_code(c) for c in codes if c))
     result: dict[str, dict[str, Any]] = {}
+    if not unique:
+        return result
 
-    # Xueqiu per symbol (lightweight)
+    def _fetch_xueqiu(code: str) -> Optional[tuple[str, dict[str, Any]]]:
+        try:
+            from agent_reach.channels import xueqiu as xq_mod
+
+            xq_mod._ensure_cookies()
+            channel = xq_mod.XueqiuChannel()
+            q = channel.get_stock_quote(code_to_xueqiu_symbol(code))
+            price = q.get("current")
+            if price is None:
+                return None
+            return code, {
+                "code": code,
+                "name": q.get("name", code),
+                "price": float(price),
+                "change_pct": float(q.get("percent") or 0),
+                "reference_price": float(q.get("last_close") or price),
+                "source": "xueqiu",
+            }
+        except Exception:
+            return None
+
+    workers = min(8, max(1, len(unique)))
     try:
-        from agent_reach.channels import xueqiu as xq_mod
-
-        xq_mod._ensure_cookies()
-        channel = xq_mod.XueqiuChannel()
-        for code in unique:
-            try:
-                q = channel.get_stock_quote(code_to_xueqiu_symbol(code))
-                price = q.get("current")
-                if price is None:
-                    continue
-                result[code] = {
-                    "code": code,
-                    "name": q.get("name", code),
-                    "price": float(price),
-                    "change_pct": float(q.get("percent") or 0),
-                    "reference_price": float(q.get("last_close") or price),
-                    "source": "xueqiu",
-                }
-            except Exception:
-                continue
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for item in pool.map(_fetch_xueqiu, unique):
+                if item:
+                    code, quote = item
+                    result[code] = quote
     except Exception:
         pass
 
@@ -260,8 +268,15 @@ def build_and_save(
     *,
     report_type: str = "intraday",
     config=None,
+    portfolio: Optional[dict[str, Any]] = None,
+    settings: Optional[dict[str, Any]] = None,
 ) -> tuple[dict[str, Any], Path]:
-    snap = build_snapshot(report_type=report_type, config=config)
+    snap = build_snapshot(
+        portfolio=portfolio,
+        report_type=report_type,
+        config=config,
+        settings=settings,
+    )
     out = output or (Path.home() / ".agent-reach" / "daily_run" / "last_snapshot.json")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(snap, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

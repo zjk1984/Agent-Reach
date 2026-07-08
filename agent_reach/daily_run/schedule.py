@@ -188,7 +188,11 @@ def run_scheduled(
                 pf = load_portfolio()
                 save_portfolio(increment_holding_days(pf))
 
-            snap, path = build_and_save(report_type="premarket", config=cfg_obj)
+            snap, path = build_and_save(
+                report_type="premarket",
+                config=cfg_obj,
+                settings=settings,
+            )
             run_result = run_morning(
                 snap,
                 settings=settings,
@@ -237,7 +241,11 @@ def run_scheduled(
                     "reason": f"今日扫描已达 {MAX_SCANS} 次上限",
                 }
             else:
-                snap, path = build_and_save(report_type="intraday", config=cfg_obj)
+                snap, path = build_and_save(
+                    report_type="intraday",
+                    config=cfg_obj,
+                    settings=settings,
+                )
                 do_trade = should_evaluate_trade(state, settings)
                 run_result = run_intraday(
                     snap,
@@ -264,7 +272,15 @@ def run_scheduled(
         )
 
         with StepTimer("schedule.close"):
-            snap, path = build_and_save(report_type="close", config=cfg_obj)
+            from agent_reach.daily_run.symbols import sync_snapshot_portfolio
+
+            pf = load_portfolio()
+            snap, path = build_and_save(
+                report_type="close",
+                config=cfg_obj,
+                settings=settings,
+                portfolio=pf,
+            )
             state = load_state()
             if state.scans:
                 snap["intraday_scans"] = state.scans
@@ -284,43 +300,37 @@ def run_scheduled(
                     )
                 raise
 
+            pf_work = pf
+            portfolio_dirty = False
             wl_result = None
             if is_watchlist_adjust_enabled(settings):
-                pf = load_portfolio()
                 wl_result = adjust_watchlist(
-                    pf,
+                    pf_work,
                     snap,
                     settings,
                     "close",
                     sold_codes=collect_intraday_sold_codes(settings),
                 )
                 if wl_result.applied:
-                    save_portfolio(wl_result.portfolio)
-                    snap["watchlist"] = wl_result.portfolio.get("watchlist", [])
-                    block = snap.get("portfolio") or {}
-                    for key in ("holdings", "cash", "cash_ratio", "total"):
-                        if key in wl_result.portfolio:
-                            block[key] = wl_result.portfolio[key]
-                    snap["portfolio"] = block
+                    pf_work = wl_result.portfolio
+                    portfolio_dirty = True
 
             from agent_reach.daily_run.close_code_review import run_close_code_review
 
-            pf_for_review = load_portfolio()
             code_review_result = run_close_code_review(
-                portfolio=pf_for_review,
+                portfolio=pf_work,
                 snapshot=snap,
                 settings=settings,
                 scans=state.scans,
                 trades=state.trades,
             )
             if code_review_result.portfolio_changed and code_review_result.portfolio:
-                save_portfolio(code_review_result.portfolio)
-                snap["watchlist"] = code_review_result.portfolio.get("watchlist", [])
-                block = snap.get("portfolio") or {}
-                for key in ("holdings", "cash", "cash_ratio", "total", "watchlist"):
-                    if key in code_review_result.portfolio:
-                        block[key] = code_review_result.portfolio[key]
-                snap["portfolio"] = block
+                pf_work = code_review_result.portfolio
+                portfolio_dirty = True
+
+            if portfolio_dirty:
+                save_portfolio(pf_work)
+                sync_snapshot_portfolio(snap, pf_work)
 
             run_result = run_close(
                 snap,
