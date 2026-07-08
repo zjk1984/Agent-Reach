@@ -188,6 +188,42 @@ agent-reach daily-run backtest -i config/daily_run_history.example.json
 
 ---
 
+## 🧩 Phase-3 插件化专家 + Grid Search 优化
+
+### 专家插件（macro / technical / sentiment）
+
+```bash
+agent-reach daily-run plugins list
+agent-reach daily-run plugins run -i snapshot.json
+agent-reach daily-run plugins run -i snapshot.json --names macro,technical
+```
+
+插件输出 `expert_scores` 并回填 `mss_breakdown`，随后可走 evaluate/push 流水线。
+
+内置插件：
+
+| 插件 | 角色 | 输入 |
+|------|------|------|
+| `macro` | 宏观策略师 | fx / global / macro_summary |
+| `technical` | 技术分析派 | price / ma20 / position_20d / volume_ratio |
+| `sentiment` | 消息面猎手 | flow / sentiment / sources |
+
+### Grid Search 参数优化
+
+```bash
+agent-reach daily-run optimize -i config/daily_run_history.example.json
+agent-reach daily-run optimize -i config/daily_run_history_factors.example.json --objective sharpe_proxy
+agent-reach daily-run optimize -i history.json --save --push
+```
+
+优化维度：
+- `macro_veto` × `aggressive_entry` 阈值网格
+- 若 history 含 `fx/flow/global/sentiment` 字段，同时搜索 `mss_weights`
+
+`--save` 写入 `~/.agent-reach/daily_run_settings.json`
+
+---
+
 ### 2. 每日 10 次数据收集 (S1 - S10)
 系统在交易日内（9:15 - 15:00）均匀或按盘口波动密集度执行 **10 次全球市场与舆情数据收集**。
 

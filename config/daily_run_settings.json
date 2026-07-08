@@ -83,5 +83,22 @@
     "commission_rate": 0.0015,
     "macro_veto": 40,
     "aggressive_entry": 50
+  },
+
+  "optimizer": {
+    "macro_veto_grid": [38, 40, 42, 45],
+    "aggressive_entry_grid": [48, 50, 52, 55],
+    "default_objective": "excess_return",
+    "mss_weight_grid": [
+      {"fx": 0.3, "flow": 0.3, "global": 0.2, "sentiment": 0.2},
+      {"fx": 0.25, "flow": 0.35, "global": 0.2, "sentiment": 0.2},
+      {"fx": 0.35, "flow": 0.25, "global": 0.2, "sentiment": 0.2},
+      {"fx": 0.2, "flow": 0.3, "global": 0.3, "sentiment": 0.2}
+    ]
+  },
+
+  "plugins": {
+    "enabled": ["macro", "technical", "sentiment"],
+    "parallel": true
   }
 }

@@ -130,6 +130,21 @@ def main():
     p_dr_verify.add_argument("--push", action="store_true", help="Push verification card to Feishu")
     p_dr_bt = p_daily_sub.add_parser("backtest", help="Run MSS threshold backtest on history JSON")
     p_dr_bt.add_argument("--input", "-i", required=True, help="History JSON array (date,mss,return,...)")
+    p_dr_opt = p_daily_sub.add_parser("optimize", help="Grid search MSS thresholds/weights")
+    p_dr_opt.add_argument("--input", "-i", required=True, help="History JSON (with optional factor fields)")
+    p_dr_opt.add_argument(
+        "--objective",
+        default="excess_return",
+        choices=["excess_return", "total_return", "win_rate", "sharpe_proxy"],
+        help="Optimization objective",
+    )
+    p_dr_opt.add_argument("--save", action="store_true",
+                          help="Write best params to ~/.agent-reach/daily_run_settings.json")
+    p_dr_opt.add_argument("--push", action="store_true", help="Push optimization summary to Feishu")
+    p_dr_plugins = p_daily_sub.add_parser("plugins", help="List or run expert plugins")
+    p_dr_plugins.add_argument("plugins_action", nargs="?", choices=["list", "run"], default="list")
+    p_dr_plugins.add_argument("--input", "-i", default="", help="Snapshot JSON for plugins run")
+    p_dr_plugins.add_argument("--names", default="", help="Comma-separated plugin names")
     p_daily_sub.add_parser("sample", help="Print example snapshot JSON to stdout")
 
     # ── doctor ──
@@ -1337,8 +1352,79 @@ def _cmd_daily_run(args):
         print(render_backtest_markdown(result))
         return
 
+    if args.daily_action == "optimize":
+        from agent_reach.config import Config
+        from agent_reach.daily_run.optimizer import (
+            grid_search_optimize,
+            render_optimize_markdown,
+            save_optimized_settings,
+        )
+        from agent_reach.daily_run.settings import load_settings
+        from agent_reach.integrations.feishu import FeishuError, send_card
+
+        history = json.loads(Path(args.input).read_text(encoding="utf-8"))
+        if not isinstance(history, list):
+            print("❌ optimize input must be a JSON array")
+            sys.exit(1)
+        settings = load_settings()
+        result = grid_search_optimize(history, settings, objective=args.objective)
+        payload = {
+            "objective": result.objective,
+            "best_score": result.best_score,
+            "best_params": result.best_params,
+            "metrics": result.metrics,
+            "trials": result.trials,
+        }
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        md = render_optimize_markdown(result)
+        print("\n--- Markdown ---\n")
+        print(md)
+        if args.save:
+            out = save_optimized_settings(result, settings)
+            print(f"\n✅ Saved optimized settings to {out}")
+        if args.push:
+            try:
+                send_card(
+                    Config(),
+                    "🎯 MSS 参数优化结果",
+                    md,
+                    template="green",
+                )
+                print("\n✅ Optimization report pushed to Feishu")
+            except FeishuError as exc:
+                print(f"\n❌ Feishu push failed: {exc}")
+                sys.exit(1)
+        return
+
+    if args.daily_action == "plugins":
+        from agent_reach.daily_run.plugins.loader import list_plugins, run_experts
+        from agent_reach.daily_run.pipeline import evaluate_snapshot, render_markdown
+        from agent_reach.daily_run.settings import load_settings
+
+        if args.plugins_action == "list":
+            print(json.dumps(list_plugins(), ensure_ascii=False, indent=2))
+            return
+        if not args.input:
+            print("Usage: agent-reach daily-run plugins run -i snapshot.json [--names macro,technical]")
+            sys.exit(1)
+        snapshot = json.loads(Path(args.input).read_text(encoding="utf-8"))
+        names = [n.strip() for n in args.names.split(",") if n.strip()] or None
+        enriched = run_experts(snapshot, load_settings(), names=names)
+        evaluation = evaluate_snapshot(enriched)
+        print(json.dumps(
+            {
+                "expert_results": enriched.get("expert_results"),
+                "mss_final": enriched.get("mss_final"),
+                "verdict": evaluation["verdict"].to_dict(),
+                "markdown_preview": render_markdown(evaluation["report"]),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ))
+        return
+
     if args.daily_action not in ("evaluate", "push"):
-        print("Usage: agent-reach daily-run {evaluate|push|fetch|verify|backtest|sample} ...")
+        print("Usage: agent-reach daily-run {evaluate|push|fetch|verify|backtest|optimize|plugins|sample} ...")
         sys.exit(1)
 
     path = Path(args.input)
