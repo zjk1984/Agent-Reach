@@ -13,6 +13,7 @@ from agent_reach.daily_run.lookback import compute_lookback_mss, detect_mss_tren
 from agent_reach.daily_run.pipeline import evaluate_snapshot, render_markdown
 from agent_reach.daily_run.plugins.loader import run_experts
 from agent_reach.daily_run.settings import load_settings
+from agent_reach.daily_run.trade_calendar import today_shanghai
 
 
 MAX_SCANS = 12
@@ -616,4 +617,4 @@ def _holding_locked(snapshot: dict[str, Any], settings: dict[str, Any]) -> bool:
 
 
 def _today_str() -> str:
-    return date.today().isoformat()
+    return today_shanghai().isoformat()
