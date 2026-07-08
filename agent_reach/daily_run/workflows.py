@@ -7,9 +7,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from agent_reach.daily_run.pipeline import evaluate_snapshot, push_report, render_markdown
-from agent_reach.daily_run.plugins.loader import run_experts
+from agent_reach.daily_run.pipeline import evaluate_snapshot, render_markdown
 from agent_reach.daily_run.settings import load_settings
+from agent_reach.daily_run.team import render_team_markdown, run_team_first
 from agent_reach.daily_run.verify import render_verify_markdown, verify_snapshots
 
 
@@ -23,6 +23,7 @@ def run_morning(
     settings: Optional[dict[str, Any]] = None,
     doctor_channels: Optional[dict[str, dict]] = None,
     plugin_names: Optional[list[str]] = None,
+    team_first: bool = True,
     push: bool = True,
     start_notify: bool = True,
     title: Optional[str] = None,
@@ -30,7 +31,7 @@ def run_morning(
 ) -> dict[str, Any]:
     """
     Full morning pipeline:
-    start notify → experts → audit/verdict/gate → Feishu push
+    start notify → Team-First 8 experts → audit/verdict/gate → Feishu push
     """
     cfg = settings or load_settings()
     steps: list[str] = []
@@ -43,8 +44,14 @@ def run_morning(
     snapshot.setdefault("report_type", "premarket")
     snapshot.setdefault("as_of", datetime.now(timezone.utc).isoformat())
 
-    enriched = run_experts(snapshot, cfg, names=plugin_names)
-    steps.append("experts")
+    if team_first:
+        enriched = run_team_first(snapshot, cfg, names=plugin_names)
+        steps.append("team_first")
+    else:
+        from agent_reach.daily_run.plugins.loader import run_experts
+
+        enriched = run_experts(snapshot, cfg, names=plugin_names)
+        steps.append("experts")
 
     evaluation = evaluate_snapshot(enriched, cfg, doctor_channels=doctor_channels)
     steps.append("evaluate")
@@ -60,14 +67,16 @@ def run_morning(
         if not gate.passed:
             raise RuntimeError(f"质量门禁未通过：{gate.summary()}")
         card_title = title or _morning_title(report)
-        feishu_result = push_report(evaluation, title=card_title, config=config)
+        body = render_team_markdown(enriched) + "\n\n---\n\n" + render_markdown(report)
+        feishu_result = _push_markdown(card_title, body, cfg, config, report_type="premarket")
         steps.append("push")
 
     return {
         "steps": steps,
         "snapshot": enriched,
         "evaluation": evaluation,
-        "markdown": render_markdown(report),
+        "markdown": render_team_markdown(enriched) + "\n\n---\n\n" + render_markdown(report),
+        "team_markdown": render_team_markdown(enriched),
         "feishu": feishu_result,
     }
 
@@ -77,31 +86,40 @@ def run_close(
     baseline: dict[str, Any],
     *,
     settings: Optional[dict[str, Any]] = None,
+    plugin_names: Optional[list[str]] = None,
+    team_first: bool = True,
     push: bool = True,
     title: Optional[str] = None,
     config=None,
 ) -> dict[str, Any]:
-    """Close workflow: verify baseline vs current → optional Feishu push."""
+    """Close workflow: Team-First experts → verify baseline vs current → Feishu push."""
     cfg = settings or load_settings()
     current = dict(current)
     current.setdefault("report_type", "close")
 
-    verify = verify_snapshots(baseline, current, cfg)
-    md = render_verify_markdown(verify)
+    enriched = current
+    team_md = ""
+    if team_first:
+        enriched = run_team_first(current, cfg, names=plugin_names)
+        team_md = render_team_markdown(enriched)
+
+    verify = verify_snapshots(baseline, enriched, cfg)
+    md = (team_md + "\n\n---\n\n" if team_md else "") + render_verify_markdown(verify)
 
     feishu_result = None
     if push:
         from agent_reach.config import Config
-        from agent_reach.integrations.feishu import send_card
 
         cfg_obj = config or Config()
         tpl = cfg.get("report", {}).get("feishu_template_verify", "purple")
-        card_title = title or f"🧠 收盘验证 · {verify.name or verify.code or '大盘'}"
-        feishu_result = send_card(cfg_obj, card_title, md, template=tpl)
+        card_title = title or f"🧠 收盘复盘 · {verify.name or verify.code or '大盘'}"
+        feishu_result = _push_markdown(card_title, md, cfg, cfg_obj, template=tpl)
 
     return {
         "verify": verify.to_dict(),
+        "snapshot": enriched,
         "markdown": md,
+        "team_markdown": team_md,
         "feishu": feishu_result,
     }
 
@@ -131,6 +149,24 @@ def _morning_title(report: dict[str, Any]) -> str:
     return f"🌅 股票大师 · {name} · {verdict}"
 
 
+def _push_markdown(
+    title: str,
+    markdown: str,
+    settings: dict[str, Any],
+    config,
+    *,
+    report_type: str = "premarket",
+    template: Optional[str] = None,
+) -> dict[str, Any]:
+    from agent_reach.config import Config
+    from agent_reach.integrations.feishu import send_card
+
+    cfg_obj = config or Config()
+    templates = settings.get("report", {})
+    tpl = template or templates.get(f"feishu_template_{report_type}", "blue")
+    return send_card(cfg_obj, title, markdown, template=tpl)
+
+
 def _send_start_notification(config, settings: dict[str, Any]) -> None:
     from agent_reach.config import Config
     from agent_reach.integrations.feishu import send_card
@@ -140,8 +176,8 @@ def _send_start_notification(config, settings: dict[str, Any]) -> None:
     send_card(
         cfg,
         "🌅 早盘分析已启动",
-        "**股票大师 daily_run_skill**\n\n"
-        "正在执行：专家插件 → 数据审计 → MSS 决策 → 质量门禁 → 报告推送\n\n"
+        "**股票大师 daily_run_skill · Team-First**\n\n"
+        "正在执行：**8 专家并行** → 数据审计 → MSS 决策 → Supervisor 仲裁 → 飞书推送\n\n"
         "预计完成时间：**3–5 分钟**",
         template=tpl,
     )

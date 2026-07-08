@@ -32,22 +32,23 @@ def morning_snapshot():
 
 
 class TestMorningWorkflow:
-    @patch("agent_reach.daily_run.workflows.push_report")
+    @patch("agent_reach.daily_run.workflows._push_markdown", return_value={"code": 0, "data": {}})
     @patch("agent_reach.daily_run.workflows._send_start_notification")
     def test_run_morning_dry_pipeline(self, mock_start, mock_push, morning_snapshot):
         result = run_morning(morning_snapshot, settings=load_settings(), push=False, start_notify=False)
-        assert "experts" in result["steps"]
+        assert "team_first" in result["steps"]
         assert "evaluate" in result["steps"]
         assert "push" not in result["steps"]
         mock_push.assert_not_called()
         mock_start.assert_not_called()
         assert result["evaluation"]["report"]["verdict"]
+        assert "Team-First" in result.get("team_markdown", "")
 
-    @patch("agent_reach.daily_run.workflows.push_report", return_value={"code": 0, "data": {}})
+    @patch("agent_reach.daily_run.workflows._push_markdown", return_value={"code": 0, "data": {}})
     @patch("agent_reach.daily_run.workflows._send_start_notification")
     def test_run_morning_push(self, mock_start, mock_push, morning_snapshot):
         result = run_morning(morning_snapshot, settings=load_settings(), push=True, start_notify=True)
-        assert result["steps"] == ["start_notify", "experts", "evaluate", "push"]
+        assert result["steps"] == ["start_notify", "team_first", "evaluate", "push"]
         assert mock_push.called
         assert mock_start.called
 

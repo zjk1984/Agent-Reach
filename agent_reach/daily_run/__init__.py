@@ -18,6 +18,7 @@ from agent_reach.daily_run.quality_gate import GateResult, validate_report
 from agent_reach.daily_run.schedule import install_crontab, render_crontab_block, run_scheduled
 from agent_reach.daily_run.settings import load_settings
 from agent_reach.daily_run.snapshot_builder import build_and_save, build_snapshot, load_portfolio, save_portfolio
+from agent_reach.daily_run.team import render_team_markdown, run_team_first, supervisor_review
 from agent_reach.daily_run.verdict import VerdictResult, compute_verdict
 from agent_reach.daily_run.verify import VerifyResult, verify_snapshots
 from agent_reach.daily_run.workflows import load_morning_baseline, run_close, run_morning, save_morning_baseline
@@ -47,6 +48,7 @@ __all__ = [
     "push_report",
     "record_scan",
     "render_crontab_block",
+    "render_team_markdown",
     "reset_intraday_state",
     "run_close",
     "run_data_audit",
@@ -55,9 +57,11 @@ __all__ = [
     "run_morning",
     "run_mss_backtest",
     "run_scheduled",
+    "run_team_first",
     "save_morning_baseline",
     "save_optimized_settings",
     "save_portfolio",
+    "supervisor_review",
     "validate_report",
     "verify_snapshots",
 ]

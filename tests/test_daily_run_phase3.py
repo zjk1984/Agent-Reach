@@ -33,13 +33,13 @@ class TestPlugins:
     def test_list_plugins(self):
         plugins = list_plugins()
         names = {p["name"] for p in plugins}
-        assert {"macro", "technical", "sentiment"}.issubset(names)
+        assert {"macro", "technical", "sentiment", "fundamental", "quant", "risk", "industry", "identifier"}.issubset(names)
 
     def test_run_experts_enriches_mss(self, snapshot):
         enriched = run_experts(snapshot, load_settings())
         assert "expert_scores" in enriched
         assert enriched.get("mss_final") is not None
-        assert len(enriched.get("expert_results", [])) == 3
+        assert len(enriched.get("expert_results", [])) == 8
 
     def test_run_selected_plugins(self, snapshot):
         enriched = run_experts(snapshot, load_settings(), names=["macro"])

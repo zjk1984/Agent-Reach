@@ -190,7 +190,35 @@ agent-reach daily-run backtest -i config/daily_run_history.example.json
 
 ## 🧩 Phase-3 插件化专家 + Grid Search 优化
 
-### 专家插件（macro / technical / sentiment）
+### Team-First 8 专家并行（早报 / 收盘复盘默认启用）
+
+借鉴 [china-stock-analyst](https://github.com/wjt0321/china-stock-analyst) Team-First 架构：
+
+| 专家 | 角色 |
+|------|------|
+| `fundamental` | 基本面大师 |
+| `technical` | 技术分析派 |
+| `quant` | 量化模型师 |
+| `risk` | 风险控制官 |
+| `macro` | 宏观策略师 |
+| `industry` | 行业研究家 |
+| `sentiment` | 消息面猎手 |
+| `identifier` | 专家鉴别 Agent |
+
+```bash
+# 早报：8 专家 full_parallel → Supervisor 仲裁 → 飞书
+agent-reach daily-run morning -i snapshot.json --save-baseline
+
+# 收盘复盘：8 专家 + 基线验证 → 飞书
+agent-reach daily-run close -i eod_snapshot.json
+
+# 列出全部专家
+agent-reach daily-run plugins list
+```
+
+配置：`config/daily_run_settings.json` → `team.experts` / `team.parallel`
+
+### 专家插件（macro / technical / sentiment …）
 
 ```bash
 agent-reach daily-run plugins list

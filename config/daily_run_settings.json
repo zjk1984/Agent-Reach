@@ -98,7 +98,34 @@
   },
 
   "plugins": {
-    "enabled": ["macro", "technical", "sentiment"],
+    "enabled": [
+      "fundamental",
+      "technical",
+      "quant",
+      "risk",
+      "macro",
+      "industry",
+      "sentiment",
+      "identifier"
+    ],
     "parallel": true
+  },
+
+  "team": {
+    "mode": "full_parallel",
+    "experts": [
+      "fundamental",
+      "technical",
+      "quant",
+      "risk",
+      "macro",
+      "industry",
+      "sentiment",
+      "identifier"
+    ],
+    "parallel": true,
+    "supervisor": true,
+    "morning_team_first": true,
+    "close_team_first": true
   }
 }
