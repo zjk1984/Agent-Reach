@@ -86,11 +86,12 @@ class TestSchedule:
         assert "agent-reach daily-run schedule BEGIN" in block
         assert "Asia/Shanghai" in block
         assert "schedule run morning" in block
+        assert "0 7 * * 1-5" in block or "0 7" in block
         assert "schedule run intraday" in block
         assert "schedule run close" in block
 
     def test_default_entries_count(self):
-        assert len(default_entries()) == 12
+        assert len(default_entries()) == 14
 
     @patch("agent_reach.daily_run.workflows.save_morning_baseline")
     @patch("agent_reach.daily_run.workflows.run_morning")

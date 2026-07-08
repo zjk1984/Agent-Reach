@@ -15,7 +15,7 @@ from agent_reach.daily_run.plugins.loader import run_experts
 from agent_reach.daily_run.settings import load_settings
 
 
-MAX_SCANS = 10
+MAX_SCANS = 12
 MAX_TRADES = 5
 
 

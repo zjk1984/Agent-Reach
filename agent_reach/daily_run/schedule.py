@@ -16,8 +16,10 @@ from agent_reach.daily_run.run_manifest import StepTimer, save_run_manifest
 MARKER_BEGIN = "# agent-reach daily-run schedule BEGIN"
 MARKER_END = "# agent-reach daily-run schedule END"
 
-# 10 intraday scans: 9:30–15:00 (北京时间 Asia/Shanghai)
+# 12 intraday scans: 7:00–8:00 盘前 + 9:30–15:00 盘中 (北京时间 Asia/Shanghai)
 INTRADAY_SCAN_TIMES: list[tuple[str, str]] = [
+    ("0", "7"),
+    ("0", "8"),
     ("30", "9"),
     ("0", "10"),
     ("30", "10"),
@@ -59,16 +61,19 @@ def default_entries() -> list[CronEntry]:
     """Default 北京时间 trading schedule (CRON_TZ=Asia/Shanghai)."""
     cmd = _agent_reach_cmd()
     entries = [
-        CronEntry("0", "8", "1-5", f"{cmd} daily-run schedule run morning", "daily-run 早盘 8:00"),
+        CronEntry("10", "8", "1-5", f"{cmd} daily-run schedule run morning", "daily-run 早盘 8:10"),
     ]
     for i, (minute, hour) in enumerate(INTRADAY_SCAN_TIMES, start=1):
+        label = f"daily-run 盘中 S{i}/12"
+        if i <= 2:
+            label = f"daily-run 盘前 S{i}/12"
         entries.append(
             CronEntry(
                 minute,
                 hour,
                 "1-5",
                 f"{cmd} daily-run schedule run intraday",
-                f"daily-run 盘中 S{i}/10",
+                label,
             )
         )
     entries.append(
@@ -193,12 +198,16 @@ def run_scheduled(
             feishu = run_result.get("feishu")
 
     elif job == "intraday":
-        from agent_reach.daily_run.intraday import load_state, run_intraday, should_evaluate_trade
+        from agent_reach.daily_run.intraday import MAX_SCANS, load_state, run_intraday, should_evaluate_trade
 
         with StepTimer("schedule.intraday"):
             state = load_state()
-            if len(state.scans) >= 10:
-                result = {"job": job, "skipped": True, "reason": "今日扫描已达 10 次上限"}
+            if len(state.scans) >= MAX_SCANS:
+                result = {
+                    "job": job,
+                    "skipped": True,
+                    "reason": f"今日扫描已达 {MAX_SCANS} 次上限",
+                }
             else:
                 snap, path = build_and_save(report_type="intraday", config=cfg_obj)
                 do_trade = should_evaluate_trade(state, settings)
