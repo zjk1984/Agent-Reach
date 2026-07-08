@@ -93,12 +93,33 @@ def generate_close_improvements(
     _improve_watchlist(out, current, watchlist_adjust, watchlist_cfg)
     _improve_schedule(out, scans or [], trades or [], schedule_cfg, settings)
 
+    # Always include a scan summary when we have data (confirms feature ran).
+    from agent_reach.daily_run.intraday import MAX_SCANS
+
+    n = len(scans or [])
+    if n > 0 and not any(i.category == "schedule" for i in out.items):
+        out.add(
+            "schedule",
+            "low",
+            f"今日扫描 {n}/{MAX_SCANS} 次",
+            "覆盖正常" if n >= MAX_SCANS else f"尚有 {MAX_SCANS - n} 个计划时段未记录",
+        )
+
     return out
 
 
-def render_improvements_markdown(result: CloseImprovements) -> str:
-    if not result.items:
+def render_improvements_markdown(
+    result: CloseImprovements,
+    *,
+    enabled: bool = True,
+) -> str:
+    if not enabled:
         return ""
+    if not result.items:
+        return (
+            "**🔧 复盘改进意见**\n\n"
+            "今日 MSS / 持仓 / 观察池 / S_n 扫描未触发告警，暂无专项调参建议。"
+        )
 
     labels = {
         "mss": "MSS 模型与阈值",
