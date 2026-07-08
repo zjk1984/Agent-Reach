@@ -6,6 +6,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal, Optional
 
+from agent_reach.daily_run.portfolio_manager import (
+    max_total_symbols,
+    unique_symbol_count,
+    watchlist_capacity,
+)
 from agent_reach.daily_run.snapshot_builder import _normalize_code
 
 WatchlistPhase = Literal["morning", "close"]
@@ -56,8 +61,14 @@ def can_adjust_watchlist(phase: str) -> bool:
     return phase in ALLOWED_WATCHLIST_PHASES
 
 
-def max_watchlist_size(settings: dict[str, Any]) -> int:
-    return int(watchlist_settings(settings).get("max_size", 20))
+def max_watchlist_size(settings: dict[str, Any], portfolio: Optional[dict[str, Any]] = None) -> int:
+    """Legacy helper — when portfolio given, returns capacity under total cap."""
+    if portfolio is not None:
+        return watchlist_capacity(settings, portfolio)
+    wl = watchlist_settings(settings)
+    if "max_size" in wl:
+        return int(wl["max_size"])
+    return max_total_symbols(settings)
 
 
 def adjust_watchlist(
@@ -93,6 +104,8 @@ def adjust_watchlist(
                 continue
             if _has_code(pf.get("watchlist") or [], code):
                 continue
+            if unique_symbol_count(pf) >= max_total_symbols(settings):
+                break
             name = str(item.get("name") or code)
             pf.setdefault("watchlist", []).append({"code": code, "name": name})
             changes.append(WatchlistChange("add", code, name, "盘中卖出，收盘复盘回收入观察池"))
@@ -129,19 +142,21 @@ def adjust_watchlist(
             code = _normalize_code(str(cand.get("code", "")))
             if not code or code in held_codes or _has_code(pf["watchlist"], code):
                 continue
-            if len(pf["watchlist"]) >= max_watchlist_size(settings):
+            if unique_symbol_count(pf) >= max_total_symbols(settings):
+                break
+            if len(pf["watchlist"]) >= max_watchlist_size(settings, pf):
                 break
             name = str(cand.get("name") or code)
             pf["watchlist"].append({"code": code, "name": name})
             changes.append(WatchlistChange("add", code, name, "早盘候选纳入观察池"))
 
-    # Close: trim to max size by score
+    # Close: trim watchlist so holdings + watchlist (deduped) <= total cap
     pf["watchlist"] = _trim_by_score(
         pf["watchlist"],
         enriched,
         snapshot,
         settings,
-        max_watchlist_size(settings),
+        max_watchlist_size(settings, pf),
         changes,
     )
 
@@ -152,7 +167,7 @@ def adjust_watchlist(
             enriched,
             snapshot,
             settings,
-            min(3, max_watchlist_size(settings)),
+            min(3, max_watchlist_size(settings, pf)),
             changes,
             reason_prefix="宏观回避，收缩观察池",
         )

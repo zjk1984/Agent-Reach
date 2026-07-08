@@ -162,7 +162,6 @@
 
   "watchlist": {
     "auto_adjust_enabled": true,
-    "max_size": 20,
     "adjust_phases": ["morning", "close"],
     "candidates": []
   },
