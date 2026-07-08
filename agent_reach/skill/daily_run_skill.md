@@ -6,7 +6,7 @@ description: >
   并收集大宗商品、石油、美元汇率波动，同时联动美股、新加坡富时中国A50/金龙指数、港股及港股通南北向资金动向，自动定位热门股票代码。
   每天早上 8:00 自动执行早盘分析，总结下一步预计操作和预期收益。
   交易日内执行 10 次数据收集，最多进行 5 次调仓量化，每次量化前审视前 5 次收集结论，调仓时间由随机数与上次评估综合决定。
-  交易执行完毕后，系统将自动、主动将精美的富文本卡片简报推送到指定的飞书群聊中。
+  **全流程实时推送铁律：** 早盘分析、盘中高频数据收集、Lookback 审视过程、量化调仓交易以及每日收盘深度复盘的所有过程数据、决策逻辑和资产净值，系统必须在执行完毕的第一时间，自动、主动将精美的富文本 Markdown 卡片简报推送到指定的飞书群聊中，实现 100% 实时、透明的主动监控。
   每日收盘后自动执行深度复盘，使用 Exa 技能对热点公司、竞品、市场、财报及关键人物 LinkedIn 进行深度调研，为明天的早盘给出高置信度指导建议，并将量化经验原子化沉淀、更新到技能文件中。
 triggers:
   - analyze: 股票大师/每日复盘/股票分析/大盘复盘/热门方向/分析股票/分析市场/复盘/分析
@@ -23,7 +23,17 @@ metadata:
 
 ## 🚀 极致量化执行算法 (10次收集 + 5次调仓)
 
-为了应对瞬息万变的全球多市场波动，本技能执行**“高频扫描、审慎决策、随机潜伏”**的极致量化算法：
+为了应对瞬息万变的全球多市场波动，本技能执行**“高频扫描、审慎决策、随机潜伏”**的极致量化算法，各核心步骤的基准耗时统计如下：
+
+| 核心步骤 | 执行操作 | 基准耗时 (秒) | 性能瓶颈与解析 |
+| :--- | :--- | :---: | :--- |
+| **Step 0** | **启动即时通知 (Start Notification)** | **0.1 秒** | 极速。第一时间推送，消除用户等待焦虑。 |
+| **Step 1** | **Agent-Reach 权限自检 (Auth Check)** | **3.4 秒** | 较快。运行 `doctor` 检查各平台 API 及 Cookie 状态。 |
+| **Step 1.5** | **数据真实性审计 (Data Audit Gate)** | **<0.1 秒** | 校验 as_of 时效、来源类别、价格锚点偏差；不通过则阻断买入建议。 |
+| **Step 2** | **全球宏观与多市场数据收集 (S_n)** | **9.9 秒** | **主要瓶颈**。包含 Jina Reader 网页渲染与 API 抓取，耗时受目标服务器影响。 |
+| **Step 3** | **3次 Lookback 审视 + MSS 决策 + 三档标签** | **<0.1 秒** | 输出 **可做/观察/回避** 标签与置信度，经质量门禁后推送。 |
+| **Step 4** | **飞书 API 富文本卡片推送** | **1.5 秒** | 正常。包含飞书 Token 鉴权与 HTTPS 消息发送。 |
+| **🏁 累计** | **完整【收集 + 决策 + 推送】流水线** | **约 15 秒** | **全流程仅需约 15 秒，完美保障高频自适应响应！** |
 
 ```
 +-----------------------------------------------------------------------------------+
@@ -33,6 +43,7 @@ metadata:
 |  [早盘分析]  早上 8:00 准时触发：                                                   |
 |              1. 权限自检：自动运行 `agent-reach doctor` 检查各平台 Cookie 状态       |
 |                 (排除小红书，重点检查 Twitter、雪球、微博等)                        |
+|              1.5 数据审计：校验数据时效、来源完整性、价格锚点（见下方 Phase-1）      |
 |              2. 隔夜数据抓取：抓取全球隔夜数据与昨日复盘热点最新进展                  |
 |              3. 制定纲领：生成今日“预计操作”与“预期收益”并推送飞书群                  |
 |                                                                                   |
@@ -63,15 +74,295 @@ metadata:
 *   **第二步：隔夜数据与昨日热点进展抓取：**
     *   抓取美股隔夜收盘、中概股金龙指数（HXC）表现、新加坡 A50 期指、离岸人民币波动、隔夜原油/黄金大宗商品波动、以及最新的国内外时事政策。
     *   **热点进展追踪：** 自动提取昨日复盘中沉淀的重点方向（如：存储芯片 Q3 涨价进展、京东方 A 玻璃基板送样最新舆情、华为韬定律 V2 产业链反馈），在 Twitter、雪球、微博上进行精准搜索，抓取最新进展资讯。
-*   **第三步：制定今日核心操盘纲领：**
+*   **第三步：制定今日核心操盘纲领与日内 MSS 预测：**
     *   评估今日大盘 MSS 初始分值，明确制定今日的“下一步预计操作”与“预期收益率目标”。
-*   **第四步：主动推送：** 8:05 前将精美的早盘分析 Markdown 卡片（含权限自检报告、热点进展、操盘纲领）自动推送到绑定的飞书群聊。
+    *   **日内 MSS 范围预测 (Intraday MSS Range Forecast)：** 结合早盘 8:00 抓取的全球隔夜数据及昨日收盘拟合曲线，通过**蒙特卡洛模拟**，预测今日盘中 10 次数据收集的 **MSS 波动范围**（如：*“预测今日盘中 MSS 波动范围为 [35, 52] 分，日内大概率维持弱势震荡，操作上建议继续高现金潜伏”*），为全天交易提供清晰的“波动率护栏”。
+*   **第四步：主动推送：** 8:05 前将精美的早盘分析 Markdown 卡片（含权限自检报告、热点进展、操盘纲领、日内 MSS 预测）自动推送到绑定的飞书群聊。
+
+---
+
+## 🛡️ Phase-1 质量工程化（数据审计 + 三档标签 + 质量门禁）
+
+> 借鉴 [china-stock-analyst](https://github.com/wjt0321/china-stock-analyst) 的审计/门禁思路，已落地为可执行 Python 流水线。
+
+### 外置配置
+
+所有阈值与权重位于 `config/daily_run_settings.json`（可被 `~/.agent-reach/daily_run_settings.json` 覆盖）：
+
+- `mss_weights` / `lookback_weights` — MSS 与 Lookback 权重
+- `thresholds.macro_veto` — 宏观一票否决线（默认 40）
+- `thresholds.aggressive_entry` — 进攻阈值（默认 50）
+- `quality_gate.required_fields` — 飞书推送前必填字段
+- `data_audit.required_source_categories` — 必须覆盖 quote / flow / sentiment
+
+### 数据审计 Gate（Step 1.5）
+
+推送或调仓前，必须构造 **snapshot JSON** 并通过审计：
+
+| 检查项 | 规则 | 失败后果 |
+|--------|------|----------|
+| `as_of` 时效 | 不超过 24h | 阻断 |
+| `sources` | 含 quote + flow + sentiment | 阻断 |
+| 价格锚点 | `\|现价-参考价\| / 参考价 ≤ 8%` | 阻断 |
+| 结构化复核 | `structured_review_complete=false` | 标签上限「观察」 |
+
+```bash
+agent-reach daily-run sample > /tmp/snapshot.json
+# 编辑 snapshot 填入真实数据后：
+agent-reach daily-run evaluate -i /tmp/snapshot.json --with-doctor
+```
+
+### 三档标签（可做 / 观察 / 回避）
+
+| 标签 | 触发条件 |
+|------|----------|
+| **回避** | MSS < 40（宏观一票否决）；或 VWAP 偏离过大且量比不足 |
+| **观察** | MSS 40–50；或缺少完整技术面；或 20 日位置偏高 |
+| **可做** | MSS ≥ 50 且技术面完整、审计通过 |
+
+标签与 MSS **并存**：MSS 负责量化择时，标签负责可读性与推送摘要。
+
+### 报告质量门禁
+
+飞书推送前 `quality_gate` 校验必填：
+
+`verdict` · `confidence` · `mss_final` · `reasoning` · `invalidation` · `evidence_chain`
+
+缺字段时自动降级为「观察」；关键字段缺失则 **阻断推送**。
+
+### CLI 一键流水线
+
+```bash
+# 1. 评估（输出 JSON + markdown 预览）
+agent-reach daily-run evaluate -i config/daily_run_snapshot.example.json
+
+# 2. 推送飞书（审计+门禁通过后）
+agent-reach daily-run push -i config/daily_run_snapshot.example.json --title "🌅 早盘分析"
+
+# 3. 仅预览不发送
+agent-reach daily-run push -i snapshot.json --dry-run
+```
+
+示例 snapshot：`config/daily_run_snapshot.example.json`
+
+---
+
+## 🔬 Phase-2 数据增强与验证（AKShare + 报告验证 + 回测）
+
+### AKShare 结构化兜底
+
+当 Jina/DSA 不稳定时，用 AKShare 拉取行情并 enrich snapshot：
+
+```bash
+pip install 'agent-reach[daily-run]'   # 或 pip install akshare
+agent-reach daily-run fetch --code 688008 -o /tmp/snapshot.json
+agent-reach daily-run evaluate -i /tmp/snapshot.json
+```
+
+自动填充：`price` · `ma20` · `position_20d` · `volume_ratio` · `sources.quote`
+
+### 历史报告验证（收盘复盘）
+
+对比早盘基线 vs 收盘现状，检验 MSS 预测区间与标签变化：
+
+```bash
+agent-reach daily-run verify \
+  -b config/daily_run_snapshot.example.json \
+  -c /tmp/eod_snapshot.json
+
+# 验证并推送飞书紫色卡片
+agent-reach daily-run verify -b morning.json -c eod.json --push
+```
+
+输出：价格/MSS/标签变化、预测命中与否、偏差拆解、明日建议。
+
+### MSS 规则回测
+
+验证「MSS≥50 买入 / MSS<40 卖出」历史表现：
+
+```bash
+agent-reach daily-run backtest -i config/daily_run_history.example.json
+```
+
+示例 history 格式：`[{ "date", "mss", "price", "return" }, ...]`
+
+---
+
+## 🧩 Phase-3 插件化专家 + Grid Search 优化
+
+### Team-First 8 专家并行（早报 / 收盘复盘默认启用）
+
+借鉴 [china-stock-analyst](https://github.com/wjt0321/china-stock-analyst) Team-First 架构：
+
+| 专家 | 角色 |
+|------|------|
+| `fundamental` | 基本面大师 |
+| `technical` | 技术分析派 |
+| `quant` | 量化模型师 |
+| `risk` | 风险控制官 |
+| `macro` | 宏观策略师 |
+| `industry` | 行业研究家 |
+| `sentiment` | 消息面猎手 |
+| `identifier` | 专家鉴别 Agent |
+
+```bash
+# 早报：8 专家 full_parallel → Supervisor 仲裁 → 飞书
+agent-reach daily-run morning -i snapshot.json --save-baseline
+
+# 收盘复盘：8 专家 + 基线验证 → 飞书
+agent-reach daily-run close -i eod_snapshot.json
+
+# 列出全部专家
+agent-reach daily-run plugins list
+```
+
+配置：`config/daily_run_settings.json` → `team.experts` / `team.parallel`
+
+### 专家插件（macro / technical / sentiment …）
+
+```bash
+agent-reach daily-run plugins list
+agent-reach daily-run plugins run -i snapshot.json
+agent-reach daily-run plugins run -i snapshot.json --names macro,technical
+```
+
+插件输出 `expert_scores` 并回填 `mss_breakdown`，随后可走 evaluate/push 流水线。
+
+内置插件：
+
+| 插件 | 角色 | 输入 |
+|------|------|------|
+| `macro` | 宏观策略师 | fx / global / macro_summary |
+| `technical` | 技术分析派 | price / ma20 / position_20d / volume_ratio |
+| `sentiment` | 消息面猎手 | flow / sentiment / sources |
+
+### Grid Search 参数优化
+
+```bash
+agent-reach daily-run optimize -i config/daily_run_history.example.json
+agent-reach daily-run optimize -i config/daily_run_history_factors.example.json --objective sharpe_proxy
+agent-reach daily-run optimize -i history.json --save --push
+```
+
+优化维度：
+- `macro_veto` × `aggressive_entry` 阈值网格
+- 若 history 含 `fx/flow/global/sentiment` 字段，同时搜索 `mss_weights`
+
+`--save` 写入 `~/.agent-reach/daily_run_settings.json`
+
+### 一键工作流（推荐）
+
+**早盘（专家 → 审计 → 推送）：**
+```bash
+agent-reach daily-run morning -i snapshot.json --save-baseline
+# 可选 AKShare 补全：--code 688008 --fetch
+# 预览：--dry-run
+```
+
+**收盘（对比早盘基线 → 验证推送）：**
+```bash
+agent-reach daily-run close -i eod_snapshot.json
+# 自动读取 ~/.agent-reach/daily_run/last_morning.json
+# 或指定：-b morning.json
+```
+
+**盘中（S1-S10 扫描 + T1-T5 调仓 · Lookback MSS）：**
+```bash
+# 记录一次数据收集 S_n 并推送飞书
+agent-reach daily-run intraday -i snapshot.json --scan
+
+# 扫描 + 调仓评估（Lookback 加权 MSS → 买/卖/观望）
+agent-reach daily-run intraday -i snapshot.json --scan --trade
+
+# 仅调仓评估（需已有扫描记录）
+agent-reach daily-run intraday -i snapshot.json --trade
+
+# 查看/重置今日状态
+agent-reach daily-run intraday --status
+agent-reach daily-run intraday --reset
+
+# 预览不推送
+agent-reach daily-run intraday -i snapshot.json --scan --dry-run
+```
+
+Lookback 权重（默认 50%/30%/20%）来自 `config/daily_run_settings.json` 的 `lookback_weights`。
+状态持久化：`~/.agent-reach/daily_run/intraday_state.json`（按日自动重置）。
+
+---
+
+## 🤖 自动 Snapshot + 定时任务
+
+### 持仓配置 → 自动 Snapshot
+
+复制并编辑持仓文件（或使用示例）：
+
+```bash
+cp config/daily_run_portfolio.example.json ~/.agent-reach/daily_run/portfolio.json
+agent-reach daily-run build-snapshot --save
+# 预览：agent-reach daily-run build-snapshot
+# 跳过行情拉取：--no-enrich
+```
+
+自动填充：主标的 `price/ma20`、持仓/观察池现价、sources.quote、portfolio 块。
+
+数据源优先级：**雪球 Cookie** → AKShare 兜底。
+
+### Cron 定时（Asia/Shanghai）
+
+```bash
+# 查看推荐 crontab
+agent-reach daily-run schedule print
+
+# 安装到当前用户 crontab
+agent-reach daily-run schedule install
+
+# 立即执行（等同 cron 触发）
+agent-reach daily-run schedule run morning
+agent-reach daily-run schedule run intraday
+agent-reach daily-run schedule run close
+```
+
+默认时间表（工作日）：
+| 时间 | 任务 |
+|------|------|
+| 08:00 | 早盘分析 + 飞书推送 + 保存基线 |
+| 09:30–15:00 **10 次**扫描 | 盘中 S1–S10 + 条件调仓 T_n + 飞书 |
+| 15:30 | 收盘复盘（Team + 曲线 + Exa 模板 + 验证） |
+
+定时任务默认 **doctor 预检**、**macro_collector 实时因子**、**MSS 蒙特卡洛预测**、**A 股交易日历跳过休市**。
+
+### Phase 5 — Exa / Channel / 经验沉淀
+
+```bash
+# 收盘自动 Exa 调研（需 mcporter + Exa MCP）
+agent-reach daily-run close -i eod_snapshot.json
+
+# 经验库
+cat ~/.agent-reach/daily_run/experience/experience.jsonl
+cat ~/.agent-reach/daily_run/experience/rules_summary.json
+
+# 休市配置（可选）
+cp config/daily_run_holidays.example.json ~/.agent-reach/daily_run/holidays.json
+```
+
+- **Exa 自动调用**：收盘 `run_exa_research()` → 飞书卡片展示摘要与链接
+- **Channel 专家**：macro/sentiment 默认雪球 + Exa 增强评分
+- **经验 writeback**：收盘结论写入 `experience.jsonl` + `rules_summary.json`
+
+---
 
 ### 2. 每日 10 次数据收集 (S1 - S10)
 系统在交易日内（9:15 - 15:00）均匀或按盘口波动密集度执行 **10 次全球市场与舆情数据收集**。
 
-### 3. 每次量化调仓前审视前 3 次收集结论
+### 3. 每次量化调仓前审视前 3 次收集结论 (加权 Lookback 机制)
 每日最多进行 **5 次调仓量化机会 (T1 - T5)**。在执行任何买卖操作前，系统必须审视前 3 次收集结论，计算 MSS 评分。
+**加权 Lookback 算法：** 
+为了使决策既具备大局观，又对最新异动保持极高的敏感度，系统对前 3 次收集到的数据结论（由近到远）执行**非等权加权计算**：
+*   **最近一次数据 (S_n，时效 100%)：** 权重占比 **50%**（决定性影响，捕捉即时拐点）。
+*   **次近一次数据 (S_n-1，时效中等)：** 权重占比 **30%**（趋势确认）。
+*   **最远一次数据 (S_n-2，时效偏低)：** 权重占比 **20%**（基线参考）。
+$$\text{Final\_MSS} = 0.5 \cdot \text{MSS}(S_n) + 0.3 \cdot \text{MSS}(S_{n-1}) + 0.2 \cdot \text{MSS}(S_{n-2})$$
+只有当加权后的 $\text{Final\_MSS}$ 发生趋势性转向，或个股技术指标触发硬性买卖阈值时，才执行调仓。
 
 ### 4. 调仓时间动态自适应调整 (0 - 120 分钟实时重算)
 系统根据当前收集到的全球多市场数据分析，在 0 - 120 分钟内动态设定基础间隔。
@@ -98,15 +389,31 @@ metadata:
     # 4. 公司关键人物 LinkedIn 穿透 (分析高管变动、核心技术团队背景及履历)
     mcporter call 'exa.web_search_exa(query: "Montage Technology 澜起科技 key executives founder profile LinkedIn", numResults: 3)'
     ```
+*   **MSS 曲线拟态分析与明日预测 (MSS Curve Fitting & Prediction)：**
+    *   **曲线拟态分析：** 系统自动提取今日 10 次高频数据收集（S1 - S10）计算出的真实 MSS 评分，通过**最小二乘法进行多项式曲线拟合（Curve Fitting）**，绘制出今日宏观情绪的日内演变曲线，分析其一阶导数（斜率）和二阶导数（加速度），研判尾盘情绪是加速杀跌、减速筑底还是反弹拉升。
+    *   **预测与实盘对比说明 (Prediction vs. Actual Comparison)：** 
+        1.  将今日 10 次数据收集的**真实 MSS 值**与今日早上 8:00 早报中预测的 **MSS 波动范围**进行重合度对比。
+        2.  **深度剖析偏差原因：** 详细拆解并说明导致预测偏差的盘中突发变量（如：*“今日真实 MSS 触及 34 分，跌破早报预测下沿 38 分，主因是 13:30 外资砸盘流速超预期，且离岸人民币贬值突破 7.2910 阻力位，导致流动性超预期收紧”*），实现算法模型的每日迭代与自我修正。
+        3.  **明日 MSS 范围预测：** 结合尾盘拟合曲线的切线斜率、美股期指夜盘走势、以及隔夜政策预期，通过**蒙特卡洛模拟**进行 1000 次路径演推，预估明日早盘 8:00 的 MSS 初始分值范围（如：*“今日尾盘 MSS 呈现减速筑底态势（斜率由负转正），预估明日早盘 MSS 初始分值范围为 [45, 58] 分”*），为明天的操盘策略提供极具前瞻性的量化支撑。
 *   **生成明日早盘指导建议：**
     *   将 Exa 调研获取的**财报硬数据、竞品核心参数、行业供需拐点、高管变动舆情**进行交叉验证。
     *   为明天的 8:00 早盘分析提供高置信度、可落地的核心指导建议（如：*“澜起科技核心竞品 Rambus 最新财报超预期，验证 DDR5 强劲需求，明日早盘建议维持高配”*）。
 
 ---
 
-## 📊 股票大师多市场共振与技术面量化决策模型
+## 📊 股票大师多市场共振与技术面量化决策模型 (巴菲特价值选股 × 量化择时融合版)
 
-本模型将**全球多市场共振因子**与**技术指标**深度融合，作为每日买卖操作的最高准则：
+本模型将**巴菲特的“安全边际与护城河”价值选股法则**与**专业量化交易员的“多市场共振与技术面”择时算法**深度融合，作为每日买卖操作的最高准则：
+
+### 1. 第一道关卡：巴菲特价值选股过滤器 (Moat & Safety Margin Filter)
+任何标的在进入盘中量化择时前，必须通过巴菲特价值选股过滤器的硬性筛选，**不满足以下定性与定量指标的标的，系统直接一票否决，禁止买入**：
+*   **企业护城河 (Moat)：** 必须具备极高的技术壁垒或行业垄断地位。毛利率必须 **>35%**（如澜起科技互连芯片毛利率高达 71.5%），且核心技术团队（在 LinkedIn 穿透中）必须保持高度稳定。
+*   **绝对安全边际 (Margin of Safety)：** 
+    *   **定量硬约束：** 动态 **PEG（市盈率相对盈利增长比率）必须 < 1.2**（如兆易创新 Q1 净利暴增 523% 对应 PEG 仅为 0.15），且 **ROE（净资产收益率）> 15%**，确保不是无业绩支撑的纯概念炒作。
+    *   **定性硬约束：** 核心管理层无丑闻、无大股东非正常大额减持预案。
+
+### 2. 第二道关卡：量化交易员择时决策矩阵 (MSS & Technical Resonance)
+通过巴菲特过滤器筛选后的顶级企业，系统将启动多市场共振与技术面择时算法，执行最优价格猎杀：
 
 | 全球共振因子 (美股/港股/资金) | 宏观因子 (美元/大宗) | 技术面均线 (MA5/MA20) | 20日价格位置 | 操盘策略 | 典型案例 |
 | :--- | :--- | :--- | :---: | :--- | :--- |
@@ -114,6 +421,10 @@ metadata:
 | **美股科技股(费半)大涨** + **外资(北向)流入** | 产业政策利好 | **多头趋势** (收盘>MA20) | **50% - 60%** (中位) | **防守型买入 / 顺周期配置** | 兆易创新 (存储芯片) |
 | **美股大跌** + **外资(北向)大幅净流出** | 美元指数走强 | **强烈多头** (收盘>MA20 且 MA5>MA20) | **>70%** (偏高) | **等回踩 MA5/MA20，不追高** | `000725`京东方A (玻璃基板热点) |
 | **中概股暴跌** + **南北向资金全线流出** | 全球流动性收紧 | **震荡/破位** (收盘<MA20) | **<40%** (偏低) | **严格风控，暂时观望** | `688256` 寒武纪 (算力回调) |
+
+### 3. 极致风控与交易摩擦控制 (Anti-Churning & Slippage Control)
+*   **滑点与摩擦惩罚 (Slippage Penalty)：** 引入交易摩擦惩罚函数。如果 Final_MSS 算出的预期收益率不能覆盖双边交易成本（0.15%）与预估滑点（0.1%），系统强制取消交易，以对抗频繁交易带来的损耗。
+*   **持股生命周期硬约束 (Holding Lifecycle)：** 极度厌恶频繁换手。个股买入后，除触发硬性止损（跌破 MA20 且亏损 > -4%）或宏观极速避险（MSS < 40分）外，**3 个交易日内禁止执行任何主动卖出操作**，以静制动，对抗日内噪音。
 
 ---
 
@@ -144,6 +455,36 @@ metadata:
 ---
 
 ## 🛠️ 运维与排障指南
+
+### 0. 飞书推送配置（App Bot 模式 · 当前使用）
+
+目标群：**《每天股票量化交易》**
+
+**方式 A — CLI 本地配置（推荐）：**
+```bash
+agent-reach configure feishu-app-id cli_xxxxxxxxxxxxx
+agent-reach configure feishu-app-secret xxxxxxxxxxxxxxxx
+agent-reach configure feishu-chat-id oc_xxxxxxxxxxxxx
+agent-reach notify feishu --test
+agent-reach doctor   # 通知集成应显示 ✅ 飞书消息推送
+```
+
+**方式 B — Cloud Agent Secrets（云端自动推送）：**
+在 [Cursor Dashboard → Cloud Agents → Secrets](https://cursor.com/dashboard/cloud-agents) 配置：
+- `FEISHU_APP_ID`
+- `FEISHU_APP_SECRET`
+- `FEISHU_CHAT_ID`
+
+配置后重启 Agent 任务。推送命令：
+```bash
+agent-reach notify feishu --title "标题" --text "Markdown 正文"
+```
+
+**方式 C — Webhook 群机器人（更简单，无需 chat_id）：**
+```bash
+agent-reach configure feishu-webhook-url https://open.feishu.cn/open-apis/bot/v2/hook/your_key
+agent-reach notify feishu --test
+```
 
 ### 1. 提示 "LLM API Key 未配置"
 *   **原因：** Cursor Cloud Agent 运行在隔离沙箱中，新配置的 Secrets 无法在当前热会话中生效。

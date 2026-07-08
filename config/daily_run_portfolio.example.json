@@ -1,0 +1,27 @@
+{
+  "description": "股票大师实盘持仓配置 — 用于自动生成 daily-run snapshot",
+  "primary_code": "688008",
+  "total": 91938,
+  "cash_ratio": 0.61,
+  "cash": 56208,
+  "mss_breakdown": {
+    "fx": 35,
+    "flow": 48,
+    "global": 38,
+    "sentiment": 50
+  },
+  "mss_range": [40, 52],
+  "macro_summary": "三星利好出尽，存储链分化；MSS 预测区间 [40, 52]",
+  "holdings": [
+    {"code": "688008", "name": "澜起科技", "shares": 100, "cost": 255.87},
+    {"code": "002273", "name": "水晶光电", "shares": 300, "cost": 33.81}
+  ],
+  "watchlist": [
+    {"code": "603986", "name": "兆易创新"},
+    {"code": "000725", "name": "京东方A"}
+  ],
+  "sources_overrides": {
+    "flow": {"summary": "北向资金净流入 12.36 亿"},
+    "sentiment": {"summary": "雪球存储芯片/DDR5 景气讨论活跃"}
+  }
+}

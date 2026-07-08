@@ -1,0 +1,10 @@
+[
+  {"date": "2026-07-01", "fx": 55, "flow": 58, "global": 52, "sentiment": 54, "price": 100, "return": 0.012},
+  {"date": "2026-07-02", "fx": 53, "flow": 55, "global": 50, "sentiment": 52, "price": 101, "return": 0.005},
+  {"date": "2026-07-03", "fx": 48, "flow": 50, "global": 47, "sentiment": 49, "price": 100.5, "return": -0.004},
+  {"date": "2026-07-04", "fx": 35, "flow": 38, "global": 36, "sentiment": 37, "price": 98, "return": -0.022},
+  {"date": "2026-07-05", "fx": 34, "flow": 36, "global": 35, "sentiment": 36, "price": 96, "return": -0.015},
+  {"date": "2026-07-06", "fx": 40, "flow": 42, "global": 39, "sentiment": 41, "price": 97, "return": 0.008},
+  {"date": "2026-07-07", "fx": 38, "flow": 40, "global": 37, "sentiment": 39, "price": 97.5, "return": 0.004},
+  {"date": "2026-07-08", "fx": 35, "flow": 48, "global": 38, "sentiment": 50, "price": 98, "return": 0.006}
+]

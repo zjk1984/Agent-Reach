@@ -1,0 +1,132 @@
+# -*- coding: utf-8
+"""Experience writeback — atomize close review into rule library."""
+
+from __future__ import annotations
+
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Optional
+
+
+def experience_dir() -> Path:
+    return Path.home() / ".agent-reach" / "daily_run" / "experience"
+
+
+def append_experience_entry(
+    snapshot: dict[str, Any],
+    verify: dict[str, Any],
+    *,
+    curve: Optional[dict[str, Any]] = None,
+    research: Optional[list[dict[str, Any]]] = None,
+    settings: Optional[dict[str, Any]] = None,
+) -> Path:
+    """Append one close review atom to experience.jsonl and update rules summary."""
+    cfg = (settings or {}).get("experience", {})
+    if cfg.get("enabled") is False:
+        return experience_dir() / "experience.jsonl"
+
+    out_dir = experience_dir()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    jsonl_path = out_dir / "experience.jsonl"
+
+    rules = _distill_rules(snapshot, verify, curve)
+    entry = {
+        "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+        "at": datetime.now(timezone.utc).isoformat(),
+        "code": snapshot.get("code"),
+        "name": snapshot.get("name"),
+        "mss_final": snapshot.get("mss_final") or verify.get("mss_current"),
+        "verdict": verify.get("verdict_current"),
+        "mss_delta": verify.get("mss_delta"),
+        "prediction_hit": verify.get("mss_within_prediction"),
+        "deviations": verify.get("deviations") or [],
+        "recommendations": verify.get("recommendations") or [],
+        "curve_trend": (curve or {}).get("trend"),
+        "rules": rules,
+        "research_count": len(research or []),
+    }
+
+    with open(jsonl_path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+    _update_rules_summary(out_dir / "rules_summary.json", rules, cfg)
+    return jsonl_path
+
+
+def load_recent_experience(limit: int = 10) -> list[dict[str, Any]]:
+    path = experience_dir() / "experience.jsonl"
+    if not path.exists():
+        return []
+    lines = path.read_text(encoding="utf-8").strip().splitlines()
+    out = []
+    for line in lines[-limit:]:
+        try:
+            out.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return out
+
+
+def render_experience_markdown(limit: int = 3) -> str:
+    recent = load_recent_experience(limit)
+    if not recent:
+        return ""
+    lines = ["**📚 经验沉淀（最近）**", ""]
+    for e in reversed(recent):
+        hit = "✅" if e.get("prediction_hit") else "—"
+        lines.append(
+            f"- {e.get('date')} {e.get('name')} MSS={e.get('mss_final')} {hit} "
+            + "；".join((e.get("rules") or [])[:2])
+        )
+    return "\n".join(lines)
+
+
+def _distill_rules(
+    snapshot: dict[str, Any],
+    verify: dict[str, Any],
+    curve: Optional[dict[str, Any]],
+) -> list[str]:
+    rules: list[str] = []
+    vc = verify.get("verdict_current")
+    if vc == "回避":
+        rules.append("宏观一票否决生效：维持高现金，禁止接飞刀")
+    elif vc == "观察":
+        cash = (snapshot.get("portfolio") or {}).get("cash_ratio")
+        if cash is not None and float(cash) >= 0.4:
+            rules.append(f"观察态下现金 {float(cash):.0%} 符合风控")
+
+    if verify.get("mss_within_prediction") is False:
+        rules.append("MSS 预测偏离：下日调低进攻阈值或缩窄仓位")
+    elif verify.get("mss_within_prediction") is True:
+        rules.append("MSS 预测命中：维持当前权重配置")
+
+    if curve and curve.get("trend") in ("加速杀跌", "震荡走弱"):
+        rules.append(f"尾盘曲线 {curve['trend']}：次日早盘偏防御")
+    elif curve and curve.get("trend") in ("加速反弹", "震荡走强"):
+        rules.append(f"尾盘曲线 {curve['trend']}：可保留观察池条件性机会")
+
+    for d in (verify.get("deviations") or [])[:2]:
+        rules.append(f"偏差：{d}")
+    for r in (verify.get("recommendations") or [])[:2]:
+        rules.append(f"建议：{r}")
+
+    return rules[:6]
+
+
+def _update_rules_summary(path: Path, new_rules: list[str], cfg: dict[str, Any]) -> None:
+    data: dict[str, Any] = {"updated_at": datetime.now(timezone.utc).isoformat(), "rules": []}
+    if path.exists():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            pass
+
+    existing = list(data.get("rules") or [])
+    for rule in new_rules:
+        if rule not in existing:
+            existing.append(rule)
+    max_rules = int(cfg.get("max_rules", 50))
+    data["rules"] = existing[-max_rules:]
+    data["updated_at"] = datetime.now(timezone.utc).isoformat()
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

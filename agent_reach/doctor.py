@@ -7,6 +7,7 @@ Each channel knows how to check itself. Doctor just collects the results.
 from typing import Dict
 from agent_reach.config import Config
 from agent_reach.channels import get_all_channels
+from agent_reach.integrations.feishu import check_feishu
 
 
 def check_all(config: Config) -> Dict[str, dict]:
@@ -33,6 +34,21 @@ def check_all(config: Config) -> Dict[str, dict]:
             "active_backend": active,
         }
     return results
+
+
+def check_integrations(config: Config) -> Dict[str, dict]:
+    """Check optional outbound integrations (notifications, etc.)."""
+    status, message, active = check_feishu(config)
+    return {
+        "feishu": {
+            "status": status,
+            "name": "飞书消息推送",
+            "message": message,
+            "tier": 1,
+            "backends": ["App Bot API", "Webhook Bot"],
+            "active_backend": active,
+        }
+    }
 
 
 def _name_msg(r: dict, escape) -> str:
@@ -96,6 +112,19 @@ def format_report(results: Dict[str, dict]) -> str:
     lines.append("")
     status_color = "green" if ok_count == total else ("yellow" if ok_count > 0 else "red")
     lines.append(f"状态：[{status_color}]{ok_count}/{total}[/{status_color}] 个渠道可用")
+
+    integrations = check_integrations(Config())
+    if integrations:
+        lines.append("")
+        lines.append("[bold]通知集成：[/bold]")
+        for r in integrations.values():
+            name_msg = _name_msg(r, escape)
+            if r["status"] == "ok":
+                lines.append(f"  [green]✅[/green] {name_msg}")
+            elif r["status"] == "warn":
+                lines.append(f"  [yellow][!][/yellow]  {name_msg}")
+            else:
+                lines.append(f"  [red][X][/red]  {name_msg}")
 
     # Summarize inactive optional channels in one line instead of listing each
     all_inactive = list(tier1_inactive.values()) + list(tier2_inactive.values())

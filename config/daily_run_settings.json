@@ -1,0 +1,165 @@
+{
+  "version": "1.0.0",
+  "description": "股票大师 daily_run_skill 外置配置",
+
+  "mss_weights": {
+    "fx": 0.3,
+    "flow": 0.3,
+    "global": 0.2,
+    "sentiment": 0.2
+  },
+
+  "lookback_weights": [0.5, 0.3, 0.2],
+
+  "thresholds": {
+    "macro_veto": 40,
+    "aggressive_entry": 50,
+    "min_cash_ratio": 0.4,
+    "max_price_deviation_pct": 0.08,
+    "max_snapshot_age_hours": 24,
+    "high_position_20d": 0.7,
+    "low_position_20d": 0.4,
+    "min_volume_ratio": 1.0,
+    "max_vwap_deviation_pct": 0.04
+  },
+
+  "buffett_filter": {
+    "min_gross_margin": 0.35,
+    "max_peg": 1.2,
+    "min_roe": 0.15
+  },
+
+  "trading": {
+    "commission_rate": 0.0015,
+    "slippage_rate": 0.001,
+    "stop_loss_ma20_pct": 0.04,
+    "holding_lock_days": 3
+  },
+
+  "quality_gate": {
+    "required_fields": [
+      "verdict",
+      "confidence",
+      "mss_final",
+      "reasoning",
+      "invalidation",
+      "evidence_chain"
+    ],
+    "block_push_on_fail": true,
+    "allow_downgrade_on_missing_technical": true
+  },
+
+  "data_audit": {
+    "required_source_categories": ["quote", "flow", "sentiment"],
+    "block_on_audit_fail": true,
+    "block_on_price_deviation": true,
+    "required_doctor_channels": ["web", "xueqiu"]
+  },
+
+  "verdict_labels": {
+    "buy": "可做",
+    "watch": "观察",
+    "avoid": "回避"
+  },
+
+  "confidence_levels": ["高", "中", "低"],
+
+  "report": {
+    "feishu_template_premarket": "orange",
+    "feishu_template_intraday": "blue",
+    "feishu_template_close": "purple",
+    "feishu_template_verify": "purple"
+  },
+
+  "akshare": {
+    "enabled": true,
+    "default_history_days": 60,
+    "adjust": "qfq",
+    "lookback_days": 20
+  },
+
+  "backtest": {
+    "default_initial_capital": 100000,
+    "commission_rate": 0.0015,
+    "macro_veto": 40,
+    "aggressive_entry": 50
+  },
+
+  "optimizer": {
+    "macro_veto_grid": [38, 40, 42, 45],
+    "aggressive_entry_grid": [48, 50, 52, 55],
+    "default_objective": "excess_return",
+    "mss_weight_grid": [
+      {"fx": 0.3, "flow": 0.3, "global": 0.2, "sentiment": 0.2},
+      {"fx": 0.25, "flow": 0.35, "global": 0.2, "sentiment": 0.2},
+      {"fx": 0.35, "flow": 0.25, "global": 0.2, "sentiment": 0.2},
+      {"fx": 0.2, "flow": 0.3, "global": 0.3, "sentiment": 0.2}
+    ]
+  },
+
+  "plugins": {
+    "enabled": [
+      "fundamental",
+      "technical",
+      "quant",
+      "risk",
+      "macro",
+      "industry",
+      "sentiment",
+      "identifier"
+    ],
+    "parallel": true,
+    "channel_enrich": true,
+    "exa_research_on_close": true,
+    "max_exa_queries": 3,
+    "exa_timeout": 45,
+    "max_exa_queries_per_expert": 1
+  },
+
+  "team": {
+    "mode": "full_parallel",
+    "experts": [
+      "fundamental",
+      "technical",
+      "quant",
+      "risk",
+      "macro",
+      "industry",
+      "sentiment",
+      "identifier"
+    ],
+    "parallel": true,
+    "supervisor": true,
+    "morning_team_first": true,
+    "close_team_first": true
+  },
+
+  "macro_collector": {
+    "enabled": true,
+    "sentiment_post_limit": 5
+  },
+
+  "mss_forecast": {
+    "simulations": 200,
+    "base_spread": 8,
+    "vol_multiplier": 6
+  },
+
+  "schedule": {
+    "intraday_trade_enabled": true,
+    "trade_min_scans": 3,
+    "trade_every_n_scans": 2,
+    "morning_doctor": true
+  },
+
+  "trade_calendar": {
+    "enabled": true,
+    "skip_on_holiday": true
+  },
+
+  "experience": {
+    "enabled": true,
+    "max_rules": 50,
+    "max_entries": 200
+  }
+}
