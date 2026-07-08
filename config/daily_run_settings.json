@@ -167,6 +167,10 @@
     "candidates": []
   },
 
+  "close_improvements": {
+    "enabled": true
+  },
+
   "trade_calendar": {
     "enabled": true,
     "skip_on_holiday": true

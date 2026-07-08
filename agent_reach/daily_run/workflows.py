@@ -9,6 +9,10 @@ from typing import Any, Optional
 
 from agent_reach.daily_run.pipeline import evaluate_snapshot, render_markdown
 from agent_reach.daily_run.settings import load_settings
+from agent_reach.daily_run.close_improvements import (
+    generate_close_improvements,
+    render_improvements_markdown,
+)
 from agent_reach.daily_run.close_research import render_research_markdown, run_exa_research
 from agent_reach.daily_run.curve_analysis import analyze_intraday_curve, render_curve_markdown
 from agent_reach.daily_run.experience import append_experience_entry, render_experience_markdown
@@ -94,6 +98,9 @@ def run_close(
     push: bool = True,
     title: Optional[str] = None,
     config=None,
+    intraday_scans: Optional[list[dict[str, Any]]] = None,
+    intraday_trades: Optional[list[dict[str, Any]]] = None,
+    watchlist_adjust: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Close workflow: Team-First experts → verify baseline vs current → Feishu push."""
     cfg = settings or load_settings()
@@ -135,6 +142,21 @@ def run_close(
     if exp_md:
         extra_parts.append(exp_md)
 
+    scans = intraday_scans or enriched.get("intraday_scans") or []
+    improvements = generate_close_improvements(
+        baseline=baseline,
+        current=enriched,
+        verify=verify_dict,
+        settings=cfg,
+        curve=curve,
+        scans=scans,
+        trades=intraday_trades or [],
+        watchlist_adjust=watchlist_adjust,
+    )
+    imp_md = render_improvements_markdown(improvements)
+    if imp_md:
+        extra_parts.append(imp_md)
+
     md = "\n\n---\n\n".join(extra_parts + [render_verify_markdown(verify)]) if extra_parts else render_verify_markdown(verify)
 
     feishu_result = None
@@ -153,6 +175,7 @@ def run_close(
         "team_markdown": team_md,
         "research": research_results,
         "experience_path": str(exp_path),
+        "improvements": improvements.to_dict(),
         "feishu": feishu_result,
     }
 
