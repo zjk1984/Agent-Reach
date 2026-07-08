@@ -179,7 +179,8 @@ def run_scheduled(
     feishu = None
 
     if job == "morning":
-        from agent_reach.daily_run.intraday import record_scan_from_evaluation
+        from agent_reach.daily_run.intraday import load_state, record_scan_from_evaluation
+        from agent_reach.daily_run.pipeline import evaluate_snapshot
         from agent_reach.daily_run.portfolio_manager import increment_holding_days, is_auto_adjust_enabled
         from agent_reach.daily_run.watchlist_manager import adjust_watchlist, is_watchlist_adjust_enabled
 
@@ -193,6 +194,19 @@ def run_scheduled(
                 config=cfg_obj,
                 settings=settings,
             )
+
+            # 07:00 cron 未跑时（fork 仓库常见）：用盘前 snapshot 补 S1，08:00 全量仍为 S2
+            s1_backfill = None
+            state = load_state()
+            if not state.scans:
+                pre_eval = evaluate_snapshot(snap, settings, doctor_channels=doctor)
+                s1_backfill = record_scan_from_evaluation(
+                    snap,
+                    pre_eval,
+                    settings=settings,
+                    source="premarket",
+                )
+
             run_result = run_morning(
                 snap,
                 settings=settings,
@@ -212,6 +226,9 @@ def run_scheduled(
             )
             run_result["steps"].append("scan_s2")
             run_result["scan"] = scan_result
+            if s1_backfill is not None:
+                run_result["s1_backfill"] = s1_backfill
+                run_result["steps"].append("scan_s1_backfill")
 
             wl_result = None
             if is_watchlist_adjust_enabled(settings):

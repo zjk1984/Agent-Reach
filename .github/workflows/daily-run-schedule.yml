@@ -66,6 +66,9 @@ jobs:
   run:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
     env:
       TZ: Asia/Shanghai
       INPUT_JOB: ${{ github.event.inputs.job }}
@@ -73,6 +76,17 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Fork schedule notice
+        run: |
+          set -euo pipefail
+          is_fork=$(gh api "repos/${{ github.repository }}" --jq '.isFork' 2>/dev/null || echo "unknown")
+          if [ "$is_fork" = "true" ]; then
+            echo "::warning::Fork 仓库的 cron 默认不会自动触发。请到 Actions 页点击「Enable scheduled workflows」，或使用 scripts/dispatch-daily-run-local-cron.sh 本地定时触发。"
+          fi
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            echo "Scheduled run fired: schedule=${{ github.event.schedule }}"
+          fi
 
       - name: Resolve job (北京时间)
         id: resolve
