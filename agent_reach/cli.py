@@ -183,6 +183,51 @@ def main():
         default=None,
         help="Expected return pct for friction check (e.g. 0.012 = 1.2%%)",
     )
+    p_dr_build = p_daily_sub.add_parser(
+        "build-snapshot",
+        help="Auto-build snapshot from portfolio config + live quotes",
+    )
+    p_dr_build.add_argument(
+        "--portfolio", "-p", default="",
+        help="Portfolio JSON (default: ~/.agent-reach/daily_run/portfolio.json)",
+    )
+    p_dr_build.add_argument(
+        "--output", "-o", default="",
+        help="Write snapshot JSON (default: stdout or last_snapshot.json with --save)",
+    )
+    p_dr_build.add_argument("--save", action="store_true",
+                            help="Save to ~/.agent-reach/daily_run/last_snapshot.json")
+    p_dr_build.add_argument(
+        "--report-type",
+        default="intraday",
+        choices=["premarket", "intraday", "close"],
+        help="Snapshot report type",
+    )
+    p_dr_build.add_argument("--code", default="", help="Override primary stock code")
+    p_dr_build.add_argument("--no-enrich", action="store_true",
+                            help="Skip live quote fetch (use portfolio static prices)")
+    p_dr_sched = p_daily_sub.add_parser("schedule", help="Cron schedule for morning/intraday/close")
+    p_dr_sched.add_argument(
+        "schedule_action",
+        nargs="?",
+        choices=["print", "install", "run"],
+        default="print",
+        help="print crontab | install crontab | run job now",
+    )
+    p_dr_sched.add_argument(
+        "job_name",
+        nargs="?",
+        default="",
+        help="Job for schedule run (e.g. schedule run intraday)",
+    )
+    p_dr_sched.add_argument(
+        "--job",
+        default="",
+        choices=["morning", "intraday", "close"],
+        help="Job for schedule run (alternative to positional job_name)",
+    )
+    p_dr_sched.add_argument("--dry-run", action="store_true",
+                            help="Print crontab block without installing (install action)")
     p_daily_sub.add_parser("sample", help="Print example snapshot JSON to stdout")
 
     # ── doctor ──
@@ -1673,8 +1718,84 @@ def _cmd_daily_run(args):
             print(result["markdown"])
         return
 
+    if args.daily_action == "build-snapshot":
+        from agent_reach.config import Config
+        from agent_reach.daily_run.snapshot_builder import build_snapshot, load_portfolio
+
+        portfolio_path = Path(args.portfolio) if args.portfolio else None
+        portfolio = load_portfolio(portfolio_path) if portfolio_path else load_portfolio()
+        snap = build_snapshot(
+            portfolio,
+            report_type=args.report_type,
+            primary_code=args.code or None,
+            config=Config(),
+            enrich=not args.no_enrich,
+        )
+        out_text = json.dumps(snap, ensure_ascii=False, indent=2)
+        if args.save or args.output:
+            out_path = Path(args.output) if args.output else (
+                Path.home() / ".agent-reach" / "daily_run" / "last_snapshot.json"
+            )
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(out_text + "\n", encoding="utf-8")
+            print(f"✅ Snapshot written to {out_path}")
+            print(f"   code={snap.get('code')} price={snap.get('price')} holdings={len(snap.get('portfolio', {}).get('holdings', []))}")
+        else:
+            print(out_text)
+        return
+
+    if args.daily_action == "schedule":
+        from agent_reach.config import Config
+        from agent_reach.daily_run.schedule import install_crontab, render_crontab_block, run_scheduled
+
+        if args.schedule_action == "print":
+            print(render_crontab_block())
+            return
+
+        if args.schedule_action == "install":
+            try:
+                block = install_crontab(dry_run=args.dry_run)
+            except RuntimeError as exc:
+                print(f"⚠️ {exc}")
+                sys.exit(0 if "crontab.txt" in str(exc) else 1)
+            if args.dry_run:
+                print(block)
+            else:
+                print("✅ Crontab installed (Asia/Shanghai)")
+                print(render_crontab_block())
+            return
+
+        if args.schedule_action == "run":
+            job = args.job or args.job_name or "intraday"
+            if job not in ("morning", "intraday", "close"):
+                print("❌ job must be morning, intraday, or close")
+                sys.exit(1)
+            try:
+                result = run_scheduled(job, push=not args.dry_run, config=Config())
+            except Exception as exc:
+                print(f"❌ Schedule run failed: {exc}")
+                sys.exit(1)
+            job_result = result.get("result") or {}
+            print(f"✅ Scheduled job '{job}' completed")
+            print(f"   snapshot: {result.get('snapshot_path')}")
+            if job == "morning":
+                report = (job_result.get("evaluation") or {}).get("report") or {}
+                print(f"   verdict={report.get('verdict')} MSS={report.get('mss_final')}")
+            elif job == "intraday":
+                scan = (job_result.get("scan") or {}).get("scan") or {}
+                print(f"   {scan.get('scan_id')} MSS={scan.get('mss_final')} · {scan.get('verdict')}")
+            elif job == "close":
+                verify = job_result.get("verify") or {}
+                print(f"   summary: {verify.get('summary', '')[:80]}")
+            if not args.dry_run:
+                print("   Feishu push sent")
+            return
+
+        print("Usage: agent-reach daily-run schedule {print|install|run} [--job morning|intraday|close]")
+        sys.exit(1)
+
     if args.daily_action not in ("evaluate", "push"):
-        print("Usage: agent-reach daily-run {morning|close|intraday|evaluate|push|fetch|verify|backtest|optimize|plugins|sample} ...")
+        print("Usage: agent-reach daily-run {morning|close|intraday|build-snapshot|schedule|evaluate|push|fetch|verify|backtest|optimize|plugins|sample} ...")
         sys.exit(1)
 
     path = Path(args.input)
