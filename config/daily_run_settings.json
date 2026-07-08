@@ -173,6 +173,7 @@
   "close_code_review": {
     "enabled": true,
     "auto_fix_portfolio": true,
+    "walk_on_close": false,
     "run_smoke_tests": false,
     "walk_modules": [
       "portfolio_manager.py",

@@ -19,6 +19,7 @@ from agent_reach.daily_run.portfolio_manager import (
     watchlist_capacity,
 )
 from agent_reach.daily_run.snapshot_builder import _normalize_code
+from agent_reach.daily_run.symbols import copy_portfolio
 
 DEFAULT_WALK_MODULES = (
     "portfolio_manager.py",
@@ -83,13 +84,14 @@ def run_close_code_review(
     if cfg.get("enabled") is False:
         return CodeReviewResult(portfolio=portfolio)
 
-    out = CodeReviewResult(portfolio=_copy_portfolio(portfolio))
+    out = CodeReviewResult(portfolio=copy_portfolio(portfolio))
     auto_fix = cfg.get("auto_fix_portfolio", True) is not False
 
     _review_portfolio(out, snapshot, settings, auto_fix=auto_fix)
     _review_intraday_state(out, scans or [], trades or [], settings)
     _review_today_manifests(out)
-    _walk_source_modules(out, settings)
+    if cfg.get("walk_on_close", False) is True:
+        _walk_source_modules(out, settings)
 
     if cfg.get("run_smoke_tests") is True:
         out.smoke_tests = _run_smoke_tests(settings)
@@ -518,10 +520,3 @@ def _trim_watchlist_by_snapshot(
 
     ranked = sorted(wl, key=score, reverse=True)
     return ranked[:limit]
-
-
-def _copy_portfolio(portfolio: dict[str, Any]) -> dict[str, Any]:
-    pf = dict(portfolio)
-    pf["holdings"] = [dict(h) for h in (portfolio.get("holdings") or [])]
-    pf["watchlist"] = [dict(w) for w in (portfolio.get("watchlist") or [])]
-    return pf

@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 from agent_reach.daily_run.exa_client import ExaError, is_exa_available, summarize_hits, web_search_exa
 
@@ -56,30 +56,36 @@ def run_exa_research(
     settings: dict[str, Any],
 ) -> list[dict[str, Any]]:
     """Execute Exa searches for close review; returns list of {label, query, hits, summary}."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     cfg = settings.get("plugins", {})
     if not cfg.get("exa_research_on_close", True):
         return []
 
     max_queries = int(cfg.get("max_exa_queries", 3))
     timeout = int(cfg.get("exa_timeout", 45))
-    results: list[dict[str, Any]] = []
 
     if not is_exa_available():
-        return results
+        return []
 
-    for q in build_research_queries(snapshot)[:max_queries]:
+    queries = build_research_queries(snapshot)[:max_queries]
+    if not queries:
+        return []
+
+    def _run_one(q: dict[str, str]) -> dict[str, Any]:
         try:
             hits = web_search_exa(q["query"], num_results=3, timeout=timeout)
-            results.append({
-                **q,
-                "hits": hits,
-                "summary": summarize_hits(hits),
-                "success": True,
-            })
+            return {**q, "hits": hits, "summary": summarize_hits(hits), "success": True}
         except ExaError as exc:
-            results.append({**q, "hits": [], "summary": str(exc), "success": False})
+            return {**q, "hits": [], "summary": str(exc), "success": False}
 
-    return results
+    workers = min(max_queries, 3)
+    ordered: list[Optional[dict[str, Any]]] = [None] * len(queries)
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(_run_one, q): i for i, q in enumerate(queries)}
+        for fut in as_completed(futures):
+            ordered[futures[fut]] = fut.result()
+    return [r for r in ordered if r is not None]
 
 
 def render_research_markdown(
