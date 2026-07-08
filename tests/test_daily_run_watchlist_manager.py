@@ -106,6 +106,22 @@ class TestWatchlistPolicy:
         codes = {w["code"] for w in result.portfolio["watchlist"]}
         assert "002273" in codes
 
+    def test_close_trims_watchlist_to_total_cap(self, portfolio, snapshot, settings):
+        settings.setdefault("portfolio", {})
+        settings["portfolio"]["max_holdings"] = 3
+        portfolio["watchlist"] = [
+            {"code": "603986", "name": "兆易创新"},
+            {"code": "002273", "name": "水晶光电"},
+            {"code": "000725", "name": "京东方A"},
+        ]
+        result = adjust_watchlist(portfolio, snapshot, settings, "close")
+        wl_only = {
+            w["code"]
+            for w in result.portfolio["watchlist"]
+            if w["code"] not in {h["code"] for h in portfolio["holdings"]}
+        }
+        assert len(portfolio["holdings"]) + len(wl_only) <= 3
+
     def test_intraday_phase_rejected(self, portfolio, snapshot, settings):
         result = adjust_watchlist(portfolio, snapshot, settings, "intraday")  # type: ignore[arg-type]
         assert result.applied is False

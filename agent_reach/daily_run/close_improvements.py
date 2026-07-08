@@ -90,7 +90,7 @@ def generate_close_improvements(
 
     _improve_mss(out, baseline, current, verify, curve, thresholds, settings)
     _improve_portfolio(out, current, verify, trades or [], portfolio_cfg, thresholds)
-    _improve_watchlist(out, current, watchlist_adjust, watchlist_cfg)
+    _improve_watchlist(out, current, watchlist_adjust, watchlist_cfg, portfolio_cfg)
     _improve_schedule(out, scans or [], trades or [], schedule_cfg, settings)
 
     # Always include a scan summary when we have data (confirms feature ran).
@@ -211,7 +211,17 @@ def _improve_portfolio(
     holdings = pf.get("holdings") or []
     cash_ratio = pf.get("cash_ratio")
     min_cash = float(thresholds.get("min_cash_ratio", 0.4))
-    max_h = int(portfolio_cfg.get("max_holdings", 10))
+    max_t = int(
+        portfolio_cfg["max_total_symbols"]
+        if "max_total_symbols" in portfolio_cfg
+        else portfolio_cfg.get("max_holdings", 10)
+    )
+    watchlist = current.get("watchlist") or []
+    held_codes = {str(h.get("code", "")).zfill(6)[-6:] for h in holdings}
+    wl_only = [
+        w for w in watchlist if str(w.get("code", "")).zfill(6)[-6:] not in held_codes
+    ]
+    unique_n = len(held_codes) + len(wl_only)
 
     if cash_ratio is not None:
         cr = float(cash_ratio)
@@ -230,12 +240,12 @@ def _improve_portfolio(
                 "MSS 允许进攻但仓位过轻，可在 aggressive_entry 确认后提高 deploy 比例或扩大观察池候选",
             )
 
-    if len(holdings) >= max_h:
+    if unique_n >= max_t:
         out.add(
             "portfolio",
             "medium",
-            f"持仓已满 {max_h} 只",
-            "盘中买入将被阻断；复盘时应先通过观察池置换 weakest，或提高 max_holdings",
+            f"持仓+观察池已达合计上限 {max_t} 只（持仓 {len(holdings)} + 观察 {len(wl_only)}）",
+            "需先卖出或移出弱势观察标的，才能纳入新票；可在 portfolio.max_total_symbols 调整上限",
         )
 
     losers = [h for h in holdings if (h.get("change_pct") or 0) <= -5]
@@ -280,11 +290,18 @@ def _improve_watchlist(
     current: dict[str, Any],
     watchlist_adjust: Optional[dict[str, Any]],
     watchlist_cfg: dict[str, Any],
+    portfolio_cfg: dict[str, Any],
 ) -> None:
     watchlist = current.get("watchlist") or []
     holdings = (current.get("portfolio") or {}).get("holdings") or []
     held = {str(h.get("code", "")).zfill(6)[-6:] for h in holdings}
-    max_size = int(watchlist_cfg.get("max_size", 20))
+    max_t = int(
+        portfolio_cfg["max_total_symbols"]
+        if "max_total_symbols" in portfolio_cfg
+        else portfolio_cfg.get("max_holdings", 10)
+    )
+    wl_capacity = max(0, max_t - len(held))
+    wl_only = [w for w in watchlist if str(w.get("code", "")).zfill(6)[-6:] not in held]
 
     overlap = [w for w in watchlist if str(w.get("code", "")).zfill(6)[-6:] in held]
     if overlap:
@@ -295,14 +312,14 @@ def _improve_watchlist(
             f"{len(overlap)} 只仍同时在观察池；明日早盘 adjust_watchlist 应清理，或检查复盘 adjust 是否执行",
         )
 
-    if len(watchlist) >= max_size:
+    if len(wl_only) >= wl_capacity and wl_capacity > 0:
         out.add(
             "watchlist",
             "medium",
-            f"观察池已达上限 {max_size}",
+            f"观察池非持仓标的已达 {len(wl_only)}/{wl_capacity}（合计上限 {max_t}）",
             "新增候选需先移出弱势标的；可在 watchlist.candidates 中控制质量",
         )
-    elif len(watchlist) < 2:
+    elif len(wl_only) < 2 and len(held) + len(wl_only) < max_t:
         out.add(
             "watchlist",
             "low",
