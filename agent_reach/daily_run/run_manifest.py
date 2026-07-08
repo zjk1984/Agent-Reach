@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import time
+from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -19,6 +20,20 @@ except ImportError:  # pragma: no cover
 
 def runs_dir() -> Path:
     return Path.home() / ".agent-reach" / "daily_run" / "runs"
+
+
+def _json_safe(value: Any) -> Any:
+    """Recursively convert dataclasses / nested results into JSON-serializable data."""
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    to_dict = getattr(value, "to_dict", None)
+    if callable(to_dict):
+        return _json_safe(to_dict())
+    if is_dataclass(value) and not isinstance(value, type):
+        return _json_safe(asdict(value))
+    return value
 
 
 def save_run_manifest(
@@ -41,7 +56,10 @@ def save_run_manifest(
         "feishu": feishu,
         "payload": payload,
     }
-    path.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(_json_safe(record), ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
     logger.info("daily-run manifest saved: {}", path)
     return path
 

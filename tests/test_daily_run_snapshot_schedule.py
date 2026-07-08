@@ -106,3 +106,23 @@ class TestSchedule:
         result = run_scheduled("morning", push=False)
         assert result["job"] == "morning"
         mock_save_baseline.assert_called_once()
+
+
+class TestRunManifest:
+    def test_save_run_manifest_serializes_audit_result(self, tmp_path, monkeypatch):
+        from agent_reach.daily_run.auditor import AuditResult
+        from agent_reach.daily_run.run_manifest import save_run_manifest
+
+        monkeypatch.setattr(
+            "agent_reach.daily_run.run_manifest.runs_dir",
+            lambda: tmp_path,
+        )
+        audit = AuditResult(passed=True, issues=[], warnings=["warn"])
+        path = save_run_manifest(
+            "intraday",
+            {"evaluation": {"audit": audit, "report": {"verdict": "观察"}}},
+            duration_ms=12.5,
+        )
+        data = json.loads(path.read_text(encoding="utf-8"))
+        assert data["payload"]["evaluation"]["audit"]["passed"] is True
+        assert data["payload"]["evaluation"]["audit"]["warnings"] == ["warn"]
