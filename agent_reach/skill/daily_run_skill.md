@@ -331,6 +331,21 @@ agent-reach daily-run schedule run close
 
 定时任务默认 **doctor 预检**、**macro_collector 实时因子**、**MSS 蒙特卡洛预测**、**A 股交易日历跳过休市**。
 
+### GitHub Actions（无 iOS / 无 crontab 时推荐）
+
+仓库已含 `.github/workflows/daily-run-schedule.yml`，在 GitHub 云端按 **Asia/Shanghai** 交易日自动跑 Snapshot + MSS + 飞书推送。
+
+**一次性配置（GitHub 仓库 Settings → Secrets → Actions）：**
+
+| Secret | 内容 |
+|--------|------|
+| `AGENT_REACH_CONFIG_YAML` | 本地 `~/.agent-reach/config.yaml` 全文（飞书、雪球 Cookie、Twitter 等） |
+| `AGENT_REACH_PORTFOLIO_JSON` | （可选）`~/.agent-reach/daily_run/portfolio.json` 全文 |
+
+**手动试跑：** Actions → `daily-run schedule` → Run workflow → 选 `morning` / `intraday` / `close`。
+
+**说明：** 盘中状态（S1–S10、早盘基线）通过 Actions Cache 按交易日持久化；GitHub cron 可能延迟数分钟，属正常现象。
+
 ### Phase 5 — Exa / Channel / 经验沉淀
 
 ```bash
