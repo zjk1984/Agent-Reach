@@ -177,6 +177,12 @@ def run_scheduled(
 
     if job == "morning":
         with StepTimer("schedule.morning"):
+            from agent_reach.daily_run.portfolio_manager import increment_holding_days, is_auto_adjust_enabled
+
+            if is_auto_adjust_enabled(settings):
+                pf = load_portfolio()
+                save_portfolio(increment_holding_days(pf))
+
             snap, path = build_and_save(report_type="premarket", config=cfg_obj)
             run_result = run_morning(
                 snap,
