@@ -145,6 +145,44 @@ def main():
     p_dr_plugins.add_argument("plugins_action", nargs="?", choices=["list", "run"], default="list")
     p_dr_plugins.add_argument("--input", "-i", default="", help="Snapshot JSON for plugins run")
     p_dr_plugins.add_argument("--names", default="", help="Comma-separated plugin names")
+    p_dr_morning = p_daily_sub.add_parser("morning", help="One-click: experts → evaluate → Feishu push")
+    p_dr_morning.add_argument("--input", "-i", required=True, help="Morning snapshot JSON")
+    p_dr_morning.add_argument("--code", default="", help="Optional A-share code for AKShare enrich")
+    p_dr_morning.add_argument("--fetch", action="store_true", help="AKShare enrich when --code set")
+    p_dr_morning.add_argument("--with-doctor", action="store_true", help="Include doctor in audit")
+    p_dr_morning.add_argument("--dry-run", action="store_true", help="Do not push Feishu cards")
+    p_dr_morning.add_argument("--no-start-notify", action="store_true", help="Skip start notification")
+    p_dr_morning.add_argument("--save-baseline", action="store_true",
+                              help="Save snapshot to ~/.agent-reach/daily_run/last_morning.json")
+    p_dr_morning.add_argument("--title", default="", help="Feishu report title")
+    p_dr_morning.add_argument("--names", default="", help="Comma-separated expert plugin names")
+    p_dr_close = p_daily_sub.add_parser("close", help="One-click: verify morning vs close → Feishu")
+    p_dr_close.add_argument("--input", "-i", required=True, help="Close/EOD snapshot JSON")
+    p_dr_close.add_argument("--baseline", "-b", default="",
+                            help="Morning baseline JSON (default: last_morning.json)")
+    p_dr_close.add_argument("--dry-run", action="store_true", help="Do not push Feishu")
+    p_dr_close.add_argument("--title", default="", help="Feishu verification title")
+    p_dr_close.add_argument("--with-experts", action="store_true",
+                            help="Run expert plugins on EOD snapshot before verify")
+    p_dr_intraday = p_daily_sub.add_parser(
+        "intraday",
+        help="Intraday scan (S1-S10) + optional trade eval (T1-T5) with lookback MSS",
+    )
+    p_dr_intraday.add_argument("--input", "-i", default="", help="Snapshot JSON for scan/trade")
+    p_dr_intraday.add_argument("--scan", action="store_true", help="Record one data collection scan")
+    p_dr_intraday.add_argument("--trade", action="store_true", help="Evaluate trade after scan (or alone)")
+    p_dr_intraday.add_argument("--status", action="store_true", help="Show today's intraday state")
+    p_dr_intraday.add_argument("--reset", action="store_true", help="Reset today's intraday state")
+    p_dr_intraday.add_argument("--with-doctor", action="store_true", help="Include doctor in audit")
+    p_dr_intraday.add_argument("--dry-run", action="store_true", help="Do not push Feishu")
+    p_dr_intraday.add_argument("--title", default="", help="Feishu card title")
+    p_dr_intraday.add_argument("--names", default="", help="Comma-separated expert plugin names")
+    p_dr_intraday.add_argument(
+        "--expected-return",
+        type=float,
+        default=None,
+        help="Expected return pct for friction check (e.g. 0.012 = 1.2%%)",
+    )
     p_daily_sub.add_parser("sample", help="Print example snapshot JSON to stdout")
 
     # ── doctor ──
@@ -1423,8 +1461,220 @@ def _cmd_daily_run(args):
         ))
         return
 
+    if args.daily_action == "morning":
+        from agent_reach.config import Config
+        from agent_reach.daily_run.akshare_adapter import AKShareError, enrich_snapshot
+        from agent_reach.daily_run.settings import load_settings
+        from agent_reach.daily_run.workflows import run_morning, save_morning_baseline
+
+        snapshot = json.loads(Path(args.input).read_text(encoding="utf-8"))
+        if args.code and args.fetch:
+            try:
+                snapshot = enrich_snapshot(snapshot, args.code)
+            except AKShareError as exc:
+                print(f"⚠️ AKShare fetch skipped: {exc}")
+
+        doctor_channels = None
+        if args.with_doctor:
+            from agent_reach.doctor import check_all
+            doctor_channels = check_all(Config())
+
+        names = [n.strip() for n in args.names.split(",") if n.strip()] or None
+        try:
+            result = run_morning(
+                snapshot,
+                settings=load_settings(),
+                doctor_channels=doctor_channels,
+                plugin_names=names,
+                push=not args.dry_run,
+                start_notify=not args.no_start_notify,
+                title=args.title or None,
+                config=Config(),
+            )
+        except RuntimeError as exc:
+            print(f"❌ {exc}")
+            sys.exit(1)
+
+        if args.save_baseline:
+            path = save_morning_baseline(result["snapshot"])
+            print(f"✅ Baseline saved to {path}")
+
+        report = result["evaluation"]["report"]
+        print(f"结论：{report.get('verdict')}（{report.get('confidence')}） MSS={report.get('mss_final')}")
+        print(f"步骤：{' → '.join(result['steps'])}")
+        if args.dry_run:
+            print("\n--- Markdown Preview ---\n")
+            print(result["markdown"])
+        else:
+            print("✅ Morning report pushed to Feishu")
+            feishu = result.get("feishu") or {}
+            data = feishu.get("data") or {}
+            if data.get("message_id"):
+                print(f"   message_id: {data['message_id']}")
+        return
+
+    if args.daily_action == "close":
+        from agent_reach.config import Config
+        from agent_reach.daily_run.plugins.loader import run_experts
+        from agent_reach.daily_run.settings import load_settings
+        from agent_reach.daily_run.workflows import load_morning_baseline, run_close
+
+        current = json.loads(Path(args.input).read_text(encoding="utf-8"))
+        settings = load_settings()
+        if args.with_experts:
+            current = run_experts(current, settings)
+
+        if args.baseline:
+            baseline = json.loads(Path(args.baseline).read_text(encoding="utf-8"))
+        else:
+            try:
+                baseline = load_morning_baseline()
+            except FileNotFoundError as exc:
+                print(f"❌ {exc}")
+                sys.exit(1)
+
+        result = run_close(
+            current,
+            baseline,
+            settings=settings,
+            push=not args.dry_run,
+            title=args.title or None,
+            config=Config(),
+        )
+        print(json.dumps(result["verify"], ensure_ascii=False, indent=2))
+        print("\n--- Markdown ---\n")
+        print(result["markdown"])
+        if not args.dry_run:
+            print("\n✅ Close verification pushed to Feishu")
+        return
+
+    if args.daily_action == "intraday":
+        from agent_reach.config import Config
+        from agent_reach.daily_run.intraday import (
+            evaluate_trade,
+            load_state,
+            record_scan,
+            reset_state,
+            run_intraday,
+        )
+        from agent_reach.daily_run.settings import load_settings
+
+        settings = load_settings()
+
+        if args.reset:
+            reset_state()
+            print("✅ Intraday state reset for today")
+            return
+
+        if args.status:
+            state = load_state()
+            print(json.dumps(state.to_dict(), ensure_ascii=False, indent=2))
+            return
+
+        if not args.input:
+            print("Usage: agent-reach daily-run intraday -i snapshot.json [--scan|--trade]")
+            sys.exit(1)
+
+        snapshot = json.loads(Path(args.input).read_text(encoding="utf-8"))
+        doctor_channels = None
+        if args.with_doctor:
+            from agent_reach.doctor import check_all
+            doctor_channels = check_all(Config())
+
+        names = [n.strip() for n in args.names.split(",") if n.strip()] or None
+        do_scan = args.scan or not args.trade
+        do_trade = args.trade
+
+        if do_scan and do_trade:
+            try:
+                result = run_intraday(
+                    snapshot,
+                    settings=settings,
+                    doctor_channels=doctor_channels,
+                    plugin_names=names,
+                    push=not args.dry_run,
+                    trade=True,
+                    title=args.title or None,
+                    config=Config(),
+                    expected_return_pct=args.expected_return,
+                )
+            except RuntimeError as exc:
+                print(f"❌ {exc}")
+                sys.exit(1)
+            scan = result["scan"]["scan"]
+            trade = result["trade"]["decision"]
+            print(f"扫描 {scan['scan_id']}：MSS={scan['mss_final']} · {scan['verdict']}")
+            print(f"调仓 {trade['trade_id']}：{trade['action']} · Lookback MSS={trade['lookback_mss']}")
+            print(f"步骤：{' → '.join(result['steps'])}")
+            if args.dry_run:
+                print("\n--- Markdown ---\n")
+                print(result["scan"]["markdown"])
+                print("\n--- Trade ---\n")
+                print(result["trade"]["markdown"])
+            else:
+                print("✅ Intraday report pushed to Feishu")
+            return
+
+        if do_scan:
+            try:
+                result = record_scan(
+                    snapshot,
+                    settings=settings,
+                    doctor_channels=doctor_channels,
+                    plugin_names=names,
+                )
+            except RuntimeError as exc:
+                print(f"❌ {exc}")
+                sys.exit(1)
+            scan = result["scan"]
+            print(f"✅ {scan['scan_id']} recorded · MSS={scan['mss_final']} · Lookback={result['lookback_mss']}")
+            if not args.dry_run:
+                from agent_reach.integrations.feishu import send_card
+                tpl = settings.get("report", {}).get("feishu_template_intraday", "blue")
+                name = scan.get("name") or scan.get("code") or "大盘"
+                send_card(
+                    Config(),
+                    args.title or f"📊 盘中 {scan['scan_id']} · {name}",
+                    result["markdown"],
+                    template=tpl,
+                )
+                print("✅ Scan pushed to Feishu")
+            else:
+                print("\n--- Markdown ---\n")
+                print(result["markdown"])
+            return
+
+        try:
+            result = evaluate_trade(
+                snapshot,
+                settings=settings,
+                doctor_channels=doctor_channels,
+                plugin_names=names,
+                expected_return_pct=args.expected_return,
+            )
+        except RuntimeError as exc:
+            print(f"❌ {exc}")
+            sys.exit(1)
+        trade = result["decision"]
+        print(f"✅ {trade['trade_id']} · {trade['action']} · Lookback MSS={trade['lookback_mss']}")
+        print(f"   {trade['reasoning']}")
+        if not args.dry_run:
+            from agent_reach.integrations.feishu import send_card
+            tpl = settings.get("report", {}).get("feishu_template_intraday", "blue")
+            send_card(
+                Config(),
+                args.title or f"⚡ 调仓 {trade['trade_id']}",
+                result["markdown"],
+                template=tpl,
+            )
+            print("✅ Trade evaluation pushed to Feishu")
+        else:
+            print("\n--- Markdown ---\n")
+            print(result["markdown"])
+        return
+
     if args.daily_action not in ("evaluate", "push"):
-        print("Usage: agent-reach daily-run {evaluate|push|fetch|verify|backtest|optimize|plugins|sample} ...")
+        print("Usage: agent-reach daily-run {morning|close|intraday|evaluate|push|fetch|verify|backtest|optimize|plugins|sample} ...")
         sys.exit(1)
 
     path = Path(args.input)

@@ -222,6 +222,44 @@ agent-reach daily-run optimize -i history.json --save --push
 
 `--save` 写入 `~/.agent-reach/daily_run_settings.json`
 
+### 一键工作流（推荐）
+
+**早盘（专家 → 审计 → 推送）：**
+```bash
+agent-reach daily-run morning -i snapshot.json --save-baseline
+# 可选 AKShare 补全：--code 688008 --fetch
+# 预览：--dry-run
+```
+
+**收盘（对比早盘基线 → 验证推送）：**
+```bash
+agent-reach daily-run close -i eod_snapshot.json
+# 自动读取 ~/.agent-reach/daily_run/last_morning.json
+# 或指定：-b morning.json
+```
+
+**盘中（S1-S10 扫描 + T1-T5 调仓 · Lookback MSS）：**
+```bash
+# 记录一次数据收集 S_n 并推送飞书
+agent-reach daily-run intraday -i snapshot.json --scan
+
+# 扫描 + 调仓评估（Lookback 加权 MSS → 买/卖/观望）
+agent-reach daily-run intraday -i snapshot.json --scan --trade
+
+# 仅调仓评估（需已有扫描记录）
+agent-reach daily-run intraday -i snapshot.json --trade
+
+# 查看/重置今日状态
+agent-reach daily-run intraday --status
+agent-reach daily-run intraday --reset
+
+# 预览不推送
+agent-reach daily-run intraday -i snapshot.json --scan --dry-run
+```
+
+Lookback 权重（默认 50%/30%/20%）来自 `config/daily_run_settings.json` 的 `lookback_weights`。
+状态持久化：`~/.agent-reach/daily_run/intraday_state.json`（按日自动重置）。
+
 ---
 
 ### 2. 每日 10 次数据收集 (S1 - S10)
