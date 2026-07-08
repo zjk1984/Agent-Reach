@@ -1,0 +1,403 @@
+# -*- coding: utf-8
+"""Paper portfolio auto-adjust based on MSS trade signals."""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass, field
+from datetime import date, datetime, timezone
+from pathlib import Path
+from typing import Any, Optional
+
+from agent_reach.daily_run.snapshot_builder import _normalize_code
+
+
+@dataclass
+class TradeAction:
+    side: str  # buy | sell
+    code: str
+    name: str
+    shares: int
+    price: float
+    amount: float
+    commission: float
+    reasoning: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "side": self.side,
+            "code": self.code,
+            "name": self.name,
+            "shares": self.shares,
+            "price": self.price,
+            "amount": self.amount,
+            "commission": self.commission,
+            "reasoning": self.reasoning,
+        }
+
+
+@dataclass
+class ApplyResult:
+    applied: bool
+    portfolio: dict[str, Any]
+    actions: list[TradeAction] = field(default_factory=list)
+    message: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "applied": self.applied,
+            "message": self.message,
+            "actions": [a.to_dict() for a in self.actions],
+        }
+
+
+def default_ledger_path() -> Path:
+    return Path.home() / ".agent-reach" / "daily_run" / "trade_ledger.jsonl"
+
+
+def portfolio_settings(settings: dict[str, Any]) -> dict[str, Any]:
+    return settings.get("portfolio") or {}
+
+
+def is_auto_adjust_enabled(settings: dict[str, Any]) -> bool:
+    return bool(portfolio_settings(settings).get("auto_adjust_enabled", False))
+
+
+def max_holdings(settings: dict[str, Any]) -> int:
+    return int(portfolio_settings(settings).get("max_holdings", 10))
+
+
+def append_trade_ledger(
+    actions: list[TradeAction],
+    *,
+    trade_id: Optional[str] = None,
+    decision_action: Optional[str] = None,
+    path: Optional[Path] = None,
+) -> None:
+    if not actions:
+        return
+    p = path or default_ledger_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    entry = {
+        "at": datetime.now(timezone.utc).isoformat(),
+        "trade_id": trade_id,
+        "decision_action": decision_action,
+        "actions": [a.to_dict() for a in actions],
+    }
+    with open(p, "a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
+def increment_holding_days(portfolio: dict[str, Any]) -> dict[str, Any]:
+    """Bump days_held on each holding (call once per trading day, e.g. morning)."""
+    pf = dict(portfolio)
+    holdings = []
+    for h in pf.get("holdings") or []:
+        row = dict(h)
+        row["days_held"] = int(row.get("days_held") or 0) + 1
+        holdings.append(row)
+    pf["holdings"] = holdings
+    return pf
+
+
+def apply_auto_adjust(
+    portfolio: dict[str, Any],
+    decision: Any,
+    snapshot: dict[str, Any],
+    settings: dict[str, Any],
+    *,
+    allow_watchlist_changes: bool = False,
+) -> ApplyResult:
+    """Apply paper buy/sell to portfolio.json based on intraday TradeDecision.
+
+    Watchlist membership is NOT changed here by default — only morning/close
+    via watchlist_manager.adjust_watchlist().
+    """
+    if not is_auto_adjust_enabled(settings):
+        return ApplyResult(applied=False, portfolio=portfolio, message="auto_adjust 未启用")
+
+    action = getattr(decision, "action", None) or (decision.get("action") if isinstance(decision, dict) else None)
+    blocked = getattr(decision, "blocked", False) if not isinstance(decision, dict) else decision.get("blocked", False)
+    friction_blocked = (
+        getattr(decision, "friction_blocked", False)
+        if not isinstance(decision, dict)
+        else decision.get("friction_blocked", False)
+    )
+
+    if action in (None, "hold", "skip"):
+        return ApplyResult(applied=False, portfolio=portfolio, message=f"决策 {action}，不调仓")
+
+    if action == "buy" and (blocked or friction_blocked):
+        return ApplyResult(applied=False, portfolio=portfolio, message="买入信号被风控或摩擦成本阻断")
+
+    pf = _copy_portfolio(portfolio)
+    enriched = _enriched_symbols(snapshot)
+
+    if action == "sell":
+        return _apply_sell(pf, enriched, settings, decision, allow_watchlist_changes=allow_watchlist_changes)
+    if action == "buy":
+        return _apply_buy(pf, enriched, settings, allow_watchlist_changes=allow_watchlist_changes)
+
+    return ApplyResult(applied=False, portfolio=portfolio, message=f"未知决策 {action}")
+
+
+def _apply_sell(
+    pf: dict[str, Any],
+    enriched: dict[str, dict[str, Any]],
+    settings: dict[str, Any],
+    decision: Any,
+    *,
+    allow_watchlist_changes: bool = False,
+) -> ApplyResult:
+    holdings = list(pf.get("holdings") or [])
+    if not holdings:
+        return ApplyResult(applied=False, portfolio=pf, message="无持仓可卖")
+
+    lock_days = int(settings.get("trading", {}).get("holding_lock_days", 3))
+    sellable = []
+    for h in holdings:
+        code = _normalize_code(str(h.get("code", "")))
+        days = h.get("days_held")
+        if days is not None and int(days) < lock_days:
+            continue
+        row = dict(h)
+        row.update(enriched.get(code, {}))
+        sellable.append(row)
+
+    if not sellable:
+        return ApplyResult(applied=False, portfolio=pf, message=f"持仓均在 {lock_days} 天锁定期内")
+
+    # Sell weakest position first (lowest change_pct, then lowest score)
+    sellable.sort(key=lambda x: (_symbol_score(x, decision, settings), x.get("change_pct") or 0))
+
+    target = sellable[0]
+    code = _normalize_code(str(target["code"]))
+    shares = int(target.get("shares") or 0)
+    price = _price_for(target, enriched)
+    if shares <= 0 or price is None or price <= 0:
+        return ApplyResult(applied=False, portfolio=pf, message=f"{code} 无法卖出（股数或价格无效）")
+
+    commission_rate = float(settings.get("trading", {}).get("commission_rate", 0.0015))
+    gross = shares * price
+    commission = round(gross * commission_rate, 2)
+    proceeds = gross - commission
+
+    pf["holdings"] = [h for h in holdings if _normalize_code(str(h.get("code", ""))) != code]
+    pf["cash"] = round(float(pf.get("cash") or 0) + proceeds, 2)
+
+    if allow_watchlist_changes and portfolio_settings(settings).get("add_sold_to_watchlist", True):
+        watchlist = list(pf.get("watchlist") or [])
+        codes = {_normalize_code(str(w.get("code", ""))) for w in watchlist}
+        if code not in codes:
+            watchlist.append({"code": code, "name": target.get("name", code)})
+            pf["watchlist"] = watchlist
+
+    trade = TradeAction(
+        side="sell",
+        code=code,
+        name=str(target.get("name", code)),
+        shares=shares,
+        price=price,
+        amount=round(gross, 2),
+        commission=commission,
+        reasoning=_decision_reason(decision, f"卖出 {target.get('name', code)} {shares} 股"),
+    )
+    _recalc_totals(pf, enriched)
+    return ApplyResult(applied=True, portfolio=pf, actions=[trade], message=trade.reasoning)
+
+
+def _apply_buy(
+    pf: dict[str, Any],
+    enriched: dict[str, dict[str, Any]],
+    settings: dict[str, Any],
+    *,
+    allow_watchlist_changes: bool = False,
+) -> ApplyResult:
+    holdings = list(pf.get("holdings") or [])
+    max_h = max_holdings(settings)
+    if len(holdings) >= max_h:
+        return ApplyResult(applied=False, portfolio=pf, message=f"持仓已达上限 {max_h} 只")
+
+    held_codes = {_normalize_code(str(h.get("code", ""))) for h in holdings}
+    candidates = []
+    for w in pf.get("watchlist") or []:
+        code = _normalize_code(str(w.get("code", "")))
+        if code in held_codes:
+            continue
+        row = dict(w)
+        row.update(enriched.get(code, {}))
+        price = _price_for(row, enriched)
+        if price is None or price <= 0:
+            continue
+        candidates.append(row)
+
+    if not candidates:
+        return ApplyResult(applied=False, portfolio=pf, message="观察池无可买入标的（或缺少报价）")
+
+    candidates.sort(key=lambda x: _symbol_score(x, None, settings), reverse=True)
+    target = candidates[0]
+    code = _normalize_code(str(target["code"]))
+    price = float(_price_for(target, enriched))
+
+    thresholds = settings.get("thresholds", {})
+    min_cash_ratio = float(thresholds.get("min_cash_ratio", 0.4))
+    total = float(pf.get("total") or 0)
+    cash = float(pf.get("cash") or 0)
+    if total <= 0:
+        total = cash + sum(
+            int(h.get("shares") or 0) * float(enriched.get(_normalize_code(str(h.get("code", ""))), {}).get("price") or h.get("cost") or 0)
+            for h in holdings
+        )
+
+    min_cash = total * min_cash_ratio
+    deployable = cash - min_cash
+    min_deploy = float(portfolio_settings(settings).get("min_deploy_cash", 1000))
+    if deployable < min_deploy:
+        return ApplyResult(
+            applied=False,
+            portfolio=pf,
+            message=f"可部署现金 {deployable:.0f} 不足（需保留 {min_cash_ratio:.0%} 现金）",
+        )
+
+    commission_rate = float(settings.get("trading", {}).get("commission_rate", 0.0015))
+    # No per-position cap — use all deployable cash minus commission headroom
+    budget = deployable / (1 + commission_rate)
+    shares = _round_lot(code, int(budget // price))
+    if shares <= 0:
+        return ApplyResult(applied=False, portfolio=pf, message=f"现金不足以买入 {code} 最小单位")
+
+    gross = shares * price
+    commission = round(gross * commission_rate, 2)
+    total_cost = gross + commission
+    if total_cost > cash:
+        shares = _round_lot(code, int((cash / (1 + commission_rate)) // price))
+        if shares <= 0:
+            return ApplyResult(applied=False, portfolio=pf, message="现金不足")
+        gross = shares * price
+        commission = round(gross * commission_rate, 2)
+        total_cost = gross + commission
+
+    pf["cash"] = round(cash - total_cost, 2)
+    holdings.append(
+        {
+            "code": code,
+            "name": target.get("name", code),
+            "shares": shares,
+            "cost": round(price, 4),
+            "days_held": 0,
+            "acquired_date": date.today().isoformat(),
+        }
+    )
+    pf["holdings"] = holdings
+
+    if allow_watchlist_changes:
+        pf["watchlist"] = [
+            w for w in (pf.get("watchlist") or []) if _normalize_code(str(w.get("code", ""))) != code
+        ]
+
+    trade = TradeAction(
+        side="buy",
+        code=code,
+        name=str(target.get("name", code)),
+        shares=shares,
+        price=price,
+        amount=round(gross, 2),
+        commission=commission,
+        reasoning=f"买入 {target.get('name', code)} {shares} 股 @ {price:.2f}（MSS 信号建仓）",
+    )
+    _recalc_totals(pf, enriched)
+    return ApplyResult(applied=True, portfolio=pf, actions=[trade], message=trade.reasoning)
+
+
+def _recalc_totals(pf: dict[str, Any], enriched: dict[str, dict[str, Any]]) -> None:
+    cash = float(pf.get("cash") or 0)
+    mv = 0.0
+    for h in pf.get("holdings") or []:
+        code = _normalize_code(str(h.get("code", "")))
+        price = _price_for(h, enriched) or h.get("cost") or 0
+        mv += int(h.get("shares") or 0) * float(price)
+    total = round(cash + mv, 2)
+    pf["total"] = total
+    pf["cash_ratio"] = round(cash / total, 4) if total > 0 else 1.0
+
+
+def _enriched_symbols(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    for h in (snapshot.get("portfolio") or {}).get("holdings") or []:
+        code = _normalize_code(str(h.get("code", "")))
+        out[code] = dict(h)
+    for w in snapshot.get("watchlist") or []:
+        code = _normalize_code(str(w.get("code", "")))
+        out[code] = {**out.get(code, {}), **dict(w)}
+    code = snapshot.get("code")
+    if code:
+        c = _normalize_code(str(code))
+        out[c] = {**out.get(c, {}), **{k: snapshot[k] for k in ("price", "name", "change_pct", "ma20") if k in snapshot}}
+    return out
+
+
+def _price_for(row: dict[str, Any], enriched: dict[str, dict[str, Any]]) -> Optional[float]:
+    code = _normalize_code(str(row.get("code", "")))
+    for src in (row, enriched.get(code, {})):
+        p = src.get("price")
+        if p is not None:
+            return float(p)
+        p = src.get("cost")
+        if p is not None:
+            return float(p)
+    return None
+
+
+def _symbol_score(row: dict[str, Any], decision: Any, settings: dict[str, Any]) -> float:
+    """Rank symbols: higher = better buy candidate / lower sell priority."""
+    base = 50.0
+    if decision is not None:
+        lb = getattr(decision, "lookback_mss", None)
+        if lb is None and isinstance(decision, dict):
+            lb = decision.get("lookback_mss")
+        if lb is not None:
+            base = float(lb)
+    chg = row.get("change_pct")
+    if chg is not None:
+        base += float(chg) * 0.5
+    pos = row.get("position_20d")
+    if pos is not None:
+        base += (0.5 - float(pos)) * 10
+    return base
+
+
+def _round_lot(code: str, shares: int) -> int:
+    if shares <= 0:
+        return 0
+    text = str(code).zfill(6)
+    if text.startswith("688"):
+        lot = 200
+        return (shares // lot) * lot if shares >= lot else 0
+    lot = 100
+    return (shares // lot) * lot
+
+
+def _copy_portfolio(portfolio: dict[str, Any]) -> dict[str, Any]:
+    pf = dict(portfolio)
+    pf["holdings"] = [dict(h) for h in (portfolio.get("holdings") or [])]
+    pf["watchlist"] = [dict(w) for w in (portfolio.get("watchlist") or [])]
+    return pf
+
+
+def _decision_reason(decision: Any, fallback: str) -> str:
+    reason = getattr(decision, "reasoning", None) if not isinstance(decision, dict) else decision.get("reasoning")
+    return reason or fallback
+
+
+def render_apply_markdown(result: ApplyResult) -> str:
+    if not result.applied:
+        return f"**调仓执行：** 未执行 — {result.message}"
+    lines = ["**调仓执行（paper）：**"]
+    for a in result.actions:
+        side = "买入" if a.side == "buy" else "卖出"
+        lines.append(
+            f"- {side} **{a.name}** ({a.code}) {a.shares} 股 @ {a.price:.2f} "
+            f"≈ ¥{a.amount:,.0f}（佣金 ¥{a.commission:.2f}）"
+        )
+    lines.append(f"\n{result.message}")
+    return "\n".join(lines)

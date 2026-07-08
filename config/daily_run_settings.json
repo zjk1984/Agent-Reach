@@ -152,6 +152,21 @@
     "morning_doctor": true
   },
 
+  "portfolio": {
+    "auto_adjust_enabled": true,
+    "max_holdings": 10,
+    "mode": "paper",
+    "min_deploy_cash": 1000,
+    "add_sold_to_watchlist": true
+  },
+
+  "watchlist": {
+    "auto_adjust_enabled": true,
+    "max_size": 20,
+    "adjust_phases": ["morning", "close"],
+    "candidates": []
+  },
+
   "trade_calendar": {
     "enabled": true,
     "skip_on_holiday": true
