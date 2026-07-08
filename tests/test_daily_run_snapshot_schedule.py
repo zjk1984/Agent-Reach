@@ -86,26 +86,39 @@ class TestSchedule:
         assert "agent-reach daily-run schedule BEGIN" in block
         assert "Asia/Shanghai" in block
         assert "schedule run morning" in block
+        assert "0 7 * * 1-5" in block or "0 7" in block
         assert "schedule run intraday" in block
         assert "schedule run close" in block
 
     def test_default_entries_count(self):
-        assert len(default_entries()) == 12
+        assert len(default_entries()) == 13
 
+    @patch("agent_reach.daily_run.intraday.record_scan_from_evaluation")
     @patch("agent_reach.daily_run.workflows.save_morning_baseline")
     @patch("agent_reach.daily_run.workflows.run_morning")
     @patch("agent_reach.daily_run.snapshot_builder.build_and_save")
     @patch("agent_reach.daily_run.snapshot_builder.load_portfolio")
-    def test_run_scheduled_morning(self, mock_load, mock_build, mock_morning, mock_save_baseline, portfolio, tmp_path):
+    def test_run_scheduled_morning(
+        self, mock_load, mock_build, mock_morning, mock_save_baseline, mock_record_scan, portfolio, tmp_path
+    ):
         mock_load.return_value = portfolio
         mock_build.return_value = ({"code": "688008"}, tmp_path / "snap.json")
-        mock_morning.return_value = {"snapshot": {"code": "688008"}, "evaluation": {"report": {}}}
+        mock_morning.return_value = {
+            "snapshot": {"code": "688008"},
+            "evaluation": {"report": {"mss_final": 48}, "audit": __import__(
+                "agent_reach.daily_run.auditor", fromlist=["AuditResult"]
+            ).AuditResult(passed=True)},
+            "steps": [],
+        }
+        mock_record_scan.return_value = {"scan": {"scan_id": "S2", "source": "morning"}}
 
         from agent_reach.daily_run.schedule import run_scheduled
 
         result = run_scheduled("morning", push=False)
         assert result["job"] == "morning"
         mock_save_baseline.assert_called_once()
+        mock_record_scan.assert_called_once()
+        assert result["result"]["scan"]["scan"]["scan_id"] == "S2"
 
 
 class TestRunManifest:

@@ -16,8 +16,9 @@ from agent_reach.daily_run.run_manifest import StepTimer, save_run_manifest
 MARKER_BEGIN = "# agent-reach daily-run schedule BEGIN"
 MARKER_END = "# agent-reach daily-run schedule END"
 
-# 10 intraday scans: 9:30–15:00 (北京时间 Asia/Shanghai)
+# 11 timed intraday slots: 7:00 盘前 + 9:30–15:00 盘中；8:00 全量早盘由 morning 任务记录 S2
 INTRADAY_SCAN_TIMES: list[tuple[str, str]] = [
+    ("0", "7"),
     ("30", "9"),
     ("0", "10"),
     ("30", "10"),
@@ -59,16 +60,18 @@ def default_entries() -> list[CronEntry]:
     """Default 北京时间 trading schedule (CRON_TZ=Asia/Shanghai)."""
     cmd = _agent_reach_cmd()
     entries = [
-        CronEntry("0", "8", "1-5", f"{cmd} daily-run schedule run morning", "daily-run 早盘 8:00"),
+        CronEntry("0", "8", "1-5", f"{cmd} daily-run schedule run morning", "daily-run 早盘全量 8:00"),
     ]
     for i, (minute, hour) in enumerate(INTRADAY_SCAN_TIMES, start=1):
+        scan_num = i if i == 1 else i + 1  # S1 @7:00; S3+ @9:30 (S2 @8:00 morning)
+        label = f"daily-run 盘前 S{scan_num}/12" if i == 1 else f"daily-run 盘中 S{scan_num}/12"
         entries.append(
             CronEntry(
                 minute,
                 hour,
                 "1-5",
                 f"{cmd} daily-run schedule run intraday",
-                f"daily-run 盘中 S{i}/10",
+                label,
             )
         )
     entries.append(
@@ -176,7 +179,15 @@ def run_scheduled(
     feishu = None
 
     if job == "morning":
+        from agent_reach.daily_run.intraday import record_scan_from_evaluation
+        from agent_reach.daily_run.portfolio_manager import increment_holding_days, is_auto_adjust_enabled
+        from agent_reach.daily_run.watchlist_manager import adjust_watchlist, is_watchlist_adjust_enabled
+
         with StepTimer("schedule.morning"):
+            if is_auto_adjust_enabled(settings):
+                pf = load_portfolio()
+                save_portfolio(increment_holding_days(pf))
+
             snap, path = build_and_save(report_type="premarket", config=cfg_obj)
             run_result = run_morning(
                 snap,
@@ -189,16 +200,42 @@ def run_scheduled(
             from agent_reach.daily_run.workflows import save_morning_baseline
 
             save_morning_baseline(run_result["snapshot"])
+            scan_result = record_scan_from_evaluation(
+                run_result["snapshot"],
+                run_result["evaluation"],
+                settings=settings,
+                source="morning",
+            )
+            run_result["steps"].append("scan_s2")
+            run_result["scan"] = scan_result
+
+            wl_result = None
+            if is_watchlist_adjust_enabled(settings):
+                pf = load_portfolio()
+                wl_result = adjust_watchlist(
+                    pf,
+                    run_result["snapshot"],
+                    settings,
+                    "morning",
+                )
+                if wl_result.applied:
+                    save_portfolio(wl_result.portfolio)
+                run_result["watchlist_adjust"] = wl_result.to_dict()
+
             result = {"job": job, "snapshot_path": str(path), "result": run_result}
             feishu = run_result.get("feishu")
 
     elif job == "intraday":
-        from agent_reach.daily_run.intraday import load_state, run_intraday, should_evaluate_trade
+        from agent_reach.daily_run.intraday import MAX_SCANS, load_state, run_intraday, should_evaluate_trade
 
         with StepTimer("schedule.intraday"):
             state = load_state()
-            if len(state.scans) >= 10:
-                result = {"job": job, "skipped": True, "reason": "今日扫描已达 10 次上限"}
+            if len(state.scans) >= MAX_SCANS:
+                result = {
+                    "job": job,
+                    "skipped": True,
+                    "reason": f"今日扫描已达 {MAX_SCANS} 次上限",
+                }
             else:
                 snap, path = build_and_save(report_type="intraday", config=cfg_obj)
                 do_trade = should_evaluate_trade(state, settings)
@@ -220,6 +257,11 @@ def run_scheduled(
 
     elif job == "close":
         from agent_reach.daily_run.intraday import load_state
+        from agent_reach.daily_run.watchlist_manager import (
+            adjust_watchlist,
+            collect_intraday_sold_codes,
+            is_watchlist_adjust_enabled,
+        )
 
         with StepTimer("schedule.close"):
             snap, path = build_and_save(report_type="close", config=cfg_obj)
@@ -242,13 +284,38 @@ def run_scheduled(
                     )
                 raise
 
+            wl_result = None
+            if is_watchlist_adjust_enabled(settings):
+                pf = load_portfolio()
+                wl_result = adjust_watchlist(
+                    pf,
+                    snap,
+                    settings,
+                    "close",
+                    sold_codes=collect_intraday_sold_codes(settings),
+                )
+                if wl_result.applied:
+                    save_portfolio(wl_result.portfolio)
+                    snap["watchlist"] = wl_result.portfolio.get("watchlist", [])
+                    block = snap.get("portfolio") or {}
+                    for key in ("holdings", "cash", "cash_ratio", "total"):
+                        if key in wl_result.portfolio:
+                            block[key] = wl_result.portfolio[key]
+                    snap["portfolio"] = block
+
             run_result = run_close(
                 snap,
                 baseline,
                 settings=settings,
                 push=push,
                 config=cfg_obj,
+                intraday_scans=state.scans,
+                intraday_trades=state.trades,
+                watchlist_adjust=wl_result.to_dict() if wl_result else None,
             )
+            if wl_result is not None:
+                run_result["watchlist_adjust"] = wl_result.to_dict()
+
             result = {"job": job, "snapshot_path": str(path), "result": run_result}
             feishu = run_result.get("feishu")
     else:

@@ -15,7 +15,7 @@ from agent_reach.daily_run.plugins.loader import run_experts
 from agent_reach.daily_run.settings import load_settings
 
 
-MAX_SCANS = 10
+MAX_SCANS = 12
 MAX_TRADES = 5
 
 
@@ -111,8 +111,21 @@ def record_scan(
     plugin_names: Optional[list[str]] = None,
     state: Optional[IntradayState] = None,
     state_path: Optional[Path] = None,
+    pre_enriched: Optional[dict[str, Any]] = None,
+    pre_evaluation: Optional[dict[str, Any]] = None,
+    source: Optional[str] = None,
 ) -> dict[str, Any]:
     """Record one intraday data collection (S_n) after experts + evaluate."""
+    if pre_enriched is not None and pre_evaluation is not None:
+        return record_scan_from_evaluation(
+            pre_enriched,
+            pre_evaluation,
+            settings=settings,
+            state=state,
+            state_path=state_path,
+            source=source,
+        )
+
     cfg = settings or load_settings()
     st = state or load_state(state_path)
 
@@ -124,6 +137,32 @@ def record_scan(
     enriched.setdefault("as_of", datetime.now(timezone.utc).isoformat())
 
     evaluation = evaluate_snapshot(enriched, cfg, doctor_channels=doctor_channels)
+    return record_scan_from_evaluation(
+        enriched,
+        evaluation,
+        settings=cfg,
+        state=st,
+        state_path=state_path,
+        source=source,
+    )
+
+
+def record_scan_from_evaluation(
+    enriched: dict[str, Any],
+    evaluation: dict[str, Any],
+    *,
+    settings: Optional[dict[str, Any]] = None,
+    state: Optional[IntradayState] = None,
+    state_path: Optional[Path] = None,
+    source: Optional[str] = None,
+) -> dict[str, Any]:
+    """Append S_n from an existing evaluation (e.g. morning full analysis at 8:00)."""
+    cfg = settings or load_settings()
+    st = state or load_state(state_path)
+
+    if len(st.scans) >= MAX_SCANS:
+        raise RuntimeError(f"今日扫描已达上限 {MAX_SCANS} 次（S1-S{MAX_SCANS}）")
+
     report = evaluation["report"]
     scan_id = f"S{len(st.scans) + 1}"
 
@@ -139,6 +178,8 @@ def record_scan(
         "price": enriched.get("price"),
         "audit_passed": evaluation["audit"].passed,
     }
+    if source:
+        entry["source"] = source
     st.scans.append(entry)
     save_state(st, state_path)
 
@@ -234,15 +275,44 @@ def evaluate_trade(
         "code": report.get("code"),
         "name": report.get("name"),
     }
+    portfolio_apply = None
+    if decision.action in ("buy", "sell"):
+        from agent_reach.daily_run.portfolio_manager import (
+            append_trade_ledger,
+            apply_auto_adjust,
+            is_auto_adjust_enabled,
+            render_apply_markdown,
+        )
+        from agent_reach.daily_run.snapshot_builder import load_portfolio, save_portfolio
+
+        if is_auto_adjust_enabled(cfg):
+            pf = load_portfolio()
+            portfolio_apply = apply_auto_adjust(
+                pf, decision, enriched, cfg, allow_watchlist_changes=False
+            )
+            if portfolio_apply.applied:
+                save_portfolio(portfolio_apply.portfolio)
+                append_trade_ledger(
+                    portfolio_apply.actions,
+                    trade_id=decision.trade_id,
+                    decision_action=decision.action,
+                )
+            trade_record["portfolio_apply"] = portfolio_apply.to_dict()
+
     st.trades.append(trade_record)
     save_state(st, state_path)
+
+    md = render_intraday_trade_markdown(decision, lookback_detail, report, st.scans)
+    if portfolio_apply is not None:
+        md += "\n\n---\n\n" + render_apply_markdown(portfolio_apply)
 
     return {
         "decision": decision.to_dict(),
         "trade": trade_record,
+        "portfolio_apply": portfolio_apply.to_dict() if portfolio_apply else None,
         "state": st.to_dict(),
         "evaluation": evaluation,
-        "markdown": render_intraday_trade_markdown(decision, lookback_detail, report, st.scans),
+        "markdown": md,
     }
 
 

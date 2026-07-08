@@ -1,0 +1,198 @@
+# -*- coding: utf-8
+"""Tests for MSS-driven paper portfolio auto-adjust."""
+
+import pytest
+
+from agent_reach.daily_run.intraday import TradeDecision
+from agent_reach.daily_run.portfolio_manager import (
+    apply_auto_adjust,
+    increment_holding_days,
+    is_auto_adjust_enabled,
+    max_holdings,
+)
+from agent_reach.daily_run.settings import load_settings
+
+
+@pytest.fixture
+def portfolio():
+    return {
+        "total": 100000,
+        "cash": 61000,
+        "cash_ratio": 0.61,
+        "holdings": [
+            {"code": "688008", "name": "澜起科技", "shares": 100, "cost": 255.87, "days_held": 5},
+            {"code": "002273", "name": "水晶光电", "shares": 300, "cost": 33.81, "days_held": 5},
+        ],
+        "watchlist": [
+            {"code": "603986", "name": "兆易创新"},
+            {"code": "000725", "name": "京东方A"},
+        ],
+    }
+
+
+@pytest.fixture
+def snapshot(portfolio):
+    holdings = [
+        {**h, "price": 247.15 if h["code"] == "688008" else 32.04, "change_pct": -2.39 if h["code"] == "688008" else -6.23}
+        for h in portfolio["holdings"]
+    ]
+    watchlist = [
+        {"code": "603986", "name": "兆易创新", "price": 603.17, "change_pct": -2.71},
+        {"code": "000725", "name": "京东方A", "price": 7.63, "change_pct": 0.66},
+    ]
+    return {
+        "code": "688008",
+        "price": 247.15,
+        "portfolio": {"total": 100000, "cash": 61000, "cash_ratio": 0.61, "holdings": holdings},
+        "watchlist": watchlist,
+    }
+
+
+@pytest.fixture
+def settings_enabled():
+    s = load_settings()
+    s.setdefault("portfolio", {})
+    s["portfolio"]["auto_adjust_enabled"] = True
+    s["portfolio"]["max_holdings"] = 10
+    return s
+
+
+class TestPortfolioConfig:
+    def test_defaults(self):
+        s = load_settings()
+        assert max_holdings(s) == 10
+        assert is_auto_adjust_enabled(s) is True
+
+
+class TestApplyAutoAdjust:
+    def test_hold_skips(self, portfolio, snapshot, settings_enabled):
+        decision = TradeDecision(
+            action="hold",
+            trade_id="T1",
+            lookback_mss=48.0,
+            lookback_detail=[],
+            trend="flat",
+            reasoning="观望",
+        )
+        result = apply_auto_adjust(portfolio, decision, snapshot, settings_enabled)
+        assert result.applied is False
+        assert len(result.actions) == 0
+
+    def test_sell_weakest(self, portfolio, snapshot, settings_enabled):
+        decision = TradeDecision(
+            action="sell",
+            trade_id="T1",
+            lookback_mss=35.0,
+            lookback_detail=[],
+            trend="falling",
+            reasoning="宏观避险",
+        )
+        result = apply_auto_adjust(portfolio, decision, snapshot, settings_enabled)
+        assert result.applied is True
+        assert result.actions[0].side == "sell"
+        # 水晶光电 change_pct -6.23 worse than 澜起 -2.39
+        assert result.actions[0].code == "002273"
+        codes = {h["code"] for h in result.portfolio["holdings"]}
+        assert "002273" not in codes
+        assert result.portfolio["cash"] > portfolio["cash"]
+        watch_codes = {w["code"] for w in result.portfolio["watchlist"]}
+        assert "002273" not in watch_codes
+
+    def test_sell_adds_watchlist_when_allowed(self, portfolio, snapshot, settings_enabled):
+        decision = TradeDecision(
+            action="sell",
+            trade_id="T1",
+            lookback_mss=35.0,
+            lookback_detail=[],
+            trend="falling",
+            reasoning="宏观避险",
+        )
+        portfolio["holdings"][0]["days_held"] = 5
+        portfolio["holdings"][1]["days_held"] = 5
+        result = apply_auto_adjust(
+            portfolio,
+            decision,
+            snapshot,
+            settings_enabled,
+            allow_watchlist_changes=True,
+        )
+        assert result.applied is True
+        watch_codes = {w["code"] for w in result.portfolio["watchlist"]}
+        assert "002273" in watch_codes
+
+    def test_sell_respects_lock(self, portfolio, snapshot, settings_enabled):
+        portfolio["holdings"][0]["days_held"] = 1
+        portfolio["holdings"][1]["days_held"] = 1
+        decision = TradeDecision(
+            action="sell",
+            trade_id="T1",
+            lookback_mss=35.0,
+            lookback_detail=[],
+            trend="falling",
+            reasoning="宏观避险",
+        )
+        result = apply_auto_adjust(portfolio, decision, snapshot, settings_enabled)
+        assert result.applied is False
+
+    def test_buy_from_watchlist(self, portfolio, snapshot, settings_enabled):
+        decision = TradeDecision(
+            action="buy",
+            trade_id="T1",
+            lookback_mss=55.0,
+            lookback_detail=[],
+            trend="rising",
+            reasoning="MSS 达阈值",
+        )
+        result = apply_auto_adjust(portfolio, decision, snapshot, settings_enabled)
+        assert result.applied is True
+        assert result.actions[0].side == "buy"
+        assert result.actions[0].code in ("603986", "000725")
+        assert len(result.portfolio["holdings"]) == 3
+        assert result.portfolio["cash"] < portfolio["cash"]
+
+    def test_max_holdings_blocks_buy(self, portfolio, snapshot, settings_enabled):
+        settings_enabled["portfolio"]["max_holdings"] = 2
+        decision = TradeDecision(
+            action="buy",
+            trade_id="T1",
+            lookback_mss=55.0,
+            lookback_detail=[],
+            trend="rising",
+            reasoning="买",
+        )
+        result = apply_auto_adjust(portfolio, decision, snapshot, settings_enabled)
+        assert result.applied is False
+        assert "上限" in result.message
+
+    def test_buy_blocked_by_friction(self, portfolio, snapshot, settings_enabled):
+        decision = TradeDecision(
+            action="buy",
+            trade_id="T1",
+            lookback_mss=55.0,
+            lookback_detail=[],
+            trend="rising",
+            reasoning="买",
+            friction_blocked=True,
+        )
+        result = apply_auto_adjust(portfolio, decision, snapshot, settings_enabled)
+        assert result.applied is False
+
+    def test_disabled(self, portfolio, snapshot):
+        s = load_settings()
+        s["portfolio"] = {"auto_adjust_enabled": False}
+        decision = TradeDecision(
+            action="buy",
+            trade_id="T1",
+            lookback_mss=55.0,
+            lookback_detail=[],
+            trend="rising",
+            reasoning="买",
+        )
+        result = apply_auto_adjust(portfolio, decision, snapshot, s)
+        assert result.applied is False
+
+
+class TestIncrementDays:
+    def test_increment(self, portfolio):
+        updated = increment_holding_days(portfolio)
+        assert updated["holdings"][0]["days_held"] == 6
