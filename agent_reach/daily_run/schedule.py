@@ -284,27 +284,36 @@ def run_scheduled(
                     )
                 raise
 
+            wl_result = None
+            if is_watchlist_adjust_enabled(settings):
+                pf = load_portfolio()
+                wl_result = adjust_watchlist(
+                    pf,
+                    snap,
+                    settings,
+                    "close",
+                    sold_codes=collect_intraday_sold_codes(settings),
+                )
+                if wl_result.applied:
+                    save_portfolio(wl_result.portfolio)
+                    snap["watchlist"] = wl_result.portfolio.get("watchlist", [])
+                    block = snap.get("portfolio") or {}
+                    for key in ("holdings", "cash", "cash_ratio", "total"):
+                        if key in wl_result.portfolio:
+                            block[key] = wl_result.portfolio[key]
+                    snap["portfolio"] = block
+
             run_result = run_close(
                 snap,
                 baseline,
                 settings=settings,
                 push=push,
                 config=cfg_obj,
+                intraday_scans=state.scans,
+                intraday_trades=state.trades,
+                watchlist_adjust=wl_result.to_dict() if wl_result else None,
             )
-
-            wl_result = None
-            if is_watchlist_adjust_enabled(settings):
-                pf = load_portfolio()
-                wl_result = adjust_watchlist(
-                    pf,
-                    run_result["snapshot"],
-                    settings,
-                    "close",
-                    verify=run_result.get("verify"),
-                    sold_codes=collect_intraday_sold_codes(settings),
-                )
-                if wl_result.applied:
-                    save_portfolio(wl_result.portfolio)
+            if wl_result is not None:
                 run_result["watchlist_adjust"] = wl_result.to_dict()
 
             result = {"job": job, "snapshot_path": str(path), "result": run_result}
