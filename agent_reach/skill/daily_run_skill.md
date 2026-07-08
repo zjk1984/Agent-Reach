@@ -182,6 +182,36 @@ $$\text{Final\_MSS} = 0.5 \cdot \text{MSS}(S_n) + 0.3 \cdot \text{MSS}(S_{n-1}) 
 
 ## 🛠️ 运维与排障指南
 
+### 0. 飞书推送配置（App Bot 模式 · 当前使用）
+
+目标群：**《每天股票量化交易》**
+
+**方式 A — CLI 本地配置（推荐）：**
+```bash
+agent-reach configure feishu-app-id cli_xxxxxxxxxxxxx
+agent-reach configure feishu-app-secret xxxxxxxxxxxxxxxx
+agent-reach configure feishu-chat-id oc_xxxxxxxxxxxxx
+agent-reach notify feishu --test
+agent-reach doctor   # 通知集成应显示 ✅ 飞书消息推送
+```
+
+**方式 B — Cloud Agent Secrets（云端自动推送）：**
+在 [Cursor Dashboard → Cloud Agents → Secrets](https://cursor.com/dashboard/cloud-agents) 配置：
+- `FEISHU_APP_ID`
+- `FEISHU_APP_SECRET`
+- `FEISHU_CHAT_ID`
+
+配置后重启 Agent 任务。推送命令：
+```bash
+agent-reach notify feishu --title "标题" --text "Markdown 正文"
+```
+
+**方式 C — Webhook 群机器人（更简单，无需 chat_id）：**
+```bash
+agent-reach configure feishu-webhook-url https://open.feishu.cn/open-apis/bot/v2/hook/your_key
+agent-reach notify feishu --test
+```
+
 ### 1. 提示 "LLM API Key 未配置"
 *   **原因：** Cursor Cloud Agent 运行在隔离沙箱中，新配置的 Secrets 无法在当前热会话中生效。
 *   **解决办法：** 

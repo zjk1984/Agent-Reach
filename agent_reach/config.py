@@ -27,6 +27,8 @@ class Config:
         "groq_whisper": ["groq_api_key"],
         "openai_whisper": ["openai_api_key"],
         "github_token": ["github_token"],
+        "feishu_app_notify": ["feishu_app_id", "feishu_app_secret", "feishu_chat_id"],
+        "feishu_webhook_notify": ["feishu_webhook_url"],
     }
 
     def __init__(self, config_path: Optional[Path] = None):

@@ -82,12 +82,28 @@ def main():
     p_conf.add_argument("key", nargs="?", default=None,
                         choices=["proxy", "github-token", "groq-key", "openai-key",
                                  "twitter-cookies", "youtube-cookies",
-                                 "xhs-cookies"],
+                                 "xhs-cookies",
+                                 "feishu-app-id", "feishu-app-secret", "feishu-chat-id",
+                                 "feishu-webhook-url", "feishu-webhook-secret"],
                         help="What to configure (omit if using --from-browser)")
     p_conf.add_argument("value", nargs="*", help="The value(s) to set")
     p_conf.add_argument("--from-browser", metavar="BROWSER",
                         choices=["chrome", "firefox", "edge", "brave", "opera"],
                         help="Auto-extract ALL platform cookies from browser (chrome/firefox/edge/brave/opera)")
+
+    # ── notify ──
+    p_notify = sub.add_parser("notify", help="Send notifications via configured integrations")
+    p_notify_sub = p_notify.add_subparsers(dest="notify_target", help="Notification target")
+    p_feishu = p_notify_sub.add_parser("feishu", help="Send a Feishu card message")
+    p_feishu.add_argument("--title", default="Agent Reach", help="Card title")
+    p_feishu.add_argument("--text", default="", help="Card body (Markdown)")
+    p_feishu.add_argument("--template", default="blue",
+                          choices=["blue", "wathet", "turquoise", "green", "yellow",
+                                   "orange", "red", "carmine", "violet", "purple",
+                                   "indigo", "grey"],
+                          help="Card header color")
+    p_feishu.add_argument("--test", action="store_true",
+                          help="Send a test message using current Feishu config")
 
     # ── doctor ──
     p_doctor = sub.add_parser("doctor", help="Check platform availability")
@@ -155,6 +171,8 @@ def main():
         _cmd_install(args)
     elif args.command == "configure":
         _cmd_configure(args)
+    elif args.command == "notify":
+        _cmd_notify(args)
     elif args.command == "uninstall":
         _cmd_uninstall(args)
     elif args.command == "skill":
@@ -1131,6 +1149,66 @@ def _cmd_configure(args):
         config.set("openai_api_key", value)
         print(f"✅ OpenAI key configured!")
 
+    elif args.key == "feishu-app-id":
+        config.set("feishu_app_id", value.strip())
+        print("✅ Feishu App ID configured!")
+
+    elif args.key == "feishu-app-secret":
+        config.set("feishu_app_secret", value.strip())
+        print("✅ Feishu App Secret configured!")
+
+    elif args.key == "feishu-chat-id":
+        config.set("feishu_chat_id", value.strip())
+        print("✅ Feishu chat_id configured!")
+        print("   请确保机器人已加入目标群聊。")
+
+    elif args.key == "feishu-webhook-url":
+        config.set("feishu_webhook_url", value.strip())
+        print("✅ Feishu webhook URL configured!")
+
+    elif args.key == "feishu-webhook-secret":
+        config.set("feishu_webhook_secret", value.strip())
+        print("✅ Feishu webhook secret configured!")
+
+
+def _cmd_notify(args):
+    """Send outbound notifications."""
+    from agent_reach.config import Config
+    from agent_reach.integrations.feishu import FeishuError, send_card
+
+    if args.notify_target != "feishu":
+        print("Usage: agent-reach notify feishu [--test] [--title TITLE] [--text TEXT]")
+        sys.exit(1)
+
+    config = Config()
+    title = args.title
+    text = args.text
+    if args.test:
+        title = "✅ Agent Reach · 飞书推送测试"
+        text = (
+            "飞书通知集成已配置成功。\n\n"
+            "- 模式：App Bot API 或 Webhook\n"
+            "- 命令：`agent-reach notify feishu --test`\n"
+            "- 文档：daily_run_skill 早盘/盘中/收盘简报将自动推送"
+        )
+
+    if not text:
+        print("Missing --text (or use --test)")
+        sys.exit(1)
+
+    try:
+        result = send_card(config, title, text, template=args.template)
+    except FeishuError as exc:
+        print(f"❌ {exc}")
+        sys.exit(1)
+
+    print("✅ Feishu message sent!")
+    if isinstance(result, dict):
+        data = result.get("data") or {}
+        message_id = data.get("message_id")
+        if message_id:
+            print(f"   message_id: {message_id}")
+
 
 def _cmd_transcribe(args):
     """Transcribe a URL or local audio file via Whisper (Groq → OpenAI fallback)."""
@@ -1475,16 +1553,18 @@ def _cmd_uninstall(args):
 
 def _cmd_doctor(args=None):
     from agent_reach.config import Config
-    from agent_reach.doctor import check_all, format_report
+    from agent_reach.doctor import check_all, check_integrations, format_report
     try:
         from rich import print as rprint
     except ImportError:
         rprint = print
     config = Config()
     results = check_all(config)
+    integrations = check_integrations(config)
 
     if args is not None and getattr(args, "json", False):
-        print(json.dumps(results, ensure_ascii=False, indent=2))
+        payload = {"channels": results, "integrations": integrations}
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
         return
 
     rprint(format_report(results))
