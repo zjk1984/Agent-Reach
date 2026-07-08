@@ -2,6 +2,7 @@
 """Tests for close review improvement suggestions."""
 
 from agent_reach.daily_run.close_improvements import (
+    CloseImprovements,
     expected_scan_slots,
     generate_close_improvements,
     render_improvements_markdown,
@@ -14,6 +15,12 @@ def test_expected_scan_slots_count():
     assert len(slots) == 12
     assert slots[0]["scan_id"] == "S1"
     assert slots[1]["time"] == "08:00"
+
+
+def test_render_improvements_empty_when_enabled():
+    md = render_improvements_markdown(CloseImprovements(), enabled=True)
+    assert "复盘改进意见" in md
+    assert "暂无专项调参建议" in md
 
 
 def test_generate_mss_and_schedule_improvements():

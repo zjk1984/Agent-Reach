@@ -143,6 +143,8 @@ def run_close(
         extra_parts.append(exp_md)
 
     scans = intraday_scans or enriched.get("intraday_scans") or []
+    close_imp_cfg = cfg.get("close_improvements") or {}
+    improvements_enabled = close_imp_cfg.get("enabled", True) is not False
     improvements = generate_close_improvements(
         baseline=baseline,
         current=enriched,
@@ -153,11 +155,13 @@ def run_close(
         trades=intraday_trades or [],
         watchlist_adjust=watchlist_adjust,
     )
-    imp_md = render_improvements_markdown(improvements)
-    if imp_md:
-        extra_parts.append(imp_md)
+    imp_md = render_improvements_markdown(improvements, enabled=improvements_enabled)
 
-    md = "\n\n---\n\n".join(extra_parts + [render_verify_markdown(verify)]) if extra_parts else render_verify_markdown(verify)
+    verify_md = render_verify_markdown(verify)
+    body_parts = extra_parts + [verify_md]
+    if imp_md:
+        body_parts.append(imp_md)
+    md = "\n\n---\n\n".join(body_parts) if body_parts else verify_md
 
     feishu_result = None
     if push:

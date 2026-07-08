@@ -73,6 +73,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # daily-run 功能在集成分支；main 尚未合并 PR #7–#10
+          ref: cursor/daily-run-skill-a3e7
 
       - name: Resolve job (北京时间)
         id: resolve
