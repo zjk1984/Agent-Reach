@@ -16,7 +16,7 @@ from agent_reach.daily_run.run_manifest import StepTimer, save_run_manifest
 MARKER_BEGIN = "# agent-reach daily-run schedule BEGIN"
 MARKER_END = "# agent-reach daily-run schedule END"
 
-# 10 intraday scans: 9:30–15:00 (Asia/Shanghai)
+# 10 intraday scans: 9:30–15:00 (北京时间 Asia/Shanghai)
 INTRADAY_SCAN_TIMES: list[tuple[str, str]] = [
     ("30", "9"),
     ("0", "10"),
@@ -56,7 +56,7 @@ def shutil_which(name: str) -> Optional[str]:
 
 
 def default_entries() -> list[CronEntry]:
-    """Default Asia/Shanghai trading schedule (CRON_TZ=Asia/Shanghai)."""
+    """Default 北京时间 trading schedule (CRON_TZ=Asia/Shanghai)."""
     cmd = _agent_reach_cmd()
     entries = [
         CronEntry("0", "8", "1-5", f"{cmd} daily-run schedule run morning", "daily-run 早盘 8:00"),

@@ -307,10 +307,10 @@ agent-reach daily-run build-snapshot --save
 
 数据源优先级：**雪球 Cookie** → AKShare 兜底。
 
-### Cron 定时（Asia/Shanghai）
+### Cron 定时（北京时间 Asia/Shanghai）
 
 ```bash
-# 查看推荐 crontab
+# 查看推荐 crontab（本地 Mac/Linux，已含 CRON_TZ=Asia/Shanghai）
 agent-reach daily-run schedule print
 
 # 安装到当前用户 crontab
@@ -322,7 +322,7 @@ agent-reach daily-run schedule run intraday
 agent-reach daily-run schedule run close
 ```
 
-默认时间表（工作日）：
+默认时间表（**北京时间**，工作日）：
 | 时间 | 任务 |
 |------|------|
 | 08:00 | 早盘分析 + 飞书推送 + 保存基线 |
@@ -333,7 +333,7 @@ agent-reach daily-run schedule run close
 
 ### GitHub Actions（无 iOS / 无 crontab 时推荐）
 
-仓库已含 `.github/workflows/daily-run-schedule.yml`，在 GitHub 云端按 **Asia/Shanghai** 交易日自动跑 Snapshot + MSS + 飞书推送。
+仓库已含 `.github/workflows/daily-run-schedule.yml`，在 GitHub 云端按 **北京时间（Asia/Shanghai）** 交易日自动跑 Snapshot + MSS + 飞书推送。Cron 使用 `timezone: Asia/Shanghai`，无需手动换算 UTC。
 
 **一次性配置（GitHub 仓库 Settings → Secrets → Actions）：**
 
@@ -344,7 +344,7 @@ agent-reach daily-run schedule run close
 
 **手动试跑：** Actions → `daily-run schedule` → Run workflow → 选 `morning` / `intraday` / `close`。
 
-**说明：** 盘中状态（S1–S10、早盘基线）通过 Actions Cache 按交易日持久化；GitHub cron 可能延迟数分钟，属正常现象。
+**说明：** 盘中状态（S1–S10、早盘基线）通过 Actions Cache 按交易日持久化；GitHub cron 可能延迟数分钟，属正常现象。所有触发时间均为 **北京时间**。
 
 ### Phase 5 — Exa / Channel / 经验沉淀
 
