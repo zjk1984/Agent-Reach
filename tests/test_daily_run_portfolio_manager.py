@@ -94,6 +94,7 @@ class TestApplyAutoAdjust:
         assert result.actions[0].code == "002273"
         codes = {h["code"] for h in result.portfolio["holdings"]}
         assert "002273" not in codes
+        assert result.portfolio["cash"] > portfolio["cash"]
         watch_codes = {w["code"] for w in result.portfolio["watchlist"]}
         assert "002273" not in watch_codes
 

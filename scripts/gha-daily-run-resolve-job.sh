@@ -24,6 +24,7 @@ if [ -n "${GITHUB_EVENT_SCHEDULE:-}" ]; then
       echo "skip=false"
       exit 0
       ;;
+    "0 7 * * 1-5"|\
     "30 9 * * 1-5"|"0 10 * * 1-5"|"30 10 * * 1-5"|"0 11 * * 1-5"|"30 11 * * 1-5"|\
     "0 13 * * 1-5"|"30 13 * * 1-5"|"0 14 * * 1-5"|"30 14 * * 1-5"|"0 15 * * 1-5")
       echo "job=intraday"
@@ -49,6 +50,13 @@ fi
 # Close window ~15:30 北京时间.
 if [ "$minutes" -ge 920 ] && [ "$minutes" -le 965 ]; then
   echo "job=close"
+  echo "skip=false"
+  exit 0
+fi
+
+# Premarket intraday scan ~07:00 北京时间.
+if [ "$minutes" -ge 410 ] && [ "$minutes" -le 435 ]; then
+  echo "job=intraday"
   echo "skip=false"
   exit 0
 fi
