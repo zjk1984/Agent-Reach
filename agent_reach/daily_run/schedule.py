@@ -16,10 +16,9 @@ from agent_reach.daily_run.run_manifest import StepTimer, save_run_manifest
 MARKER_BEGIN = "# agent-reach daily-run schedule BEGIN"
 MARKER_END = "# agent-reach daily-run schedule END"
 
-# 12 intraday scans: 7:00–8:00 盘前 + 9:30–15:00 盘中 (北京时间 Asia/Shanghai)
+# 11 timed intraday slots: 7:00 盘前 + 9:30–15:00 盘中；8:00 全量早盘由 morning 任务记录 S2
 INTRADAY_SCAN_TIMES: list[tuple[str, str]] = [
     ("0", "7"),
-    ("0", "8"),
     ("30", "9"),
     ("0", "10"),
     ("30", "10"),
@@ -61,12 +60,11 @@ def default_entries() -> list[CronEntry]:
     """Default 北京时间 trading schedule (CRON_TZ=Asia/Shanghai)."""
     cmd = _agent_reach_cmd()
     entries = [
-        CronEntry("10", "8", "1-5", f"{cmd} daily-run schedule run morning", "daily-run 早盘 8:10"),
+        CronEntry("0", "8", "1-5", f"{cmd} daily-run schedule run morning", "daily-run 早盘全量 8:00"),
     ]
     for i, (minute, hour) in enumerate(INTRADAY_SCAN_TIMES, start=1):
-        label = f"daily-run 盘中 S{i}/12"
-        if i <= 2:
-            label = f"daily-run 盘前 S{i}/12"
+        scan_num = i if i == 1 else i + 1  # S1 @7:00; S3+ @9:30 (S2 @8:00 morning)
+        label = f"daily-run 盘前 S{scan_num}/12" if i == 1 else f"daily-run 盘中 S{scan_num}/12"
         entries.append(
             CronEntry(
                 minute,
@@ -181,6 +179,8 @@ def run_scheduled(
     feishu = None
 
     if job == "morning":
+        from agent_reach.daily_run.intraday import record_scan_from_evaluation
+
         with StepTimer("schedule.morning"):
             snap, path = build_and_save(report_type="premarket", config=cfg_obj)
             run_result = run_morning(
@@ -194,6 +194,14 @@ def run_scheduled(
             from agent_reach.daily_run.workflows import save_morning_baseline
 
             save_morning_baseline(run_result["snapshot"])
+            scan_result = record_scan_from_evaluation(
+                run_result["snapshot"],
+                run_result["evaluation"],
+                settings=settings,
+                source="morning",
+            )
+            run_result["steps"].append("scan_s2")
+            run_result["scan"] = scan_result
             result = {"job": job, "snapshot_path": str(path), "result": run_result}
             feishu = run_result.get("feishu")
 

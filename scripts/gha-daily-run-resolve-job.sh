@@ -14,7 +14,7 @@ fi
 # Prefer the cron expression that triggered this run (GitHub Actions timezone-aware schedule).
 if [ -n "${GITHUB_EVENT_SCHEDULE:-}" ]; then
   case "${GITHUB_EVENT_SCHEDULE}" in
-    "10 8 * * 1-5")
+    "0 8 * * 1-5")
       echo "job=morning"
       echo "skip=false"
       exit 0
@@ -24,7 +24,7 @@ if [ -n "${GITHUB_EVENT_SCHEDULE:-}" ]; then
       echo "skip=false"
       exit 0
       ;;
-    "0 7 * * 1-5"|"0 8 * * 1-5"|\
+    "0 7 * * 1-5"|\
     "30 9 * * 1-5"|"0 10 * * 1-5"|"30 10 * * 1-5"|"0 11 * * 1-5"|"30 11 * * 1-5"|\
     "0 13 * * 1-5"|"30 13 * * 1-5"|"0 14 * * 1-5"|"30 14 * * 1-5"|"0 15 * * 1-5")
       echo "job=intraday"
@@ -40,8 +40,8 @@ h=$((10#$h))
 m=$((10#$m))
 minutes=$((h * 60 + m))
 
-# Morning window ~08:10 北京时间 (allow GitHub schedule delay).
-if [ "$minutes" -ge 485 ] && [ "$minutes" -le 535 ]; then
+# Morning window ~08:00 北京时间 (allow GitHub schedule delay).
+if [ "$minutes" -ge 470 ] && [ "$minutes" -le 520 ]; then
   echo "job=morning"
   echo "skip=false"
   exit 0
@@ -54,8 +54,8 @@ if [ "$minutes" -ge 920 ] && [ "$minutes" -le 965 ]; then
   exit 0
 fi
 
-# Premarket intraday scans ~07:00–08:15 北京时间.
-if [ "$minutes" -ge 410 ] && [ "$minutes" -le 495 ]; then
+# Premarket intraday scan ~07:00 北京时间.
+if [ "$minutes" -ge 410 ] && [ "$minutes" -le 435 ]; then
   echo "job=intraday"
   echo "skip=false"
   exit 0

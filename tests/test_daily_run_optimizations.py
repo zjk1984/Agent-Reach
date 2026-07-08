@@ -65,11 +65,11 @@ class TestVerdictFusion:
 
 
 class TestScheduleEntries:
-    def test_twelve_intraday_scans(self):
-        assert len(INTRADAY_SCAN_TIMES) == 12
+    def test_eleven_intraday_scan_slots(self):
+        assert len(INTRADAY_SCAN_TIMES) == 11
 
     def test_default_entries_count(self):
-        assert len(default_entries()) == 14  # morning + 12 scans + close
+        assert len(default_entries()) == 13  # morning + 11 scans + close
 
 
 class TestMacroCollector:

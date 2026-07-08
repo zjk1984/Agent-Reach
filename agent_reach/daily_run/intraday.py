@@ -111,8 +111,21 @@ def record_scan(
     plugin_names: Optional[list[str]] = None,
     state: Optional[IntradayState] = None,
     state_path: Optional[Path] = None,
+    pre_enriched: Optional[dict[str, Any]] = None,
+    pre_evaluation: Optional[dict[str, Any]] = None,
+    source: Optional[str] = None,
 ) -> dict[str, Any]:
     """Record one intraday data collection (S_n) after experts + evaluate."""
+    if pre_enriched is not None and pre_evaluation is not None:
+        return record_scan_from_evaluation(
+            pre_enriched,
+            pre_evaluation,
+            settings=settings,
+            state=state,
+            state_path=state_path,
+            source=source,
+        )
+
     cfg = settings or load_settings()
     st = state or load_state(state_path)
 
@@ -124,6 +137,32 @@ def record_scan(
     enriched.setdefault("as_of", datetime.now(timezone.utc).isoformat())
 
     evaluation = evaluate_snapshot(enriched, cfg, doctor_channels=doctor_channels)
+    return record_scan_from_evaluation(
+        enriched,
+        evaluation,
+        settings=cfg,
+        state=st,
+        state_path=state_path,
+        source=source,
+    )
+
+
+def record_scan_from_evaluation(
+    enriched: dict[str, Any],
+    evaluation: dict[str, Any],
+    *,
+    settings: Optional[dict[str, Any]] = None,
+    state: Optional[IntradayState] = None,
+    state_path: Optional[Path] = None,
+    source: Optional[str] = None,
+) -> dict[str, Any]:
+    """Append S_n from an existing evaluation (e.g. morning full analysis at 8:00)."""
+    cfg = settings or load_settings()
+    st = state or load_state(state_path)
+
+    if len(st.scans) >= MAX_SCANS:
+        raise RuntimeError(f"今日扫描已达上限 {MAX_SCANS} 次（S1-S{MAX_SCANS}）")
+
     report = evaluation["report"]
     scan_id = f"S{len(st.scans) + 1}"
 
@@ -139,6 +178,8 @@ def record_scan(
         "price": enriched.get("price"),
         "audit_passed": evaluation["audit"].passed,
     }
+    if source:
+        entry["source"] = source
     st.scans.append(entry)
     save_state(st, state_path)
 
