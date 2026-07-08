@@ -1,4 +1,4 @@
-# Daily-run snapshot + MSS schedule via GitHub Actions (Asia/Shanghai trading hours).
+# Daily-run snapshot + MSS schedule via GitHub Actions (北京时间 / Asia/Shanghai).
 #
 # Required repository secrets:
 #   AGENT_REACH_CONFIG_YAML  — full ~/.agent-reach/config.yaml contents
@@ -6,27 +6,38 @@
 #   AGENT_REACH_PORTFOLIO_JSON — portfolio.json (defaults to repo example)
 #
 # Manual run: Actions → daily-run schedule → Run workflow
-# Cron uses UTC; times below = Asia/Shanghai (UTC+8).
 
 name: daily-run schedule
 
 on:
   schedule:
-    # 08:00 CST — morning + MSS forecast + Feishu
-    - cron: "0 0 * * 1-5"
-    # 09:30–15:00 CST — intraday S1–S10 + Lookback MSS
-    - cron: "30 1 * * 1-5"
-    - cron: "0 2 * * 1-5"
-    - cron: "30 2 * * 1-5"
-    - cron: "0 3 * * 1-5"
-    - cron: "30 3 * * 1-5"
-    - cron: "0 5 * * 1-5"
-    - cron: "30 5 * * 1-5"
-    - cron: "0 6 * * 1-5"
-    - cron: "30 6 * * 1-5"
-    - cron: "0 7 * * 1-5"
-    # 15:30 CST — close + MSS curve + verify
-    - cron: "30 7 * * 1-5"
+    # 08:00 北京时间 — 早盘 + MSS 预测 + 飞书
+    - cron: "0 8 * * 1-5"
+      timezone: Asia/Shanghai
+    # 09:30–15:00 北京时间 — 盘中 S1–S10 + Lookback MSS
+    - cron: "30 9 * * 1-5"
+      timezone: Asia/Shanghai
+    - cron: "0 10 * * 1-5"
+      timezone: Asia/Shanghai
+    - cron: "30 10 * * 1-5"
+      timezone: Asia/Shanghai
+    - cron: "0 11 * * 1-5"
+      timezone: Asia/Shanghai
+    - cron: "30 11 * * 1-5"
+      timezone: Asia/Shanghai
+    - cron: "0 13 * * 1-5"
+      timezone: Asia/Shanghai
+    - cron: "30 13 * * 1-5"
+      timezone: Asia/Shanghai
+    - cron: "0 14 * * 1-5"
+      timezone: Asia/Shanghai
+    - cron: "30 14 * * 1-5"
+      timezone: Asia/Shanghai
+    - cron: "0 15 * * 1-5"
+      timezone: Asia/Shanghai
+    # 15:30 北京时间 — 收盘复盘 + MSS 曲线 + 验证
+    - cron: "30 15 * * 1-5"
+      timezone: Asia/Shanghai
   workflow_dispatch:
     inputs:
       job:
@@ -53,12 +64,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
+      TZ: Asia/Shanghai
       INPUT_JOB: ${{ github.event.inputs.job }}
+      GITHUB_EVENT_SCHEDULE: ${{ github.event.schedule }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Resolve job (Asia/Shanghai)
+      - name: Resolve job (北京时间)
         id: resolve
         run: |
           set -euo pipefail
@@ -70,10 +83,10 @@ jobs:
           echo "Outside morning/intraday/close window — skipping."
           exit 0
 
-      - name: Trading date (Asia/Shanghai)
+      - name: Trading date (北京时间)
         if: steps.resolve.outputs.skip != 'true'
         id: tz
-        run: echo "date=$(TZ=Asia/Shanghai date +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+        run: echo "date=$(date +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
 
       - name: Restore daily-run state cache
         if: steps.resolve.outputs.skip != 'true'
