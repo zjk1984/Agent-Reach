@@ -120,6 +120,16 @@ def main():
                            help="Include agent-reach doctor channel status in audit")
     p_dr_push.add_argument("--dry-run", action="store_true",
                            help="Evaluate only, do not send Feishu message")
+    p_dr_fetch = p_daily_sub.add_parser("fetch", help="Enrich snapshot via AKShare (optional)")
+    p_dr_fetch.add_argument("--code", required=True, help="A-share code e.g. 688008")
+    p_dr_fetch.add_argument("--input", "-i", default="", help="Optional base snapshot JSON to merge")
+    p_dr_fetch.add_argument("--output", "-o", default="", help="Write enriched snapshot to file")
+    p_dr_verify = p_daily_sub.add_parser("verify", help="Compare baseline vs current snapshot")
+    p_dr_verify.add_argument("--baseline", "-b", required=True, help="Baseline snapshot/report JSON")
+    p_dr_verify.add_argument("--current", "-c", required=True, help="Current snapshot JSON")
+    p_dr_verify.add_argument("--push", action="store_true", help="Push verification card to Feishu")
+    p_dr_bt = p_daily_sub.add_parser("backtest", help="Run MSS threshold backtest on history JSON")
+    p_dr_bt.add_argument("--input", "-i", required=True, help="History JSON array (date,mss,return,...)")
     p_daily_sub.add_parser("sample", help="Print example snapshot JSON to stdout")
 
     # ── doctor ──
@@ -1248,20 +1258,87 @@ def _cmd_daily_run(args):
             "position_20d": 0.55,
             "volume_ratio": 1.2,
             "mss_breakdown": {"fx": 35, "flow": 48, "global": 38, "sentiment": 50},
+            "mss_range": [40, 52],
             "sources": {
                 "quote": {"summary": "新浪财经 255.87 +1.05%"},
                 "flow": {"summary": "北向净流入 12.36 亿"},
                 "sentiment": {"summary": "雪球 DDR5 景气讨论"},
             },
             "structured_review_complete": True,
-            "macro_summary": "上证 +0.29%，纳指 -1.16%，存储链分化",
+            "macro_summary": "预测 MSS 区间 [40, 52]",
             "portfolio": {"cash_ratio": 0.61, "total": 91938},
         }
         print(json.dumps(sample, ensure_ascii=False, indent=2))
         return
 
+    if args.daily_action == "fetch":
+        from agent_reach.daily_run.akshare_adapter import AKShareError, enrich_snapshot
+
+        base: dict = {}
+        if args.input:
+            p = Path(args.input)
+            if p.exists():
+                base = json.loads(p.read_text(encoding="utf-8"))
+        try:
+            merged = enrich_snapshot(base, args.code)
+        except AKShareError as exc:
+            print(f"❌ {exc}")
+            sys.exit(1)
+        out = json.dumps(merged, ensure_ascii=False, indent=2)
+        if args.output:
+            Path(args.output).write_text(out + "\n", encoding="utf-8")
+            print(f"✅ Wrote enriched snapshot to {args.output}")
+        else:
+            print(out)
+        return
+
+    if args.daily_action == "verify":
+        from agent_reach.config import Config
+        from agent_reach.daily_run.settings import load_settings
+        from agent_reach.daily_run.verify import render_verify_markdown, verify_snapshots
+        from agent_reach.integrations.feishu import FeishuError, send_card
+
+        baseline = json.loads(Path(args.baseline).read_text(encoding="utf-8"))
+        current = json.loads(Path(args.current).read_text(encoding="utf-8"))
+        result = verify_snapshots(baseline, current, load_settings())
+        md = render_verify_markdown(result)
+        print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
+        print("\n--- Markdown ---\n")
+        print(md)
+        if args.push:
+            title = f"🧠 收盘验证 · {result.name or result.code or '大盘'}"
+            try:
+                tpl = load_settings().get("report", {}).get("feishu_template_verify", "purple")
+                send_card(Config(), title, md, template=tpl)
+                print("\n✅ Verification report pushed to Feishu")
+            except FeishuError as exc:
+                print(f"\n❌ Feishu push failed: {exc}")
+                sys.exit(1)
+        return
+
+    if args.daily_action == "backtest":
+        from agent_reach.daily_run.backtest import render_backtest_markdown, run_mss_backtest
+        from agent_reach.daily_run.settings import load_settings
+
+        history = json.loads(Path(args.input).read_text(encoding="utf-8"))
+        if not isinstance(history, list):
+            print("❌ backtest input must be a JSON array")
+            sys.exit(1)
+        cfg = load_settings().get("backtest", {})
+        result = run_mss_backtest(
+            history,
+            macro_veto=float(cfg.get("macro_veto", 40)),
+            aggressive_entry=float(cfg.get("aggressive_entry", 50)),
+            initial_capital=float(cfg.get("default_initial_capital", 100000)),
+            commission_rate=float(cfg.get("commission_rate", 0.0015)),
+        )
+        print(json.dumps({"metrics": result.metrics.to_dict(), "trades": result.trades}, ensure_ascii=False, indent=2))
+        print("\n--- Markdown ---\n")
+        print(render_backtest_markdown(result))
+        return
+
     if args.daily_action not in ("evaluate", "push"):
-        print("Usage: agent-reach daily-run {evaluate|push|sample} ...")
+        print("Usage: agent-reach daily-run {evaluate|push|fetch|verify|backtest|sample} ...")
         sys.exit(1)
 
     path = Path(args.input)
