@@ -105,6 +105,23 @@ def main():
     p_feishu.add_argument("--test", action="store_true",
                           help="Send a test message using current Feishu config")
 
+    # ── daily-run ──
+    p_daily = sub.add_parser("daily-run", help="Daily stock skill: audit, verdict, push")
+    p_daily_sub = p_daily.add_subparsers(dest="daily_action", help="Daily-run action")
+    p_dr_eval = p_daily_sub.add_parser("evaluate", help="Audit + verdict + quality gate (JSON)")
+    p_dr_eval.add_argument("--input", "-i", required=True, help="Snapshot JSON file")
+    p_dr_eval.add_argument("--with-doctor", action="store_true",
+                           help="Include agent-reach doctor channel status in audit")
+    p_dr_push = p_daily_sub.add_parser("push", help="Evaluate snapshot and push Feishu card")
+    p_dr_push.add_argument("--input", "-i", required=True, help="Snapshot JSON file")
+    p_dr_push.add_argument("--title", default="", help="Feishu card title")
+    p_dr_push.add_argument("--template", default="", help="Feishu card color template")
+    p_dr_push.add_argument("--with-doctor", action="store_true",
+                           help="Include agent-reach doctor channel status in audit")
+    p_dr_push.add_argument("--dry-run", action="store_true",
+                           help="Evaluate only, do not send Feishu message")
+    p_daily_sub.add_parser("sample", help="Print example snapshot JSON to stdout")
+
     # ── doctor ──
     p_doctor = sub.add_parser("doctor", help="Check platform availability")
     p_doctor.add_argument("--json", action="store_true",
@@ -173,6 +190,8 @@ def main():
         _cmd_configure(args)
     elif args.command == "notify":
         _cmd_notify(args)
+    elif args.command == "daily-run":
+        _cmd_daily_run(args)
     elif args.command == "uninstall":
         _cmd_uninstall(args)
     elif args.command == "skill":
@@ -1203,6 +1222,107 @@ def _cmd_notify(args):
         sys.exit(1)
 
     print("✅ Feishu message sent!")
+    if isinstance(result, dict):
+        data = result.get("data") or {}
+        message_id = data.get("message_id")
+        if message_id:
+            print(f"   message_id: {message_id}")
+
+
+def _cmd_daily_run(args):
+    """Daily-run skill pipeline: audit, verdict, optional Feishu push."""
+    import json
+    from pathlib import Path
+
+    from agent_reach.daily_run.pipeline import evaluate_snapshot, push_report, render_markdown
+
+    if args.daily_action == "sample":
+        sample = {
+            "as_of": "2026-07-08T03:30:00+00:00",
+            "report_type": "premarket",
+            "code": "688008",
+            "name": "澜起科技",
+            "price": 255.87,
+            "reference_price": 253.20,
+            "ma20": 260.0,
+            "position_20d": 0.55,
+            "volume_ratio": 1.2,
+            "mss_breakdown": {"fx": 35, "flow": 48, "global": 38, "sentiment": 50},
+            "sources": {
+                "quote": {"summary": "新浪财经 255.87 +1.05%"},
+                "flow": {"summary": "北向净流入 12.36 亿"},
+                "sentiment": {"summary": "雪球 DDR5 景气讨论"},
+            },
+            "structured_review_complete": True,
+            "macro_summary": "上证 +0.29%，纳指 -1.16%，存储链分化",
+            "portfolio": {"cash_ratio": 0.61, "total": 91938},
+        }
+        print(json.dumps(sample, ensure_ascii=False, indent=2))
+        return
+
+    if args.daily_action not in ("evaluate", "push"):
+        print("Usage: agent-reach daily-run {evaluate|push|sample} ...")
+        sys.exit(1)
+
+    path = Path(args.input)
+    if not path.exists():
+        print(f"❌ File not found: {path}")
+        sys.exit(1)
+
+    snapshot = json.loads(path.read_text(encoding="utf-8"))
+    doctor_channels = None
+    if getattr(args, "with_doctor", False):
+        from agent_reach.config import Config
+        from agent_reach.doctor import check_all
+        doctor_channels = check_all(Config())
+
+    evaluation = evaluate_snapshot(snapshot, doctor_channels=doctor_channels)
+    audit = evaluation["audit"]
+    gate = evaluation["gate"]
+    report = evaluation["report"]
+
+    if args.daily_action == "evaluate":
+        payload = {
+            "audit": {
+                "passed": audit.passed,
+                "issues": audit.issues,
+                "warnings": audit.warnings,
+                "summary": audit.summary(),
+            },
+            "verdict": evaluation["verdict"].to_dict(),
+            "gate": {
+                "passed": gate.passed,
+                "missing_fields": gate.missing_fields,
+                "warnings": gate.warnings,
+                "summary": gate.summary(),
+            },
+            "report": report,
+            "markdown_preview": render_markdown(report),
+        }
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        sys.exit(0 if audit.passed and gate.passed else 1)
+
+    # push
+    print(f"审计：{audit.summary()}")
+    print(f"门禁：{gate.summary()}")
+    print(f"结论：{report.get('verdict')}（{report.get('confidence')}） MSS={report.get('mss_final')}")
+
+    if args.dry_run:
+        print("\n--- Markdown Preview ---\n")
+        print(render_markdown(report))
+        sys.exit(0 if audit.passed and gate.passed else 1)
+
+    try:
+        result = push_report(
+            evaluation,
+            title=args.title or None,
+            template=args.template or None,
+        )
+    except Exception as exc:
+        print(f"❌ {exc}")
+        sys.exit(1)
+
+    print("✅ Feishu daily-run report sent!")
     if isinstance(result, dict):
         data = result.get("data") or {}
         message_id = data.get("message_id")

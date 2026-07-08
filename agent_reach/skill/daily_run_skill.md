@@ -29,8 +29,9 @@ metadata:
 | :--- | :--- | :---: | :--- |
 | **Step 0** | **启动即时通知 (Start Notification)** | **0.1 秒** | 极速。第一时间推送，消除用户等待焦虑。 |
 | **Step 1** | **Agent-Reach 权限自检 (Auth Check)** | **3.4 秒** | 较快。运行 `doctor` 检查各平台 API 及 Cookie 状态。 |
+| **Step 1.5** | **数据真实性审计 (Data Audit Gate)** | **<0.1 秒** | 校验 as_of 时效、来源类别、价格锚点偏差；不通过则阻断买入建议。 |
 | **Step 2** | **全球宏观与多市场数据收集 (S_n)** | **9.9 秒** | **主要瓶颈**。包含 Jina Reader 网页渲染与 API 抓取，耗时受目标服务器影响。 |
-| **Step 3** | **3次 Lookback 审视与 MSS 决策** | **0.001 毫秒** | **忽略不计**。纯本地内存计算，数据库读取极速。 |
+| **Step 3** | **3次 Lookback 审视 + MSS 决策 + 三档标签** | **<0.1 秒** | 输出 **可做/观察/回避** 标签与置信度，经质量门禁后推送。 |
 | **Step 4** | **飞书 API 富文本卡片推送** | **1.5 秒** | 正常。包含飞书 Token 鉴权与 HTTPS 消息发送。 |
 | **🏁 累计** | **完整【收集 + 决策 + 推送】流水线** | **约 15 秒** | **全流程仅需约 15 秒，完美保障高频自适应响应！** |
 
@@ -42,6 +43,7 @@ metadata:
 |  [早盘分析]  早上 8:00 准时触发：                                                   |
 |              1. 权限自检：自动运行 `agent-reach doctor` 检查各平台 Cookie 状态       |
 |                 (排除小红书，重点检查 Twitter、雪球、微博等)                        |
+|              1.5 数据审计：校验数据时效、来源完整性、价格锚点（见下方 Phase-1）      |
 |              2. 隔夜数据抓取：抓取全球隔夜数据与昨日复盘热点最新进展                  |
 |              3. 制定纲领：生成今日“预计操作”与“预期收益”并推送飞书群                  |
 |                                                                                   |
@@ -76,6 +78,74 @@ metadata:
     *   评估今日大盘 MSS 初始分值，明确制定今日的“下一步预计操作”与“预期收益率目标”。
     *   **日内 MSS 范围预测 (Intraday MSS Range Forecast)：** 结合早盘 8:00 抓取的全球隔夜数据及昨日收盘拟合曲线，通过**蒙特卡洛模拟**，预测今日盘中 10 次数据收集的 **MSS 波动范围**（如：*“预测今日盘中 MSS 波动范围为 [35, 52] 分，日内大概率维持弱势震荡，操作上建议继续高现金潜伏”*），为全天交易提供清晰的“波动率护栏”。
 *   **第四步：主动推送：** 8:05 前将精美的早盘分析 Markdown 卡片（含权限自检报告、热点进展、操盘纲领、日内 MSS 预测）自动推送到绑定的飞书群聊。
+
+---
+
+## 🛡️ Phase-1 质量工程化（数据审计 + 三档标签 + 质量门禁）
+
+> 借鉴 [china-stock-analyst](https://github.com/wjt0321/china-stock-analyst) 的审计/门禁思路，已落地为可执行 Python 流水线。
+
+### 外置配置
+
+所有阈值与权重位于 `config/daily_run_settings.json`（可被 `~/.agent-reach/daily_run_settings.json` 覆盖）：
+
+- `mss_weights` / `lookback_weights` — MSS 与 Lookback 权重
+- `thresholds.macro_veto` — 宏观一票否决线（默认 40）
+- `thresholds.aggressive_entry` — 进攻阈值（默认 50）
+- `quality_gate.required_fields` — 飞书推送前必填字段
+- `data_audit.required_source_categories` — 必须覆盖 quote / flow / sentiment
+
+### 数据审计 Gate（Step 1.5）
+
+推送或调仓前，必须构造 **snapshot JSON** 并通过审计：
+
+| 检查项 | 规则 | 失败后果 |
+|--------|------|----------|
+| `as_of` 时效 | 不超过 24h | 阻断 |
+| `sources` | 含 quote + flow + sentiment | 阻断 |
+| 价格锚点 | `\|现价-参考价\| / 参考价 ≤ 8%` | 阻断 |
+| 结构化复核 | `structured_review_complete=false` | 标签上限「观察」 |
+
+```bash
+agent-reach daily-run sample > /tmp/snapshot.json
+# 编辑 snapshot 填入真实数据后：
+agent-reach daily-run evaluate -i /tmp/snapshot.json --with-doctor
+```
+
+### 三档标签（可做 / 观察 / 回避）
+
+| 标签 | 触发条件 |
+|------|----------|
+| **回避** | MSS < 40（宏观一票否决）；或 VWAP 偏离过大且量比不足 |
+| **观察** | MSS 40–50；或缺少完整技术面；或 20 日位置偏高 |
+| **可做** | MSS ≥ 50 且技术面完整、审计通过 |
+
+标签与 MSS **并存**：MSS 负责量化择时，标签负责可读性与推送摘要。
+
+### 报告质量门禁
+
+飞书推送前 `quality_gate` 校验必填：
+
+`verdict` · `confidence` · `mss_final` · `reasoning` · `invalidation` · `evidence_chain`
+
+缺字段时自动降级为「观察」；关键字段缺失则 **阻断推送**。
+
+### CLI 一键流水线
+
+```bash
+# 1. 评估（输出 JSON + markdown 预览）
+agent-reach daily-run evaluate -i config/daily_run_snapshot.example.json
+
+# 2. 推送飞书（审计+门禁通过后）
+agent-reach daily-run push -i config/daily_run_snapshot.example.json --title "🌅 早盘分析"
+
+# 3. 仅预览不发送
+agent-reach daily-run push -i snapshot.json --dry-run
+```
+
+示例 snapshot：`config/daily_run_snapshot.example.json`
+
+---
 
 ### 2. 每日 10 次数据收集 (S1 - S10)
 系统在交易日内（9:15 - 15:00）均匀或按盘口波动密集度执行 **10 次全球市场与舆情数据收集**。

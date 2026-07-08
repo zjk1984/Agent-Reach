@@ -1,0 +1,72 @@
+{
+  "version": "1.0.0",
+  "description": "股票大师 daily_run_skill 外置配置",
+
+  "mss_weights": {
+    "fx": 0.3,
+    "flow": 0.3,
+    "global": 0.2,
+    "sentiment": 0.2
+  },
+
+  "lookback_weights": [0.5, 0.3, 0.2],
+
+  "thresholds": {
+    "macro_veto": 40,
+    "aggressive_entry": 50,
+    "min_cash_ratio": 0.4,
+    "max_price_deviation_pct": 0.08,
+    "max_snapshot_age_hours": 24,
+    "high_position_20d": 0.7,
+    "low_position_20d": 0.4,
+    "min_volume_ratio": 1.0,
+    "max_vwap_deviation_pct": 0.04
+  },
+
+  "buffett_filter": {
+    "min_gross_margin": 0.35,
+    "max_peg": 1.2,
+    "min_roe": 0.15
+  },
+
+  "trading": {
+    "commission_rate": 0.0015,
+    "slippage_rate": 0.001,
+    "stop_loss_ma20_pct": 0.04,
+    "holding_lock_days": 3
+  },
+
+  "quality_gate": {
+    "required_fields": [
+      "verdict",
+      "confidence",
+      "mss_final",
+      "reasoning",
+      "invalidation",
+      "evidence_chain"
+    ],
+    "block_push_on_fail": true,
+    "allow_downgrade_on_missing_technical": true
+  },
+
+  "data_audit": {
+    "required_source_categories": ["quote", "flow", "sentiment"],
+    "block_on_audit_fail": true,
+    "block_on_price_deviation": true,
+    "required_doctor_channels": ["web", "xueqiu"]
+  },
+
+  "verdict_labels": {
+    "buy": "可做",
+    "watch": "观察",
+    "avoid": "回避"
+  },
+
+  "confidence_levels": ["高", "中", "低"],
+
+  "report": {
+    "feishu_template_premarket": "orange",
+    "feishu_template_intraday": "blue",
+    "feishu_template_close": "purple"
+  }
+}
