@@ -67,8 +67,17 @@ def run_data_audit(
 
     for cat in required_cats:
         if cat in present and isinstance(sources, dict):
-            if not sources.get(cat):
+            detail = sources.get(cat)
+            if not detail:
                 warnings.append(f"来源类别 {cat} 为空")
+            elif isinstance(detail, dict):
+                summary = str(detail.get("summary", ""))
+                if _is_placeholder(summary):
+                    issues.append(f"来源 {cat} 仍为占位内容：{summary or '空'}")
+
+    if snapshot.get("has_cost_fallback"):
+        warnings.append("部分标的使用成本价 fallback，行情可能过期")
+        structured_review_complete = False
 
     ref_price = snapshot.get("reference_price")
     live_price = snapshot.get("price")
@@ -125,3 +134,7 @@ def _parse_dt(value: str) -> datetime:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
+
+
+def _is_placeholder(text: str) -> bool:
+    return not text or text.strip() in ("待更新", "pending", "n/a", "N/A")

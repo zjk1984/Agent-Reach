@@ -10,7 +10,7 @@ from typing import Any, Optional
 from agent_reach.daily_run.auditor import AuditResult, run_data_audit
 from agent_reach.daily_run.quality_gate import GateResult, validate_report
 from agent_reach.daily_run.settings import load_settings
-from agent_reach.daily_run.verdict import VerdictResult, compute_verdict
+from agent_reach.daily_run.verdict import VerdictResult, compute_verdict, fuse_verdict_with_team
 
 
 def evaluate_snapshot(
@@ -27,6 +27,8 @@ def evaluate_snapshot(
     enriched["structured_review_complete"] = audit.structured_review_complete
 
     verdict = compute_verdict(enriched, cfg)
+    if enriched.get("team_review") or enriched.get("team_consensus_label"):
+        verdict = fuse_verdict_with_team(verdict, enriched, cfg)
     report = build_report(enriched, audit, verdict, cfg)
     gate = validate_report(report, cfg)
 

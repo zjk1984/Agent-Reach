@@ -82,7 +82,18 @@ def load_state(path: Optional[Path] = None) -> IntradayState:
 def save_state(state: IntradayState, path: Optional[Path] = None) -> Path:
     p = path or default_state_path()
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(state.to_dict(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    payload = json.dumps(state.to_dict(), ensure_ascii=False, indent=2) + "\n"
+    tmp = p.with_suffix(".tmp")
+    try:
+        import fcntl
+
+        lock_file = p.parent / ".intraday.lock"
+        with open(lock_file, "w", encoding="utf-8") as lockf:
+            fcntl.flock(lockf.fileno(), fcntl.LOCK_EX)
+            tmp.write_text(payload, encoding="utf-8")
+            tmp.replace(p)
+    except (ImportError, OSError):
+        p.write_text(payload, encoding="utf-8")
     return p
 
 
@@ -136,6 +147,7 @@ def record_scan(
 
     return {
         "scan": entry,
+        "enriched": enriched,
         "state": st.to_dict(),
         "evaluation": evaluation,
         "lookback_mss": lookback_mss,
@@ -143,6 +155,30 @@ def record_scan(
         "trend": trend,
         "markdown": render_intraday_scan_markdown(entry, lookback_mss, lookback_detail, trend, report),
     }
+
+
+def should_evaluate_trade(
+    state: Optional[IntradayState] = None,
+    settings: Optional[dict[str, Any]] = None,
+    *,
+    state_path: Optional[Path] = None,
+) -> bool:
+    """Heuristic: trade after ≥3 scans, <5 trades, on trend shift or every 2nd scan."""
+    cfg = settings or load_settings()
+    sched = cfg.get("schedule", {})
+    if not sched.get("intraday_trade_enabled", True):
+        return False
+
+    st = state or load_state(state_path)
+    if len(st.scans) < int(sched.get("trade_min_scans", 3)):
+        return False
+    if len(st.trades) >= MAX_TRADES:
+        return False
+
+    trend = detect_mss_trend(st.scans)
+    if trend in ("turning_up", "turning_down", "rising", "falling"):
+        return True
+    return len(st.scans) % int(sched.get("trade_every_n_scans", 2)) == 0
 
 
 def evaluate_trade(
@@ -154,6 +190,8 @@ def evaluate_trade(
     state: Optional[IntradayState] = None,
     state_path: Optional[Path] = None,
     expected_return_pct: Optional[float] = None,
+    pre_enriched: Optional[dict[str, Any]] = None,
+    pre_evaluation: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Evaluate T_n trade opportunity using lookback MSS over recent scans."""
     cfg = settings or load_settings()
@@ -164,9 +202,14 @@ def evaluate_trade(
     if not st.scans:
         raise RuntimeError("尚无扫描记录，请先运行 daily-run intraday scan")
 
-    enriched = run_experts(dict(snapshot), cfg, names=plugin_names)
-    enriched.setdefault("report_type", "intraday")
-    evaluation = evaluate_snapshot(enriched, cfg, doctor_channels=doctor_channels)
+    if pre_enriched is not None and pre_evaluation is not None:
+        enriched = pre_enriched
+        evaluation = pre_evaluation
+    else:
+        enriched = run_experts(dict(snapshot), cfg, names=plugin_names)
+        enriched.setdefault("report_type", "intraday")
+        evaluation = evaluate_snapshot(enriched, cfg, doctor_channels=doctor_channels)
+
     report = evaluation["report"]
     verdict = evaluation["verdict"]
 
@@ -230,15 +273,23 @@ def run_intraday(
     steps.append("scan")
 
     trade_result = None
-    if trade:
+    do_trade = trade or should_evaluate_trade(
+        IntradayState.from_dict(scan_result["state"]), cfg, state_path=state_path
+    )
+    if do_trade and not trade:
+        steps.append("trade_auto")
+
+    if do_trade:
         trade_result = evaluate_trade(
-            snapshot,
+            scan_result.get("enriched") or snapshot,
             settings=cfg,
             doctor_channels=doctor_channels,
             plugin_names=plugin_names,
             state=IntradayState.from_dict(scan_result["state"]),
             state_path=state_path,
             expected_return_pct=expected_return_pct,
+            pre_enriched=scan_result.get("enriched"),
+            pre_evaluation=scan_result.get("evaluation"),
         )
         steps.append("trade")
 

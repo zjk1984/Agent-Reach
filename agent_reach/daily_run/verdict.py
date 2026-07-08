@@ -163,6 +163,110 @@ def compute_verdict(snapshot: dict[str, Any], settings: dict[str, Any]) -> Verdi
     )
 
 
+def fuse_verdict_with_team(
+    verdict: VerdictResult,
+    snapshot: dict[str, Any],
+    settings: dict[str, Any],
+) -> VerdictResult:
+    """Merge MSS verdict with Team supervisor, identifier block, and Buffett filter."""
+    labels = settings.get("verdict_labels", {})
+    buy_label = labels.get("buy", "可做")
+    watch_label = labels.get("watch", "观察")
+    avoid_label = labels.get("avoid", "回避")
+
+    downgrade = list(verdict.downgrade_reasons)
+    label_key = verdict.label_key
+    blocked = verdict.blocked
+    confidence = verdict.confidence
+    reasoning = verdict.reasoning
+
+    # Identifier block from team review
+    team_review = snapshot.get("team_review") or {}
+    if snapshot.get("identifier_blocked") or team_review.get("blocked"):
+        if label_key == "buy":
+            label_key = "watch"
+        blocked = True
+        reason = team_review.get("block_reason") or "专家鉴别 Agent 阻断"
+        downgrade.append(reason)
+        confidence = "低"
+
+    # Team consensus label fusion
+    consensus_label = snapshot.get("team_consensus_label") or team_review.get("consensus_label")
+    if consensus_label:
+        consensus_key = _label_to_key(consensus_label, labels)
+        label_key = _merge_label_keys(label_key, consensus_key)
+        if consensus_key == "avoid":
+            blocked = True
+        elif consensus_key == "watch" and label_key != "avoid":
+            label_key = "watch"
+        downgrade.append(f"Team 共识：{consensus_label}（{team_review.get('consensus_score', '—')} 分）")
+
+    # Buffett hard veto when fundamentals present and fail
+    buffett_blocked, buffett_notes = _check_buffett_filter(snapshot, settings)
+    if buffett_blocked:
+        if label_key == "buy":
+            label_key = "watch"
+        blocked = True
+        downgrade.extend(buffett_notes)
+        confidence = "低"
+
+    verdict_map = {"buy": buy_label, "watch": watch_label, "avoid": avoid_label}
+    return VerdictResult(
+        verdict=verdict_map[label_key],
+        confidence=confidence,
+        mss_final=verdict.mss_final,
+        entry_price=verdict.entry_price,
+        stop_loss_price=verdict.stop_loss_price,
+        invalidation=verdict.invalidation,
+        reasoning=reasoning,
+        downgrade_reasons=downgrade,
+        blocked=blocked,
+        label_key=label_key,
+    )
+
+
+def _label_to_key(label: str, labels: dict[str, str]) -> str:
+    if label == labels.get("buy", "可做"):
+        return "buy"
+    if label == labels.get("avoid", "回避"):
+        return "avoid"
+    return "watch"
+
+
+def _merge_label_keys(a: str, b: str) -> str:
+    order = {"avoid": 0, "watch": 1, "buy": 2}
+    return a if order.get(a, 1) <= order.get(b, 1) else b
+
+
+def _check_buffett_filter(
+    snapshot: dict[str, Any],
+    settings: dict[str, Any],
+) -> tuple[bool, list[str]]:
+    bf = settings.get("buffett_filter", {})
+    notes: list[str] = []
+    blocked = False
+    fields_present = 0
+    failures = 0
+
+    checks = [
+        ("gross_margin", float(bf.get("min_gross_margin", 0.35)), lambda v, t: v >= t, "毛利率"),
+        ("peg", float(bf.get("max_peg", 1.2)), lambda v, t: v < t, "PEG"),
+        ("roe", float(bf.get("min_roe", 0.15)), lambda v, t: v >= t, "ROE"),
+    ]
+    for field, threshold, ok_fn, label in checks:
+        val = _optional_float(snapshot.get(field))
+        if val is None:
+            continue
+        fields_present += 1
+        if not ok_fn(val, threshold):
+            failures += 1
+            notes.append(f"Buffett {label} 不达标（{val} vs 阈值 {threshold}）")
+
+    if fields_present > 0 and failures > 0:
+        blocked = True
+    return blocked, notes
+
+
 def _optional_float(value: Any) -> Optional[float]:
     if value is None or value == "":
         return None

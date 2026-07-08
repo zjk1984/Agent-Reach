@@ -1,10 +1,13 @@
-# -*- coding: utf-8 -*-
-"""Optional AKShare data adapter for daily-run snapshot enrichment."""
+# -*- coding: utf-8
+"""AKShare spot cache + batch quote lookup."""
 
 from __future__ import annotations
 
+import time
 from datetime import datetime, timezone
 from typing import Any, Optional
+
+_SPOT_CACHE: dict[str, Any] = {"ts": 0.0, "rows": {}, "ttl": 60}
 
 
 class AKShareError(RuntimeError):
@@ -23,7 +26,6 @@ def _import_akshare():
 
 
 def normalize_symbol(code: str) -> tuple[str, str]:
-    """Return (symbol, market) where market is sh or sz."""
     text = code.strip().upper()
     for prefix in ("SH", "SZ", "BJ"):
         if text.startswith(prefix):
@@ -38,36 +40,58 @@ def normalize_symbol(code: str) -> tuple[str, str]:
     return text, "sh"
 
 
-def fetch_quote(code: str) -> dict[str, Any]:
-    """Fetch latest spot quote for an A-share symbol."""
+def _load_spot_rows(*, ttl: int = 60) -> dict[str, dict[str, Any]]:
+    now = time.time()
+    if _SPOT_CACHE["rows"] and now - float(_SPOT_CACHE["ts"]) < ttl:
+        return _SPOT_CACHE["rows"]
+
     ak = _import_akshare()
-    symbol, _market = normalize_symbol(code)
     df = ak.stock_zh_a_spot_em()
-    row = df[df["代码"] == symbol]
-    if row.empty:
+    rows: dict[str, dict[str, Any]] = {}
+    for _, item in df.iterrows():
+        symbol = str(item.get("代码", "")).zfill(6)
+        rows[symbol] = item
+
+    _SPOT_CACHE["ts"] = now
+    _SPOT_CACHE["rows"] = rows
+    _SPOT_CACHE["ttl"] = ttl
+    return rows
+
+
+def fetch_quotes_batch(codes: list[str], *, ttl: int = 60) -> dict[str, dict[str, Any]]:
+    """Fetch multiple A-share quotes in one spot-table pass."""
+    rows = _load_spot_rows(ttl=ttl)
+    out: dict[str, dict[str, Any]] = {}
+    for code in codes:
+        symbol, _ = normalize_symbol(code)
+        item = rows.get(symbol)
+        if item is None:
+            continue
+        price = float(item["最新价"])
+        out[symbol] = {
+            "code": symbol,
+            "name": str(item.get("名称", symbol)),
+            "price": price,
+            "change_pct": float(item.get("涨跌幅", 0)),
+            "volume_ratio": _optional_float(item.get("量比")),
+            "turnover": float(item.get("成交额", 0) or 0),
+            "source": "akshare_spot_em",
+        }
+    return out
+
+
+def fetch_quote(code: str, *, ttl: int = 60) -> dict[str, Any]:
+    symbol, _ = normalize_symbol(code)
+    batch = fetch_quotes_batch([symbol], ttl=ttl)
+    if symbol not in batch:
         raise AKShareError(f"未找到股票代码 {symbol}")
-    item = row.iloc[0]
-    price = float(item["最新价"])
-    return {
-        "code": symbol,
-        "name": str(item.get("名称", symbol)),
-        "price": price,
-        "change_pct": float(item.get("涨跌幅", 0)),
-        "volume_ratio": _optional_float(item.get("量比")),
-        "turnover": float(item.get("成交额", 0) or 0),
-        "source": "akshare_spot_em",
-    }
+    return batch[symbol]
 
 
 def fetch_technicals(code: str, *, lookback: int = 20) -> dict[str, Any]:
-    """Compute MA20 and 20-day price position from daily history."""
     ak = _import_akshare()
-    symbol, market = normalize_symbol(code)
-    hist = ak.stock_zh_a_hist(
-        symbol=symbol,
-        period="daily",
-        adjust="qfq",
-    )
+    symbol, _market = normalize_symbol(code)
+    hist = ak.stock_zh_a_hist(symbol=symbol, period="daily", adjust="qfq")
     if hist is None or len(hist) < 5:
         raise AKShareError(f"历史 K 线不足：{symbol}")
 
@@ -83,7 +107,10 @@ def fetch_technicals(code: str, *, lookback: int = 20) -> dict[str, Any]:
     avg_vol = sum(volumes[-lookback:]) / min(len(volumes), lookback)
     vol_ratio = volumes[-1] / avg_vol if avg_vol > 0 else None
 
+    ma5 = sum(closes[-5:]) / min(len(closes), 5)
+
     return {
+        "ma5": round(ma5, 2),
         "ma20": round(ma20, 2),
         "position_20d": round(position_20d, 4),
         "volume_ratio": round(vol_ratio, 2) if vol_ratio is not None else None,
@@ -92,7 +119,6 @@ def fetch_technicals(code: str, *, lookback: int = 20) -> dict[str, Any]:
 
 
 def enrich_snapshot(snapshot: dict[str, Any], code: str) -> dict[str, Any]:
-    """Merge AKShare quote + technicals into a snapshot dict."""
     quote = fetch_quote(code)
     technicals = fetch_technicals(code)
 
@@ -109,9 +135,7 @@ def enrich_snapshot(snapshot: dict[str, Any], code: str) -> dict[str, Any]:
 
     sources = dict(merged.get("sources") or {})
     sources["quote"] = {
-        "summary": (
-            f"AKShare {quote['name']} {quote['price']} ({quote['change_pct']:+.2f}%)"
-        ),
+        "summary": f"AKShare {quote['name']} {quote['price']} ({quote['change_pct']:+.2f}%)",
         "backend": "akshare",
     }
     merged["sources"] = sources

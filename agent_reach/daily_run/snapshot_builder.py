@@ -1,12 +1,16 @@
-# -*- coding: utf-8 -*-
+# -*- coding: utf-8
 """Build daily-run snapshots from portfolio config + live quotes."""
 
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
+
+from agent_reach.daily_run.macro_collector import collect_macro_context
+from agent_reach.daily_run.mss_forecast import forecast_mss_range
 
 
 def default_portfolio_path() -> Path:
@@ -18,7 +22,6 @@ def example_portfolio_path() -> Path:
 
 
 def load_portfolio(path: Optional[Path] = None) -> dict[str, Any]:
-    """Load portfolio JSON; user file → example fallback."""
     p = path or default_portfolio_path()
     if not p.exists():
         example = example_portfolio_path()
@@ -50,60 +53,88 @@ def code_to_xueqiu_symbol(code: str) -> str:
     return f"SZ{text}"
 
 
-def fetch_live_quote(code: str, config=None) -> dict[str, Any]:
-    """Fetch quote via Xueqiu (preferred) with AKShare fallback."""
-    symbol = code_to_xueqiu_symbol(code)
-    xq_error: Optional[str] = None
+def _normalize_code(code: str) -> str:
+    return code.zfill(6)[-6:] if str(code).isdigit() else str(code)
+
+
+def fetch_quotes_map(codes: list[str], config=None) -> dict[str, dict[str, Any]]:
+    """Batch fetch quotes for multiple codes (xueqiu per-symbol + AKShare batch fallback)."""
+    unique = list(dict.fromkeys(_normalize_code(c) for c in codes if c))
+    result: dict[str, dict[str, Any]] = {}
+
+    # Xueqiu per symbol (lightweight)
     try:
         from agent_reach.channels import xueqiu as xq_mod
 
         xq_mod._ensure_cookies()
         channel = xq_mod.XueqiuChannel()
-        q = channel.get_stock_quote(symbol)
-        price = q.get("current")
-        if price is not None:
-            return {
-                "code": code.zfill(6)[-6:] if code.isdigit() else code,
-                "name": q.get("name", code),
-                "price": float(price),
-                "change_pct": float(q.get("percent") or 0),
-                "reference_price": float(q.get("last_close") or price),
-                "source": "xueqiu",
-            }
-    except Exception as exc:
-        xq_error = str(exc)
+        for code in unique:
+            try:
+                q = channel.get_stock_quote(code_to_xueqiu_symbol(code))
+                price = q.get("current")
+                if price is None:
+                    continue
+                result[code] = {
+                    "code": code,
+                    "name": q.get("name", code),
+                    "price": float(price),
+                    "change_pct": float(q.get("percent") or 0),
+                    "reference_price": float(q.get("last_close") or price),
+                    "source": "xueqiu",
+                }
+            except Exception:
+                continue
+    except Exception:
+        pass
 
+    missing = [c for c in unique if c not in result]
+    if missing:
+        try:
+            from agent_reach.daily_run.akshare_adapter import fetch_quotes_batch
+
+            batch = fetch_quotes_batch(missing)
+            for code in missing:
+                if code in batch:
+                    result[code] = batch[code]
+        except Exception:
+            pass
+
+    return result
+
+
+def _attach_technicals(quote: dict[str, Any], code: str) -> dict[str, Any]:
+    out = dict(quote)
     try:
-        from agent_reach.daily_run.akshare_adapter import fetch_quote, fetch_technicals
+        from agent_reach.daily_run.akshare_adapter import fetch_technicals
 
-        quote = fetch_quote(code)
-        technicals = fetch_technicals(code)
-        return {**quote, **technicals, "source": "akshare"}
-    except Exception as ak_exc:
-        msg = f"Xueqiu: {xq_error}; AKShare: {ak_exc}" if xq_error else str(ak_exc)
-        raise RuntimeError(f"无法获取 {code} 行情：{msg}") from ak_exc
+        out.update(fetch_technicals(code))
+    except Exception:
+        pass
+    return out
 
 
-def enrich_holding(holding: dict[str, Any], config=None) -> dict[str, Any]:
-    """Merge live quote into a holding entry."""
-    code = str(holding.get("code", ""))
+def enrich_holding(
+    holding: dict[str, Any],
+    quote_map: dict[str, dict[str, Any]],
+    *,
+    with_technicals: bool = False,
+) -> dict[str, Any]:
+    code = _normalize_code(str(holding.get("code", "")))
     out = dict(holding)
-    try:
-        quote = fetch_live_quote(code, config)
+    quote = quote_map.get(code)
+    if quote:
         out["price"] = quote["price"]
         out["change_pct"] = quote.get("change_pct")
         out["name"] = quote.get("name") or out.get("name")
-        if quote.get("ma20") is not None:
-            out["ma20"] = quote["ma20"]
-        if quote.get("position_20d") is not None:
-            out["position_20d"] = quote["position_20d"]
-        if quote.get("volume_ratio") is not None:
-            out["volume_ratio"] = quote["volume_ratio"]
         out["quote_source"] = quote.get("source")
-    except RuntimeError:
-        if out.get("cost") is not None:
-            out["price"] = out["cost"]
-            out["quote_source"] = "cost_fallback"
+        if with_technicals:
+            enriched = _attach_technicals(quote, code)
+            for k in ("ma20", "ma5", "position_20d", "volume_ratio"):
+                if enriched.get(k) is not None:
+                    out[k] = enriched[k]
+    elif out.get("cost") is not None:
+        out["price"] = out["cost"]
+        out["quote_source"] = "cost_fallback"
     return out
 
 
@@ -114,49 +145,61 @@ def build_snapshot(
     primary_code: Optional[str] = None,
     config=None,
     enrich: bool = True,
+    settings: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
-    """Build a daily-run snapshot from portfolio config + optional live quotes."""
+    """Build a daily-run snapshot from portfolio + live macro/quotes."""
+    from agent_reach.daily_run.settings import load_settings
+
+    cfg = settings or load_settings()
     pf = portfolio or load_portfolio()
     code = primary_code or pf.get("primary_code") or "MARKET"
     if code == "MARKET" and pf.get("holdings"):
         code = str(pf["holdings"][0]["code"])
 
+    code_norm = _normalize_code(str(code))
     holdings = [dict(h) for h in (pf.get("holdings") or [])]
     watchlist = [dict(w) for w in (pf.get("watchlist") or [])]
 
-    primary_name = code
+    macro_ctx = collect_macro_context(pf, config=config, settings=cfg) if enrich else {}
+
+    primary_name = code_norm
     primary_price = None
     primary_ma20 = None
+    primary_ma5 = None
     primary_pos = None
     primary_vol = None
     quote_summary_parts: list[str] = []
+    has_cost_fallback = False
 
     if enrich:
-        enriched_holdings = []
-        for h in holdings:
-            eh = enrich_holding(h, config)
-            enriched_holdings.append(eh)
-            if str(eh.get("code")) == str(code).zfill(6)[-6:] or str(eh.get("code")) == code:
-                primary_name = eh.get("name", code)
-                primary_price = eh.get("price")
-                primary_ma20 = eh.get("ma20")
-                primary_pos = eh.get("position_20d")
-                primary_vol = eh.get("volume_ratio")
+        all_codes = [code_norm] + [
+            _normalize_code(str(h.get("code", ""))) for h in holdings
+        ] + [_normalize_code(str(w.get("code", ""))) for w in watchlist]
+        quote_map = fetch_quotes_map(all_codes, config)
+
+        if code_norm in quote_map:
+            primary_quote = _attach_technicals(quote_map[code_norm], code_norm)
+            quote_map[code_norm] = primary_quote
+            primary_name = primary_quote.get("name", code_norm)
+            primary_price = primary_quote.get("price")
+            primary_ma20 = primary_quote.get("ma20")
+            primary_ma5 = primary_quote.get("ma5")
+            primary_pos = primary_quote.get("position_20d")
+            primary_vol = primary_quote.get("volume_ratio")
+
+        holdings = [
+            enrich_holding(h, quote_map, with_technicals=_normalize_code(str(h.get("code", ""))) == code_norm)
+            for h in holdings
+        ]
+        watchlist = [enrich_holding(w, quote_map) for w in watchlist]
+
+        for eh in holdings + watchlist:
+            if eh.get("quote_source") == "cost_fallback":
+                has_cost_fallback = True
             if eh.get("price") is not None:
                 chg = eh.get("change_pct")
                 chg_s = f" {chg:+.2f}%" if chg is not None else ""
                 quote_summary_parts.append(f"{eh.get('name')} {eh['price']}{chg_s}")
-        holdings = enriched_holdings
-
-        enriched_watch = []
-        for w in watchlist:
-            ew = enrich_holding(w, config)
-            enriched_watch.append(ew)
-            if ew.get("price") is not None:
-                chg = ew.get("change_pct")
-                chg_s = f" {chg:+.2f}%" if chg is not None else ""
-                quote_summary_parts.append(f"{ew.get('name')} {ew['price']}{chg_s}")
-        watchlist = enriched_watch
 
     portfolio_block = {
         "total": pf.get("total"),
@@ -165,26 +208,29 @@ def build_snapshot(
         "holdings": holdings,
     }
 
-    sources = dict(pf.get("sources_overrides") or {})
+    sources = dict(macro_ctx.get("sources") or {})
     if quote_summary_parts:
-        sources.setdefault("quote", {})["summary"] = " · ".join(quote_summary_parts[:4])
-        sources["quote"]["backend"] = "snapshot_builder"
-    sources.setdefault("flow", {"summary": "待更新"})
-    sources.setdefault("sentiment", {"summary": "待更新"})
+        sources["quote"] = {
+            "summary": " · ".join(quote_summary_parts[:4]),
+            "backend": "snapshot_builder",
+        }
 
+    mss_breakdown = dict(macro_ctx.get("mss_breakdown") or pf.get("mss_breakdown") or {})
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
     snapshot: dict[str, Any] = {
         "as_of": datetime.now(timezone.utc).isoformat(),
         "report_type": report_type,
-        "code": code.zfill(6)[-6:] if str(code).isdigit() else code,
+        "code": code_norm,
         "name": primary_name if report_type != "premarket" else f"{today} 早盘",
-        "mss_breakdown": dict(pf.get("mss_breakdown") or {}),
-        "mss_range": pf.get("mss_range"),
+        "mss_breakdown": mss_breakdown,
         "sources": sources,
         "structured_review_complete": primary_ma20 is not None,
-        "macro_summary": pf.get("macro_summary"),
+        "macro_summary": macro_ctx.get("macro_summary") or pf.get("macro_summary"),
+        "macro_signals": macro_ctx.get("macro_signals"),
         "portfolio": portfolio_block,
         "watchlist": watchlist,
+        "has_cost_fallback": has_cost_fallback,
     }
 
     if primary_price is not None:
@@ -192,10 +238,19 @@ def build_snapshot(
         snapshot["reference_price"] = primary_price
     if primary_ma20 is not None:
         snapshot["ma20"] = primary_ma20
+    if primary_ma5 is not None:
+        snapshot["ma5"] = primary_ma5
     if primary_pos is not None:
         snapshot["position_20d"] = primary_pos
     if primary_vol is not None:
         snapshot["volume_ratio"] = primary_vol
+
+    if report_type == "premarket" and enrich:
+        mss_range, forecast_meta = forecast_mss_range(snapshot, cfg)
+        snapshot["mss_range"] = mss_range
+        snapshot["mss_forecast"] = forecast_meta
+    else:
+        snapshot["mss_range"] = pf.get("mss_range")
 
     return snapshot
 
@@ -206,7 +261,6 @@ def build_and_save(
     report_type: str = "intraday",
     config=None,
 ) -> tuple[dict[str, Any], Path]:
-    """Build snapshot and write to ~/.agent-reach/daily_run/last_snapshot.json."""
     snap = build_snapshot(report_type=report_type, config=config)
     out = output or (Path.home() / ".agent-reach" / "daily_run" / "last_snapshot.json")
     out.parent.mkdir(parents=True, exist_ok=True)

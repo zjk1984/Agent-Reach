@@ -38,23 +38,41 @@ class TestSnapshotBuilder:
         assert code_to_xueqiu_symbol("688008") == "SH688008"
         assert code_to_xueqiu_symbol("002273") == "SZ002273"
 
-    @patch("agent_reach.daily_run.snapshot_builder.fetch_live_quote")
-    def test_build_snapshot_enriched(self, mock_fetch, portfolio):
-        mock_fetch.return_value = {
-            "code": "688008",
-            "name": "澜起科技",
-            "price": 260.0,
-            "change_pct": 1.5,
-            "ma20": 255.0,
-            "position_20d": 0.55,
-            "volume_ratio": 1.1,
-            "source": "xueqiu",
+    @patch("agent_reach.daily_run.snapshot_builder.collect_macro_context")
+    @patch("agent_reach.daily_run.snapshot_builder.fetch_quotes_map")
+    def test_build_snapshot_enriched(self, mock_fetch, mock_macro, portfolio):
+        mock_macro.return_value = {
+            "mss_breakdown": {"fx": 40, "flow": 50, "global": 45, "sentiment": 48},
+            "sources": {
+                "flow": {"summary": "北向净流入 12 亿"},
+                "sentiment": {"summary": "DDR5 讨论"},
+            },
+            "macro_summary": "live macro",
         }
-        snap = build_snapshot(portfolio, enrich=True)
+        mock_fetch.return_value = {
+            "688008": {
+                "code": "688008",
+                "name": "澜起科技",
+                "price": 260.0,
+                "change_pct": 1.5,
+                "source": "xueqiu",
+            }
+        }
+        with patch("agent_reach.daily_run.snapshot_builder._attach_technicals") as mock_tech:
+            mock_tech.return_value = {
+                "code": "688008",
+                "name": "澜起科技",
+                "price": 260.0,
+                "change_pct": 1.5,
+                "ma20": 255.0,
+                "position_20d": 0.55,
+                "volume_ratio": 1.1,
+                "source": "xueqiu",
+            }
+            snap = build_snapshot(portfolio, enrich=True)
         assert snap["code"] == "688008"
         assert snap["price"] == 260.0
-        assert snap["portfolio"]["cash_ratio"] == 0.61
-        assert "quote" in snap["sources"]
+        assert snap["sources"]["flow"]["summary"] != "待更新"
 
     def test_build_snapshot_no_enrich(self, portfolio):
         snap = build_snapshot(portfolio, enrich=False)
@@ -72,7 +90,7 @@ class TestSchedule:
         assert "schedule run close" in block
 
     def test_default_entries_count(self):
-        assert len(default_entries()) == 3
+        assert len(default_entries()) == 12
 
     @patch("agent_reach.daily_run.workflows.save_morning_baseline")
     @patch("agent_reach.daily_run.workflows.run_morning")
