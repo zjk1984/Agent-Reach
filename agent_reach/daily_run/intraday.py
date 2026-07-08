@@ -234,15 +234,42 @@ def evaluate_trade(
         "code": report.get("code"),
         "name": report.get("name"),
     }
+    portfolio_apply = None
+    if decision.action in ("buy", "sell"):
+        from agent_reach.daily_run.portfolio_manager import (
+            append_trade_ledger,
+            apply_auto_adjust,
+            is_auto_adjust_enabled,
+            render_apply_markdown,
+        )
+        from agent_reach.daily_run.snapshot_builder import load_portfolio, save_portfolio
+
+        if is_auto_adjust_enabled(cfg):
+            pf = load_portfolio()
+            portfolio_apply = apply_auto_adjust(pf, decision, enriched, cfg)
+            if portfolio_apply.applied:
+                save_portfolio(portfolio_apply.portfolio)
+                append_trade_ledger(
+                    portfolio_apply.actions,
+                    trade_id=decision.trade_id,
+                    decision_action=decision.action,
+                )
+            trade_record["portfolio_apply"] = portfolio_apply.to_dict()
+
     st.trades.append(trade_record)
     save_state(st, state_path)
+
+    md = render_intraday_trade_markdown(decision, lookback_detail, report, st.scans)
+    if portfolio_apply is not None:
+        md += "\n\n---\n\n" + render_apply_markdown(portfolio_apply)
 
     return {
         "decision": decision.to_dict(),
         "trade": trade_record,
+        "portfolio_apply": portfolio_apply.to_dict() if portfolio_apply else None,
         "state": st.to_dict(),
         "evaluation": evaluation,
-        "markdown": render_intraday_trade_markdown(decision, lookback_detail, report, st.scans),
+        "markdown": md,
     }
 
 

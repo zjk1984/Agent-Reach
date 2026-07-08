@@ -1,0 +1,144 @@
+# Daily-run snapshot + MSS schedule via GitHub Actions (北京时间 / Asia/Shanghai).
+#
+# Required repository secrets:
+#   AGENT_REACH_CONFIG_YAML  — full ~/.agent-reach/config.yaml contents
+# Optional:
+#   AGENT_REACH_PORTFOLIO_JSON — portfolio.json (defaults to repo example)
+#
+# Manual run: Actions → daily-run schedule → Run workflow
+
+name: daily-run schedule
+
+on:
+  schedule:
+    # 08:00 北京时间 — 早盘 + MSS 预测 + 飞书
+    - cron: "0 8 * * 1-5"
+      timezone: Asia/Shanghai
+    # 09:30–15:00 北京时间 — 盘中 S1–S10 + Lookback MSS
+    - cron: "30 9 * * 1-5"
+      timezone: Asia/Shanghai
+    - cron: "0 10 * * 1-5"
+      timezone: Asia/Shanghai
+    - cron: "30 10 * * 1-5"
+      timezone: Asia/Shanghai
+    - cron: "0 11 * * 1-5"
+      timezone: Asia/Shanghai
+    - cron: "30 11 * * 1-5"
+      timezone: Asia/Shanghai
+    - cron: "0 13 * * 1-5"
+      timezone: Asia/Shanghai
+    - cron: "30 13 * * 1-5"
+      timezone: Asia/Shanghai
+    - cron: "0 14 * * 1-5"
+      timezone: Asia/Shanghai
+    - cron: "30 14 * * 1-5"
+      timezone: Asia/Shanghai
+    - cron: "0 15 * * 1-5"
+      timezone: Asia/Shanghai
+    # 15:30 北京时间 — 收盘复盘 + MSS 曲线 + 验证
+    - cron: "30 15 * * 1-5"
+      timezone: Asia/Shanghai
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "morning | intraday | close"
+        required: true
+        default: intraday
+        type: choice
+        options:
+          - morning
+          - intraday
+          - close
+      dry_run:
+        description: "Skip Feishu push"
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: daily-run-schedule
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TZ: Asia/Shanghai
+      INPUT_JOB: ${{ github.event.inputs.job }}
+      GITHUB_EVENT_SCHEDULE: ${{ github.event.schedule }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve job (北京时间)
+        id: resolve
+        run: |
+          set -euo pipefail
+          bash scripts/gha-daily-run-resolve-job.sh >> "$GITHUB_OUTPUT"
+
+      - name: Skip outside trading windows
+        if: steps.resolve.outputs.skip == 'true'
+        run: |
+          echo "Outside morning/intraday/close window — skipping."
+          exit 0
+
+      - name: Trading date (北京时间)
+        if: steps.resolve.outputs.skip != 'true'
+        id: tz
+        run: echo "date=$(date +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore daily-run state cache
+        if: steps.resolve.outputs.skip != 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.agent-reach/daily_run
+          key: daily-run-state-${{ steps.tz.outputs.date }}
+          restore-keys: |
+            daily-run-state-
+
+      - name: Setup Python
+        if: steps.resolve.outputs.skip != 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup Node (mcporter / Exa)
+        if: steps.resolve.outputs.skip != 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install agent-reach + mcporter
+        if: steps.resolve.outputs.skip != 'true'
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[daily-run]"
+          npm install -g mcporter
+
+      - name: Bootstrap config and portfolio
+        if: steps.resolve.outputs.skip != 'true'
+        env:
+          AGENT_REACH_CONFIG_YAML: ${{ secrets.AGENT_REACH_CONFIG_YAML }}
+          AGENT_REACH_PORTFOLIO_JSON: ${{ secrets.AGENT_REACH_PORTFOLIO_JSON }}
+        run: bash scripts/gha-daily-run-setup.sh
+
+      - name: Run scheduled job
+        if: steps.resolve.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          job="${{ steps.resolve.outputs.job }}"
+          extra=""
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "true" ]; then
+            extra="--dry-run"
+          fi
+          agent-reach daily-run schedule run "$job" $extra
+
+      - name: Upload run manifest
+        if: steps.resolve.outputs.skip != 'true' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-run-${{ steps.tz.outputs.date }}-${{ steps.resolve.outputs.job }}-${{ github.run_number }}
+          path: ~/.agent-reach/daily_run/runs/
+          if-no-files-found: ignore
+          retention-days: 14
