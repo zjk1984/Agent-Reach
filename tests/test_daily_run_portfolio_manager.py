@@ -96,6 +96,28 @@ class TestApplyAutoAdjust:
         assert "002273" not in codes
         assert result.portfolio["cash"] > portfolio["cash"]
         watch_codes = {w["code"] for w in result.portfolio["watchlist"]}
+        assert "002273" not in watch_codes
+
+    def test_sell_adds_watchlist_when_allowed(self, portfolio, snapshot, settings_enabled):
+        decision = TradeDecision(
+            action="sell",
+            trade_id="T1",
+            lookback_mss=35.0,
+            lookback_detail=[],
+            trend="falling",
+            reasoning="宏观避险",
+        )
+        portfolio["holdings"][0]["days_held"] = 5
+        portfolio["holdings"][1]["days_held"] = 5
+        result = apply_auto_adjust(
+            portfolio,
+            decision,
+            snapshot,
+            settings_enabled,
+            allow_watchlist_changes=True,
+        )
+        assert result.applied is True
+        watch_codes = {w["code"] for w in result.portfolio["watchlist"]}
         assert "002273" in watch_codes
 
     def test_sell_respects_lock(self, portfolio, snapshot, settings_enabled):

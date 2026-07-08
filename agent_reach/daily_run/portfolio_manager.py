@@ -105,8 +105,14 @@ def apply_auto_adjust(
     decision: Any,
     snapshot: dict[str, Any],
     settings: dict[str, Any],
+    *,
+    allow_watchlist_changes: bool = False,
 ) -> ApplyResult:
-    """Apply paper buy/sell to portfolio.json based on intraday TradeDecision."""
+    """Apply paper buy/sell to portfolio.json based on intraday TradeDecision.
+
+    Watchlist membership is NOT changed here by default — only morning/close
+    via watchlist_manager.adjust_watchlist().
+    """
     if not is_auto_adjust_enabled(settings):
         return ApplyResult(applied=False, portfolio=portfolio, message="auto_adjust 未启用")
 
@@ -128,9 +134,9 @@ def apply_auto_adjust(
     enriched = _enriched_symbols(snapshot)
 
     if action == "sell":
-        return _apply_sell(pf, enriched, settings, decision)
+        return _apply_sell(pf, enriched, settings, decision, allow_watchlist_changes=allow_watchlist_changes)
     if action == "buy":
-        return _apply_buy(pf, enriched, settings)
+        return _apply_buy(pf, enriched, settings, allow_watchlist_changes=allow_watchlist_changes)
 
     return ApplyResult(applied=False, portfolio=portfolio, message=f"未知决策 {action}")
 
@@ -140,6 +146,8 @@ def _apply_sell(
     enriched: dict[str, dict[str, Any]],
     settings: dict[str, Any],
     decision: Any,
+    *,
+    allow_watchlist_changes: bool = False,
 ) -> ApplyResult:
     holdings = list(pf.get("holdings") or [])
     if not holdings:
@@ -177,7 +185,7 @@ def _apply_sell(
     pf["holdings"] = [h for h in holdings if _normalize_code(str(h.get("code", ""))) != code]
     pf["cash"] = round(float(pf.get("cash") or 0) + proceeds, 2)
 
-    if portfolio_settings(settings).get("add_sold_to_watchlist", True):
+    if allow_watchlist_changes and portfolio_settings(settings).get("add_sold_to_watchlist", True):
         watchlist = list(pf.get("watchlist") or [])
         codes = {_normalize_code(str(w.get("code", ""))) for w in watchlist}
         if code not in codes:
@@ -202,6 +210,8 @@ def _apply_buy(
     pf: dict[str, Any],
     enriched: dict[str, dict[str, Any]],
     settings: dict[str, Any],
+    *,
+    allow_watchlist_changes: bool = False,
 ) -> ApplyResult:
     holdings = list(pf.get("holdings") or [])
     max_h = max_holdings(settings)
@@ -280,9 +290,10 @@ def _apply_buy(
     )
     pf["holdings"] = holdings
 
-    pf["watchlist"] = [
-        w for w in (pf.get("watchlist") or []) if _normalize_code(str(w.get("code", ""))) != code
-    ]
+    if allow_watchlist_changes:
+        pf["watchlist"] = [
+            w for w in (pf.get("watchlist") or []) if _normalize_code(str(w.get("code", ""))) != code
+        ]
 
     trade = TradeAction(
         side="buy",

@@ -287,7 +287,9 @@ def evaluate_trade(
 
         if is_auto_adjust_enabled(cfg):
             pf = load_portfolio()
-            portfolio_apply = apply_auto_adjust(pf, decision, enriched, cfg)
+            portfolio_apply = apply_auto_adjust(
+                pf, decision, enriched, cfg, allow_watchlist_changes=False
+            )
             if portfolio_apply.applied:
                 save_portfolio(portfolio_apply.portfolio)
                 append_trade_ledger(

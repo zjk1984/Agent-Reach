@@ -180,10 +180,10 @@ def run_scheduled(
 
     if job == "morning":
         from agent_reach.daily_run.intraday import record_scan_from_evaluation
+        from agent_reach.daily_run.portfolio_manager import increment_holding_days, is_auto_adjust_enabled
+        from agent_reach.daily_run.watchlist_manager import adjust_watchlist, is_watchlist_adjust_enabled
 
         with StepTimer("schedule.morning"):
-            from agent_reach.daily_run.portfolio_manager import increment_holding_days, is_auto_adjust_enabled
-
             if is_auto_adjust_enabled(settings):
                 pf = load_portfolio()
                 save_portfolio(increment_holding_days(pf))
@@ -208,6 +208,20 @@ def run_scheduled(
             )
             run_result["steps"].append("scan_s2")
             run_result["scan"] = scan_result
+
+            wl_result = None
+            if is_watchlist_adjust_enabled(settings):
+                pf = load_portfolio()
+                wl_result = adjust_watchlist(
+                    pf,
+                    run_result["snapshot"],
+                    settings,
+                    "morning",
+                )
+                if wl_result.applied:
+                    save_portfolio(wl_result.portfolio)
+                run_result["watchlist_adjust"] = wl_result.to_dict()
+
             result = {"job": job, "snapshot_path": str(path), "result": run_result}
             feishu = run_result.get("feishu")
 
@@ -243,6 +257,11 @@ def run_scheduled(
 
     elif job == "close":
         from agent_reach.daily_run.intraday import load_state
+        from agent_reach.daily_run.watchlist_manager import (
+            adjust_watchlist,
+            collect_intraday_sold_codes,
+            is_watchlist_adjust_enabled,
+        )
 
         with StepTimer("schedule.close"):
             snap, path = build_and_save(report_type="close", config=cfg_obj)
@@ -272,6 +291,22 @@ def run_scheduled(
                 push=push,
                 config=cfg_obj,
             )
+
+            wl_result = None
+            if is_watchlist_adjust_enabled(settings):
+                pf = load_portfolio()
+                wl_result = adjust_watchlist(
+                    pf,
+                    run_result["snapshot"],
+                    settings,
+                    "close",
+                    verify=run_result.get("verify"),
+                    sold_codes=collect_intraday_sold_codes(settings),
+                )
+                if wl_result.applied:
+                    save_portfolio(wl_result.portfolio)
+                run_result["watchlist_adjust"] = wl_result.to_dict()
+
             result = {"job": job, "snapshot_path": str(path), "result": run_result}
             feishu = run_result.get("feishu")
     else:
