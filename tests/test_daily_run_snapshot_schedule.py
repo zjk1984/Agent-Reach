@@ -147,9 +147,7 @@ class TestSchedule:
         assert "scan_s1_backfill" in result["result"]["steps"]
 
     @patch("agent_reach.daily_run.workflows.run_close")
-    @patch("agent_reach.daily_run.close_code_review.run_close_code_review")
-    @patch("agent_reach.daily_run.watchlist_manager.adjust_watchlist")
-    @patch("agent_reach.daily_run.verify.verify_snapshots")
+    @patch("agent_reach.daily_run.workflows.prepare_close_run")
     @patch("agent_reach.daily_run.workflows.load_morning_baseline")
     @patch("agent_reach.daily_run.intraday.load_state")
     @patch("agent_reach.daily_run.snapshot_builder.build_and_save")
@@ -160,16 +158,12 @@ class TestSchedule:
         mock_build,
         mock_load_state,
         mock_load_baseline,
-        mock_verify,
-        mock_adjust_wl,
-        mock_code_review,
+        mock_prepare_close,
         mock_run_close,
         portfolio,
         tmp_path,
     ):
         from agent_reach.daily_run.intraday import IntradayState
-        from agent_reach.daily_run.verify import VerifyResult
-        from agent_reach.daily_run.watchlist_manager import WatchlistAdjustResult
 
         mock_load_portfolio.return_value = portfolio
         snap = {"code": "688008", "mss_final": 48}
@@ -180,43 +174,25 @@ class TestSchedule:
             trades=[],
         )
         mock_load_baseline.return_value = {"code": "688008", "mss_final": 52, "mss_range": [45, 55]}
-        mock_verify.return_value = VerifyResult(
-            code="688008",
-            name="澜起科技",
-            price_baseline=255.0,
-            price_current=247.0,
-            price_delta_pct=-0.03,
-            mss_baseline=52.0,
-            mss_current=48.0,
-            mss_delta=-4.0,
-            verdict_baseline="可做",
-            verdict_current="观察",
-            verdict_changed=True,
-            mss_range_baseline=(45.0, 55.0),
-            mss_within_prediction=True,
-            summary="ok",
-        )
-        mock_adjust_wl.return_value = WatchlistAdjustResult(
-            applied=False,
-            portfolio=portfolio,
-            message="观察池无变更",
-        )
-        mock_code_review.return_value = __import__(
-            "agent_reach.daily_run.close_code_review", fromlist=["CodeReviewResult"]
-        ).CodeReviewResult(portfolio=portfolio)
+        mock_prepare_close.return_value = {
+            "snapshot": snap,
+            "portfolio": portfolio,
+            "pre_verify": {"verdict_current": "观察"},
+            "watchlist_adjust": {"applied": False, "message": "观察池无变更", "changes": []},
+            "code_review": {"findings": [], "fixes_applied": [], "portfolio_changed": False},
+            "steps": ["pre_verify", "code_review"],
+        }
         mock_run_close.return_value = {"verify": {}, "markdown": "close"}
 
         from agent_reach.daily_run.schedule import run_scheduled
 
         result = run_scheduled("close", push=False)
         assert result["job"] == "close"
-        mock_verify.assert_called_once()
-        mock_adjust_wl.assert_called_once()
-        assert mock_adjust_wl.call_args.kwargs.get("verify") is not None
-        mock_code_review.assert_called_once()
+        mock_prepare_close.assert_called_once()
         mock_run_close.assert_called_once()
         assert snap.get("intraday_scans")
         assert result["result"]["code_review"] is not None
+        assert result["result"]["prepare_steps"] == ["pre_verify", "code_review"]
 
 
 class TestRunManifest:

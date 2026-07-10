@@ -1560,9 +1560,15 @@ def _cmd_daily_run(args):
 
     if args.daily_action == "close":
         from agent_reach.config import Config
+        from agent_reach.daily_run.intraday import load_state
         from agent_reach.daily_run.plugins.loader import run_experts
         from agent_reach.daily_run.settings import load_settings
-        from agent_reach.daily_run.workflows import load_morning_baseline, run_close
+        from agent_reach.daily_run.snapshot_builder import load_portfolio
+        from agent_reach.daily_run.workflows import (
+            load_morning_baseline,
+            prepare_close_run,
+            run_close,
+        )
 
         current = json.loads(Path(args.input).read_text(encoding="utf-8"))
         settings = load_settings()
@@ -1578,15 +1584,35 @@ def _cmd_daily_run(args):
                 print(f"❌ {exc}")
                 sys.exit(1)
 
-        result = run_close(
+        portfolio = load_portfolio()
+        state = load_state()
+        prepared = prepare_close_run(
             current,
+            baseline,
+            portfolio,
+            settings=settings,
+            scans=state.scans,
+            trades=state.trades,
+        )
+
+        result = run_close(
+            prepared["snapshot"],
             baseline,
             settings=settings,
             push=not args.dry_run,
             title=args.title or None,
             config=Config(),
+            intraday_scans=state.scans,
+            intraday_trades=state.trades,
+            watchlist_adjust=prepared["watchlist_adjust"],
+            code_review=prepared["code_review"],
         )
+        result["code_review"] = prepared["code_review"]
+        result["watchlist_adjust"] = prepared["watchlist_adjust"]
+        result["prepare_steps"] = prepared["steps"]
         print(json.dumps(result["verify"], ensure_ascii=False, indent=2))
+        if prepared["steps"]:
+            print(f"预处理：{' → '.join(prepared['steps'])}")
         print("\n--- Markdown ---\n")
         print(result["markdown"])
         if not args.dry_run:

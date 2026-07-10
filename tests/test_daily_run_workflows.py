@@ -8,7 +8,12 @@ from unittest.mock import patch
 import pytest
 
 from agent_reach.daily_run.settings import load_settings
-from agent_reach.daily_run.workflows import run_close, run_morning, save_morning_baseline
+from agent_reach.daily_run.workflows import (
+    prepare_close_run,
+    run_close,
+    run_morning,
+    save_morning_baseline,
+)
 
 
 @pytest.fixture
@@ -28,6 +33,20 @@ def morning_snapshot():
             "sentiment": {"summary": "s"},
         },
         "structured_review_complete": True,
+    }
+
+
+@pytest.fixture
+def portfolio():
+    return {
+        "total": 100000,
+        "cash": 61000,
+        "cash_ratio": 0.61,
+        "holdings": [{"code": "688008", "name": "澜起科技", "shares": 100, "cost": 255.87}],
+        "watchlist": [
+            {"code": "603986", "name": "兆易创新"},
+            {"code": "002273", "name": "水晶光电"},
+        ],
     }
 
 
@@ -108,3 +127,63 @@ class TestCloseWorkflow:
         assert "002273" in result["markdown"]
         assert "代码走读" in result["markdown"]
         assert "已重算 cash_ratio" in result["markdown"]
+
+
+class TestPrepareCloseRun:
+    @patch("agent_reach.daily_run.snapshot_builder.save_portfolio")
+    @patch("agent_reach.daily_run.close_code_review.run_close_code_review")
+    @patch("agent_reach.daily_run.watchlist_manager.adjust_watchlist")
+    @patch("agent_reach.daily_run.verify.verify_snapshots")
+    def test_prepare_close_run_pipeline(
+        self,
+        mock_verify,
+        mock_adjust,
+        mock_code_review,
+        mock_save_pf,
+        morning_snapshot,
+        portfolio,
+    ):
+        from agent_reach.daily_run.close_code_review import CodeReviewResult
+        from agent_reach.daily_run.verify import VerifyResult
+        from agent_reach.daily_run.watchlist_manager import WatchlistAdjustResult
+
+        baseline = dict(morning_snapshot)
+        baseline["mss_final"] = 52
+        current = dict(morning_snapshot)
+        mock_verify.return_value = VerifyResult(
+            code="688008",
+            name="澜起科技",
+            price_baseline=255.0,
+            price_current=247.0,
+            price_delta_pct=-0.03,
+            mss_baseline=52.0,
+            mss_current=48.0,
+            mss_delta=-4.0,
+            verdict_baseline="可做",
+            verdict_current="观察",
+            verdict_changed=True,
+            mss_range_baseline=(45.0, 55.0),
+            mss_within_prediction=True,
+            summary="ok",
+        )
+        mock_adjust.return_value = WatchlistAdjustResult(
+            applied=False,
+            portfolio=portfolio,
+            message="观察池无变更",
+        )
+        mock_code_review.return_value = CodeReviewResult(portfolio=portfolio)
+
+        prepared = prepare_close_run(
+            current,
+            baseline,
+            portfolio,
+            settings=load_settings(),
+            scans=[{"scan_id": "S1", "mss_final": 50}],
+            trades=[],
+        )
+        assert "pre_verify" in prepared["steps"]
+        assert "code_review" in prepared["steps"]
+        assert prepared["snapshot"].get("intraday_scans")
+        mock_adjust.assert_called_once()
+        assert mock_adjust.call_args.kwargs.get("verify") is not None
+        mock_save_pf.assert_not_called()
