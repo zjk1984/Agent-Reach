@@ -44,10 +44,13 @@ on:
     # 15:30 北京时间 — 收盘复盘 + MSS 曲线 + 验证
     - cron: "30 15 * * 1-5"
       timezone: Asia/Shanghai
+    # 09:00 北京时间 周六 — 周报总结（盈亏、持股、观察池、板块）
+    - cron: "0 9 * * 6"
+      timezone: Asia/Shanghai
   workflow_dispatch:
     inputs:
       job:
-        description: "morning | intraday | close"
+        description: "morning | intraday | close | weekly"
         required: true
         default: intraday
         type: choice
@@ -55,6 +58,7 @@ on:
           - morning
           - intraday
           - close
+          - weekly
       dry_run:
         description: "Skip Feishu push"
         required: false

@@ -91,7 +91,7 @@ class TestSchedule:
         assert "schedule run close" in block
 
     def test_default_entries_count(self):
-        assert len(default_entries()) == 13
+        assert len(default_entries()) == 14
 
     @patch("agent_reach.daily_run.trade_calendar.is_trading_day", return_value=(True, ""))
     @patch("agent_reach.daily_run.intraday.load_state")

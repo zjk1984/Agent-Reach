@@ -362,6 +362,46 @@ def _push_markdown(
     return send_card(cfg_obj, title, markdown, template=tpl)
 
 
+def run_weekly(
+    snapshot: dict[str, Any],
+    *,
+    settings: Optional[dict[str, Any]] = None,
+    push: bool = True,
+    title: Optional[str] = None,
+    config=None,
+    portfolio: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    """Saturday weekly summary: PnL, holdings, watchlist, hot sectors → Feishu."""
+    from agent_reach.daily_run.weekly_report import (
+        generate_weekly_report,
+        render_weekly_markdown,
+        weekly_report_title,
+    )
+
+    cfg = settings or load_settings()
+    weekly_cfg = cfg.get("weekly_report") or {}
+    if weekly_cfg.get("enabled", True) is False:
+        return {"steps": ["skipped"], "message": "weekly_report disabled", "feishu": None}
+
+    steps: list[str] = ["generate"]
+    report = generate_weekly_report(snapshot, cfg, portfolio=portfolio)
+    md = render_weekly_markdown(report)
+    steps.append("render")
+
+    feishu_result = None
+    if push:
+        card_title = title or weekly_report_title(report)
+        feishu_result = _push_markdown(card_title, md, cfg, config, report_type="weekly")
+        steps.append("push")
+
+    return {
+        "steps": steps,
+        "report": report.to_dict(),
+        "markdown": md,
+        "feishu": feishu_result,
+    }
+
+
 def _send_start_notification(config, settings: dict[str, Any]) -> None:
     from agent_reach.config import Config
     from agent_reach.integrations.feishu import send_card

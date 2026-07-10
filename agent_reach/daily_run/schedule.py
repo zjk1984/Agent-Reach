@@ -77,6 +77,9 @@ def default_entries() -> list[CronEntry]:
     entries.append(
         CronEntry("30", "15", "1-5", f"{cmd} daily-run schedule run close", "daily-run 收盘 15:30")
     )
+    entries.append(
+        CronEntry("0", "9", "6", f"{cmd} daily-run schedule run weekly", "daily-run 周报 周六 9:00")
+    )
     return entries
 
 
@@ -146,11 +149,11 @@ def run_scheduled(
     push: bool = True,
     config=None,
 ) -> dict:
-    """Execute morning | intraday | close with auto snapshot + doctor + manifest."""
+    """Execute morning | intraday | close | weekly with auto snapshot + doctor + manifest."""
     from agent_reach.config import Config
     from agent_reach.daily_run.settings import load_settings
     from agent_reach.daily_run.snapshot_builder import build_and_save, load_portfolio, save_portfolio
-    from agent_reach.daily_run.workflows import load_morning_baseline, run_close, run_morning
+    from agent_reach.daily_run.workflows import load_morning_baseline, run_close, run_morning, run_weekly
 
     cfg_obj = config or Config()
     settings = load_settings()
@@ -158,13 +161,14 @@ def run_scheduled(
 
     from agent_reach.daily_run.trade_calendar import is_trading_day
 
-    trading_ok, trading_reason = is_trading_day(settings=settings)
-    if not trading_ok:
-        result = {"job": job, "skipped": True, "reason": trading_reason}
-        save_run_manifest(job, result, duration_ms=0)
-        return result
+    if job != "weekly":
+        trading_ok, trading_reason = is_trading_day(settings=settings)
+        if not trading_ok:
+            result = {"job": job, "skipped": True, "reason": trading_reason}
+            save_run_manifest(job, result, duration_ms=0)
+            return result
 
-    doctor = _doctor_channels(cfg_obj)
+    doctor = _doctor_channels(cfg_obj) if job != "weekly" else {}
 
     try:
         load_portfolio()
@@ -343,8 +347,27 @@ def run_scheduled(
 
             result = {"job": job, "snapshot_path": str(path), "result": run_result}
             feishu = run_result.get("feishu")
+
+    elif job == "weekly":
+        with StepTimer("schedule.weekly"):
+            pf = load_portfolio()
+            snap, path = build_and_save(
+                report_type="close",
+                config=cfg_obj,
+                settings=settings,
+                portfolio=pf,
+            )
+            run_result = run_weekly(
+                snap,
+                settings=settings,
+                push=push,
+                config=cfg_obj,
+                portfolio=pf,
+            )
+            result = {"job": job, "snapshot_path": str(path), "result": run_result}
+            feishu = run_result.get("feishu")
     else:
-        raise ValueError(f"未知定时任务：{job}，可选 morning | intraday | close")
+        raise ValueError(f"未知定时任务：{job}，可选 morning | intraday | close | weekly")
 
     duration_ms = (time.perf_counter() - t0) * 1000
     manifest_path = save_run_manifest(job, result, feishu=feishu, duration_ms=duration_ms)
