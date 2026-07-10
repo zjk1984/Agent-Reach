@@ -105,13 +105,17 @@ jobs:
         id: tz
         run: echo "date=$(date +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
 
+      # Split restore/save: actions/cache@v4 skips upload on primary-key hit, so
+      # intraday_state.json never accumulated S3+ across scheduled runs.
       - name: Restore daily-run state cache
         if: steps.resolve.outputs.skip != 'true'
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
+        id: daily-run-cache
         with:
           path: ~/.agent-reach/daily_run
-          key: daily-run-state-${{ steps.tz.outputs.date }}
+          key: daily-run-state-${{ steps.tz.outputs.date }}-${{ github.run_number }}
           restore-keys: |
+            daily-run-state-${{ steps.tz.outputs.date }}-
             daily-run-state-
 
       - name: Setup Python
@@ -150,6 +154,13 @@ jobs:
             extra="--dry-run"
           fi
           agent-reach daily-run schedule run "$job" $extra
+
+      - name: Save daily-run state cache
+        if: steps.resolve.outputs.skip != 'true' && always()
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.agent-reach/daily_run
+          key: daily-run-state-${{ steps.tz.outputs.date }}-${{ github.run_number }}
 
       - name: Upload run manifest
         if: steps.resolve.outputs.skip != 'true' && always()
