@@ -93,6 +93,7 @@ class TestSchedule:
     def test_default_entries_count(self):
         assert len(default_entries()) == 13
 
+    @patch("agent_reach.daily_run.trade_calendar.is_trading_day", return_value=(True, ""))
     @patch("agent_reach.daily_run.intraday.load_state")
     @patch("agent_reach.daily_run.pipeline.evaluate_snapshot")
     @patch("agent_reach.daily_run.intraday.record_scan_from_evaluation")
@@ -146,6 +147,7 @@ class TestSchedule:
         assert result["result"]["scan"]["scan"]["scan_id"] == "S2"
         assert "scan_s1_backfill" in result["result"]["steps"]
 
+    @patch("agent_reach.daily_run.trade_calendar.is_trading_day", return_value=(True, ""))
     @patch("agent_reach.daily_run.workflows.run_close")
     @patch("agent_reach.daily_run.workflows.prepare_close_run")
     @patch("agent_reach.daily_run.workflows.load_morning_baseline")

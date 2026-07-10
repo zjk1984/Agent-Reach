@@ -3,7 +3,10 @@
 # Required repository secrets:
 #   AGENT_REACH_CONFIG_YAML  — full ~/.agent-reach/config.yaml contents
 # Optional:
-#   AGENT_REACH_PORTFOLIO_JSON — portfolio.json (defaults to repo example)
+#   AGENT_REACH_PORTFOLIO_JSON — one-time seed if no cache / no config/daily_run_portfolio.json
+#
+# Initial holdings without secrets: commit config/daily_run_portfolio.json to the repo.
+# Reset without secrets: Actions → Run workflow → reset_portfolio=true (uses repo file).
 #
 # Manual run: Actions → daily-run schedule → Run workflow
 
@@ -54,6 +57,11 @@ on:
           - close
       dry_run:
         description: "Skip Feishu push"
+        required: false
+        default: false
+        type: boolean
+      reset_portfolio:
+        description: "Re-seed portfolio.json from repo config (ignore cache)"
         required: false
         default: false
         type: boolean
@@ -142,6 +150,7 @@ jobs:
         env:
           AGENT_REACH_CONFIG_YAML: ${{ secrets.AGENT_REACH_CONFIG_YAML }}
           AGENT_REACH_PORTFOLIO_JSON: ${{ secrets.AGENT_REACH_PORTFOLIO_JSON }}
+          RESET_PORTFOLIO: ${{ github.event_name == 'workflow_dispatch' && inputs.reset_portfolio && 'true' || 'false' }}
         run: bash scripts/gha-daily-run-setup.sh
 
       - name: Run scheduled job
