@@ -162,6 +162,26 @@ def run_close(
     if research_md:
         extra_parts.append(research_md)
 
+    if watchlist_adjust is not None:
+        from agent_reach.daily_run.watchlist_manager import (
+            WatchlistAdjustResult,
+            WatchlistChange,
+            render_watchlist_adjust_markdown,
+        )
+
+        wl_md = render_watchlist_adjust_markdown(
+            WatchlistAdjustResult(
+                applied=bool(watchlist_adjust.get("applied")),
+                portfolio={},
+                changes=[
+                    WatchlistChange(**c) for c in (watchlist_adjust.get("changes") or [])
+                ],
+                message=str(watchlist_adjust.get("message") or ""),
+            )
+        )
+        if wl_md:
+            extra_parts.append(wl_md)
+
     exp_path = append_experience_entry(
         enriched, verify_dict, curve=curve, research=research_results, settings=cfg
     )

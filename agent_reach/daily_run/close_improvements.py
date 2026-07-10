@@ -382,10 +382,14 @@ def _improve_schedule(
             "可在波动放大日手动补跑 intraday；或确认 09:30–15:00 cron 是否全部触发",
         )
 
-    # Timing drift: compare actual vs expected for completed scans
+    # Timing drift: compare actual vs expected for completed scans (match by scan_id)
+    expected_by_id = {slot["scan_id"]: slot for slot in expected}
     drifts: list[str] = []
-    for scan, slot in zip(scans, expected):
+    for scan in scans:
         sid = scan.get("scan_id") or "?"
+        slot = expected_by_id.get(sid)
+        if slot is None:
+            continue
         actual = _scan_beijing_time(scan.get("as_of"))
         if actual and actual != slot["time"]:
             drifts.append(f"{sid} 预期 {slot['time']} 实际 {actual}")

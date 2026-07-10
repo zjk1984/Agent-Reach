@@ -56,3 +56,34 @@ def test_detect_cash_ratio_mismatch():
     result = run_close_code_review(portfolio=portfolio, snapshot={}, settings=settings)
     assert result.portfolio_changed is True
     assert abs(result.portfolio["cash_ratio"] - 0.5) < 0.001
+
+
+def test_duplicate_scan_ids_reported():
+    settings = load_settings()
+    settings.setdefault("close_code_review", {})["walk_on_close"] = False
+    settings["close_code_review"]["run_smoke_tests"] = False
+    result = run_close_code_review(
+        portfolio={"holdings": [], "watchlist": [], "cash": 1, "total": 1, "cash_ratio": 1},
+        snapshot={},
+        settings=settings,
+        scans=[
+            {"scan_id": "S1", "mss_final": 50},
+            {"scan_id": "S1", "mss_final": 49},
+        ],
+    )
+    assert any("重复" in f.title for f in result.findings)
+
+
+def test_code_review_disabled_skips_findings():
+    settings = load_settings()
+    settings["close_code_review"] = {"enabled": False}
+    portfolio = {
+        "total": 100000,
+        "cash": 61000,
+        "cash_ratio": 0.99,
+        "holdings": [],
+        "watchlist": [{"code": "688008", "name": "澜起科技"}],
+    }
+    result = run_close_code_review(portfolio=portfolio, snapshot={}, settings=settings)
+    assert result.findings == []
+    assert result.portfolio_changed is False

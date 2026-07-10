@@ -253,13 +253,13 @@ def _has_code(watchlist: list[dict[str, Any]], code: str) -> bool:
 def collect_intraday_sold_codes(settings: dict[str, Any]) -> list[dict[str, Any]]:
     """Read today's sell actions from trade ledger for close watchlist recycle."""
     from agent_reach.daily_run.portfolio_manager import default_ledger_path
-    from datetime import date
+    from agent_reach.daily_run.trade_calendar import today_shanghai
     import json
 
     path = default_ledger_path()
     if not path.exists():
         return []
-    today = date.today().isoformat()
+    today = today_shanghai().isoformat()
     sold: list[dict[str, Any]] = []
     # Tail-read recent lines only (ledger grows append-only)
     raw = path.read_bytes()
