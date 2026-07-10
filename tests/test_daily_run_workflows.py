@@ -69,3 +69,42 @@ class TestCloseWorkflow:
         path = save_morning_baseline(morning_snapshot, path=tmp_path / "morning.json")
         loaded = json.loads(path.read_text(encoding="utf-8"))
         assert loaded["code"] == "688008"
+
+    @patch("agent_reach.daily_run.workflows.run_exa_research", return_value=[])
+    @patch("agent_reach.daily_run.workflows._push_markdown", return_value={"code": 0, "data": {}})
+    def test_run_close_includes_watchlist_and_code_review(
+        self, mock_push, mock_research, morning_snapshot
+    ):
+        baseline = dict(morning_snapshot)
+        baseline["mss_final"] = 65
+        baseline["verdict"] = "可做"
+        baseline["mss_range"] = [45, 58]
+        current = dict(morning_snapshot)
+        current["mss_breakdown"] = {"fx": 35, "flow": 48, "global": 38, "sentiment": 50}
+        result = run_close(
+            current,
+            baseline,
+            settings=load_settings(),
+            push=False,
+            watchlist_adjust={
+                "applied": True,
+                "message": "观察池调整 1 项（close）",
+                "changes": [
+                    {
+                        "action": "add",
+                        "code": "002273",
+                        "name": "水晶光电",
+                        "reason": "盘中卖出回收",
+                    }
+                ],
+            },
+            code_review={
+                "findings": [],
+                "fixes_applied": ["已重算 cash_ratio"],
+                "portfolio_changed": True,
+            },
+        )
+        assert "观察池调整" in result["markdown"]
+        assert "002273" in result["markdown"]
+        assert "代码走读" in result["markdown"]
+        assert "已重算 cash_ratio" in result["markdown"]

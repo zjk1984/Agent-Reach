@@ -317,6 +317,10 @@ def run_scheduled(
                     )
                 raise
 
+            from agent_reach.daily_run.verify import verify_snapshots
+
+            pre_verify = verify_snapshots(baseline, snap, settings).to_dict()
+
             pf_work = pf
             portfolio_dirty = False
             wl_result = None
@@ -326,6 +330,7 @@ def run_scheduled(
                     snap,
                     settings,
                     "close",
+                    verify=pre_verify,
                     sold_codes=collect_intraday_sold_codes(settings),
                 )
                 if wl_result.applied:
