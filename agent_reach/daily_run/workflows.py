@@ -189,6 +189,22 @@ def run_close(
     if exp_md:
         extra_parts.append(exp_md)
 
+    forecast_review = None
+    wf_cfg = cfg.get("week_forecast") or {}
+    if wf_cfg.get("enabled", True) is not False and wf_cfg.get("close_review", True) is not False:
+        from agent_reach.daily_run.week_forecast_tracker import (
+            render_forecast_review_markdown,
+            review_active_forecast,
+        )
+
+        mss_close = enriched.get("mss_final") or verify_dict.get("mss_current")
+        forecast_review = review_active_forecast(
+            enriched, settings=cfg, mss_actual=mss_close
+        )
+        fc_md = render_forecast_review_markdown(forecast_review) if forecast_review else ""
+        if fc_md:
+            extra_parts.append(fc_md)
+
     imp_md = render_improvements_markdown(improvements, enabled=improvements_enabled)
 
     code_review_cfg = cfg.get("close_code_review") or {}
@@ -232,6 +248,7 @@ def run_close(
         "experience_path": str(exp_path),
         "improvements": improvements.to_dict(),
         "code_review": code_review,
+        "forecast_review": forecast_review.to_dict() if forecast_review else None,
         "feishu": feishu_result,
     }
 
@@ -397,6 +414,51 @@ def run_weekly(
     return {
         "steps": steps,
         "report": report.to_dict(),
+        "markdown": md,
+        "feishu": feishu_result,
+    }
+
+
+def run_forecast(
+    snapshot: dict[str, Any],
+    *,
+    settings: Optional[dict[str, Any]] = None,
+    push: bool = True,
+    title: Optional[str] = None,
+    config=None,
+    portfolio: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    """Sunday next-week forecast: daily paths, news, MSS → Feishu."""
+    from agent_reach.daily_run.week_forecast import (
+        forecast_title,
+        generate_week_forecast,
+        persist_week_forecast,
+        render_forecast_markdown,
+    )
+
+    cfg = settings or load_settings()
+    wf_cfg = cfg.get("week_forecast") or {}
+    if wf_cfg.get("enabled", True) is False:
+        return {"steps": ["skipped"], "message": "week_forecast disabled", "feishu": None}
+
+    steps: list[str] = ["generate"]
+    forecast = generate_week_forecast(snapshot, cfg, portfolio=portfolio)
+    path = persist_week_forecast(forecast)
+    steps.append("persist")
+
+    md = render_forecast_markdown(forecast)
+    steps.append("render")
+
+    feishu_result = None
+    if push:
+        card_title = title or forecast_title(forecast)
+        feishu_result = _push_markdown(card_title, md, cfg, config, report_type="forecast")
+        steps.append("push")
+
+    return {
+        "steps": steps,
+        "forecast": forecast.to_dict(),
+        "forecast_path": str(path),
         "markdown": md,
         "feishu": feishu_result,
     }

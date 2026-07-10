@@ -69,7 +69,8 @@
     "feishu_template_intraday": "blue",
     "feishu_template_close": "purple",
     "feishu_template_verify": "purple",
-    "feishu_template_weekly": "green"
+    "feishu_template_weekly": "green",
+    "feishu_template_forecast": "blue"
   },
 
   "weekly_report": {
@@ -82,6 +83,17 @@
     "max_skill_items": 8,
     "process_improvements": true,
     "max_improvement_items": 12
+  },
+
+  "week_forecast": {
+    "enabled": true,
+    "exa_news_research": true,
+    "max_news_queries": 2,
+    "close_review": true,
+    "calibration_learning_rate": 0.15,
+    "max_bias_pct": 3.0,
+    "min_vol_scale": 0.6,
+    "max_vol_scale": 1.6
   },
 
   "akshare": {

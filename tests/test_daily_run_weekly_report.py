@@ -185,9 +185,11 @@ class TestScheduleWeekly:
         from agent_reach.daily_run.schedule import default_entries
 
         entries = default_entries()
-        assert len(entries) == 14
+        assert len(entries) == 15
         assert any("weekly" in e.job for e in entries)
+        assert any("forecast" in e.job for e in entries)
         assert any(e.weekday == "6" and e.hour == "9" for e in entries)
+        assert any(e.weekday == "0" and e.hour == "9" for e in entries)
 
     def test_render_crontab_includes_weekly(self):
         from agent_reach.daily_run.schedule import render_crontab_block
