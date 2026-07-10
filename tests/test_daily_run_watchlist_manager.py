@@ -1,6 +1,9 @@
 # -*- coding: utf-8
 """Tests for watchlist adjust (morning/close only)."""
 
+import json
+from datetime import date
+
 import pytest
 
 from agent_reach.daily_run.portfolio_manager import apply_auto_adjust
@@ -90,8 +93,17 @@ class TestWatchlistPolicy:
         from agent_reach.daily_run import portfolio_manager
 
         ledger = tmp_path / "ledger.jsonl"
+        today = date.today().isoformat()
+        sold_at = f"{today}T10:00:00+00:00"
         ledger.write_text(
-            '{"at":"2026-07-08T10:00:00+00:00","actions":[{"side":"sell","code":"002273","name":"水晶光电"}]}\n',
+            json.dumps(
+                {
+                    "at": sold_at,
+                    "actions": [{"side": "sell", "code": "002273", "name": "水晶光电"}],
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
             encoding="utf-8",
         )
         monkeypatch.setattr(portfolio_manager, "default_ledger_path", lambda: ledger)
