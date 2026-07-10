@@ -86,6 +86,8 @@ class TestWeeklyReport:
         assert len(report.holdings) == 2
         assert len(report.watchlist) == 1
         assert "澜起科技" in render_weekly_markdown(report)
+        assert "股市技能学习" in render_weekly_markdown(report)
+        assert "流程改进意见" in render_weekly_markdown(report)
 
     def test_weekly_report_title(self):
         from agent_reach.daily_run.weekly_report import WeeklyReport

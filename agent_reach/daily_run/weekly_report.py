@@ -33,6 +33,9 @@ class WeeklyReport:
     mss_summary: list[dict[str, Any]] = field(default_factory=list)
     experience_snippets: list[str] = field(default_factory=list)
     sector_research: list[dict[str, Any]] = field(default_factory=list)
+    skill_learning: list[dict[str, Any]] = field(default_factory=list)
+    skill_research: list[dict[str, Any]] = field(default_factory=list)
+    process_improvements: list[dict[str, Any]] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -52,6 +55,9 @@ class WeeklyReport:
             "mss_summary": self.mss_summary,
             "experience_snippets": self.experience_snippets,
             "sector_research": self.sector_research,
+            "skill_learning": self.skill_learning,
+            "skill_research": self.skill_research,
+            "process_improvements": self.process_improvements,
             "notes": self.notes,
         }
 
@@ -418,6 +424,33 @@ def generate_weekly_report(
     sector_queries = build_sector_research_queries(sector_groups)
     sector_research = run_sector_research(sector_queries, settings)
 
+    from agent_reach.daily_run.weekly_insights import (
+        generate_skill_learning,
+        generate_weekly_improvements,
+    )
+
+    skill_items, skill_research = generate_skill_learning(
+        settings=settings,
+        hot_sectors=hot_sectors,
+        holdings=holdings,
+        experience_snippets=experience_snippets,
+        manifests=manifests,
+    )
+    process_items = generate_weekly_improvements(
+        settings=settings,
+        week_start=week_start,
+        week_end=week_end,
+        manifests=manifests,
+        weekly_pnl=weekly_pnl,
+        weekly_pnl_pct=weekly_pnl_pct,
+        holdings=holdings,
+        watchlist=watchlist,
+        trades=trades,
+        mss_summary=mss_summary,
+        experience_snippets=experience_snippets,
+        hot_sectors=hot_sectors,
+    )
+
     return WeeklyReport(
         week_start=week_start,
         week_end=week_end,
@@ -434,6 +467,9 @@ def generate_weekly_report(
         mss_summary=mss_summary[-10:],
         experience_snippets=experience_snippets,
         sector_research=sector_research,
+        skill_learning=[s.to_dict() for s in skill_items],
+        skill_research=skill_research,
+        process_improvements=[i.to_dict() for i in process_items],
         notes=notes,
     )
 
@@ -544,6 +580,27 @@ def render_weekly_markdown(report: WeeklyReport) -> str:
         for s in report.experience_snippets:
             lines.append(f"- {s}")
         lines.append("")
+
+    from agent_reach.daily_run.weekly_insights import (
+        InsightItem,
+        SkillLearningItem,
+        render_improvements_markdown,
+        render_skill_learning_markdown,
+    )
+
+    skill_md = render_skill_learning_markdown(
+        [SkillLearningItem(**s) for s in report.skill_learning],
+        report.skill_research,
+    )
+    if skill_md:
+        lines.append(skill_md)
+        lines.append("")
+
+    imp_md = render_improvements_markdown(
+        [InsightItem(**i) for i in report.process_improvements]
+    )
+    if imp_md:
+        lines.append(imp_md)
 
     return "\n".join(lines).strip()
 

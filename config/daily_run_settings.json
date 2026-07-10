@@ -75,7 +75,13 @@
   "weekly_report": {
     "enabled": true,
     "exa_sector_research": true,
-    "max_sector_queries": 3
+    "max_sector_queries": 3,
+    "skill_learning": true,
+    "exa_skill_research": true,
+    "max_skill_queries": 2,
+    "max_skill_items": 8,
+    "process_improvements": true,
+    "max_improvement_items": 12
   },
 
   "akshare": {
