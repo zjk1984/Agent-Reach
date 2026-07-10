@@ -236,6 +236,89 @@ def run_close(
     }
 
 
+def prepare_close_run(
+    snapshot: dict[str, Any],
+    baseline: dict[str, Any],
+    portfolio: dict[str, Any],
+    *,
+    settings: Optional[dict[str, Any]] = None,
+    scans: Optional[list[dict[str, Any]]] = None,
+    trades: Optional[list[dict[str, Any]]] = None,
+    attach_intraday: bool = True,
+) -> dict[str, Any]:
+    """
+    Shared pre-close pipeline for schedule cron and CLI:
+    pre-verify → watchlist adjust → code review → optional portfolio persist.
+    """
+    cfg = settings or load_settings()
+    steps: list[str] = []
+    snap = dict(snapshot)
+    pf_work = portfolio
+    scan_list = list(scans or [])
+    trade_list = list(trades or [])
+
+    if attach_intraday and scan_list:
+        snap.setdefault("intraday_scans", scan_list)
+        if not snap.get("mss_intraday_actual"):
+            snap["mss_intraday_actual"] = [
+                s.get("mss_final") for s in scan_list if s.get("mss_final") is not None
+            ]
+
+    from agent_reach.daily_run.close_code_review import run_close_code_review
+    from agent_reach.daily_run.snapshot_builder import save_portfolio
+    from agent_reach.daily_run.symbols import sync_snapshot_portfolio
+    from agent_reach.daily_run.watchlist_manager import (
+        adjust_watchlist,
+        collect_intraday_sold_codes,
+        is_watchlist_adjust_enabled,
+    )
+
+    pre_verify = verify_snapshots(baseline, snap, cfg).to_dict()
+    steps.append("pre_verify")
+
+    wl_result = None
+    portfolio_dirty = False
+    if is_watchlist_adjust_enabled(cfg):
+        wl_result = adjust_watchlist(
+            pf_work,
+            snap,
+            cfg,
+            "close",
+            verify=pre_verify,
+            sold_codes=collect_intraday_sold_codes(cfg),
+        )
+        if wl_result.applied:
+            pf_work = wl_result.portfolio
+            portfolio_dirty = True
+            steps.append("watchlist_adjust")
+
+    code_review_result = run_close_code_review(
+        portfolio=pf_work,
+        snapshot=snap,
+        settings=cfg,
+        scans=scan_list,
+        trades=trade_list,
+    )
+    steps.append("code_review")
+    if code_review_result.portfolio_changed and code_review_result.portfolio:
+        pf_work = code_review_result.portfolio
+        portfolio_dirty = True
+
+    if portfolio_dirty:
+        save_portfolio(pf_work)
+        sync_snapshot_portfolio(snap, pf_work)
+        steps.append("portfolio_save")
+
+    return {
+        "snapshot": snap,
+        "portfolio": pf_work,
+        "pre_verify": pre_verify,
+        "watchlist_adjust": wl_result.to_dict() if wl_result else None,
+        "code_review": code_review_result.to_dict(),
+        "steps": steps,
+    }
+
+
 def save_morning_baseline(snapshot: dict[str, Any], path: Optional[Path] = None) -> Path:
     """Persist morning snapshot for later close verification."""
     import json

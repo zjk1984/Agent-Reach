@@ -282,15 +282,8 @@ def run_scheduled(
 
     elif job == "close":
         from agent_reach.daily_run.intraday import load_state
-        from agent_reach.daily_run.watchlist_manager import (
-            adjust_watchlist,
-            collect_intraday_sold_codes,
-            is_watchlist_adjust_enabled,
-        )
 
         with StepTimer("schedule.close"):
-            from agent_reach.daily_run.symbols import sync_snapshot_portfolio
-
             pf = load_portfolio()
             snap, path = build_and_save(
                 report_type="close",
@@ -317,42 +310,20 @@ def run_scheduled(
                     )
                 raise
 
-            from agent_reach.daily_run.verify import verify_snapshots
+            from agent_reach.daily_run.workflows import prepare_close_run
 
-            pre_verify = verify_snapshots(baseline, snap, settings).to_dict()
-
-            pf_work = pf
-            portfolio_dirty = False
-            wl_result = None
-            if is_watchlist_adjust_enabled(settings):
-                wl_result = adjust_watchlist(
-                    pf_work,
-                    snap,
-                    settings,
-                    "close",
-                    verify=pre_verify,
-                    sold_codes=collect_intraday_sold_codes(settings),
-                )
-                if wl_result.applied:
-                    pf_work = wl_result.portfolio
-                    portfolio_dirty = True
-
-            from agent_reach.daily_run.close_code_review import run_close_code_review
-
-            code_review_result = run_close_code_review(
-                portfolio=pf_work,
-                snapshot=snap,
+            prepared = prepare_close_run(
+                snap,
+                baseline,
+                pf,
                 settings=settings,
                 scans=state.scans,
                 trades=state.trades,
+                attach_intraday=False,
             )
-            if code_review_result.portfolio_changed and code_review_result.portfolio:
-                pf_work = code_review_result.portfolio
-                portfolio_dirty = True
-
-            if portfolio_dirty:
-                save_portfolio(pf_work)
-                sync_snapshot_portfolio(snap, pf_work)
+            snap = prepared["snapshot"]
+            wl_result_dict = prepared["watchlist_adjust"]
+            code_review_dict = prepared["code_review"]
 
             run_result = run_close(
                 snap,
@@ -362,12 +333,13 @@ def run_scheduled(
                 config=cfg_obj,
                 intraday_scans=state.scans,
                 intraday_trades=state.trades,
-                watchlist_adjust=wl_result.to_dict() if wl_result else None,
-                code_review=code_review_result.to_dict(),
+                watchlist_adjust=wl_result_dict,
+                code_review=code_review_dict,
             )
-            run_result["code_review"] = code_review_result.to_dict()
-            if wl_result is not None:
-                run_result["watchlist_adjust"] = wl_result.to_dict()
+            run_result["code_review"] = code_review_dict
+            run_result["prepare_steps"] = prepared["steps"]
+            if wl_result_dict is not None:
+                run_result["watchlist_adjust"] = wl_result_dict
 
             result = {"job": job, "snapshot_path": str(path), "result": run_result}
             feishu = run_result.get("feishu")
