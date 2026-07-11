@@ -392,6 +392,17 @@ def run_scheduled(
             feishu = run_result.get("feishu")
 
     elif job == "weekly":
+        from agent_reach.daily_run.run_manifest import has_job_manifest_today
+
+        if has_job_manifest_today("weekly", require_feishu=True):
+            result = {
+                "job": job,
+                "skipped": True,
+                "reason": "今日周报已发送（manifest 去重）",
+            }
+            save_run_manifest(job, result, duration_ms=0)
+            return result
+
         with StepTimer("schedule.weekly"):
             pf = load_portfolio()
             snap, path = build_and_save(
@@ -412,6 +423,17 @@ def run_scheduled(
             feishu = run_result.get("feishu")
 
     elif job == "forecast":
+        from agent_reach.daily_run.run_manifest import has_job_manifest_today
+
+        if has_job_manifest_today("forecast", require_feishu=True):
+            result = {
+                "job": job,
+                "skipped": True,
+                "reason": "今日预测已发送（manifest 去重）",
+            }
+            save_run_manifest(job, result, duration_ms=0)
+            return result
+
         with StepTimer("schedule.forecast"):
             pf = load_portfolio()
             snap, path = build_and_save(

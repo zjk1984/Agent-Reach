@@ -47,6 +47,9 @@ on:
     # 09:00 北京时间 周六 — 周报总结（盈亏、持股、观察池、板块）
     - cron: "0 9 * * 6"
       timezone: Asia/Shanghai
+    # 10:00 北京时间 周六 — 周报备用（合并/deploy 晚于 9:00 时补发；manifest 去重）
+    - cron: "0 10 * * 6"
+      timezone: Asia/Shanghai
     # 09:00 北京时间 周日 — 下周预测（持股/观察池日走势、热点、MSS）
     - cron: "0 9 * * 0"
       timezone: Asia/Shanghai

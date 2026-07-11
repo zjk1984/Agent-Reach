@@ -29,6 +29,11 @@ if [ -n "${GITHUB_EVENT_SCHEDULE:-}" ]; then
       echo "skip=false"
       exit 0
       ;;
+    "0 10 * * 6")
+      echo "job=weekly"
+      echo "skip=false"
+      exit 0
+      ;;
     "0 9 * * 0")
       echo "job=forecast"
       echo "skip=false"

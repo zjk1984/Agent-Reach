@@ -221,10 +221,11 @@ class TestScheduleWeekly:
     @patch("agent_reach.daily_run.snapshot_builder.build_and_save")
     @patch("agent_reach.daily_run.snapshot_builder.load_portfolio")
     def test_run_scheduled_weekly_skips_trading_day_check(
-        self, mock_load, mock_build, mock_run_weekly, portfolio, tmp_path
+        self, mock_load, mock_build, mock_run_weekly, portfolio, tmp_path, monkeypatch
     ):
         from agent_reach.daily_run.schedule import run_scheduled
 
+        monkeypatch.setattr("agent_reach.daily_run.run_manifest.runs_dir", lambda: tmp_path / "runs")
         mock_load.return_value = portfolio
         mock_build.return_value = ({"code": "688008"}, tmp_path / "snap.json")
         mock_run_weekly.return_value = {
@@ -239,6 +240,28 @@ class TestScheduleWeekly:
         assert result["job"] == "weekly"
         assert not result.get("skipped")
         mock_run_weekly.assert_called_once()
+
+    @patch("agent_reach.daily_run.workflows.run_weekly")
+    @patch("agent_reach.daily_run.snapshot_builder.build_and_save")
+    @patch("agent_reach.daily_run.snapshot_builder.load_portfolio")
+    def test_run_scheduled_weekly_dedupes_same_day(
+        self, mock_load, mock_build, mock_run_weekly, portfolio, tmp_path, monkeypatch
+    ):
+        from agent_reach.daily_run.run_manifest import save_run_manifest
+        from agent_reach.daily_run.schedule import run_scheduled
+
+        monkeypatch.setattr("agent_reach.daily_run.run_manifest.runs_dir", lambda: tmp_path / "runs")
+        save_run_manifest(
+            "weekly",
+            {"job": "weekly", "result": {}},
+            feishu={"code": 0},
+        )
+
+        mock_load.return_value = portfolio
+        result = run_scheduled("weekly", push=False)
+
+        assert result.get("skipped") is True
+        mock_run_weekly.assert_not_called()
 
     def test_default_entries_includes_weekly(self):
         from agent_reach.daily_run.schedule import default_entries
