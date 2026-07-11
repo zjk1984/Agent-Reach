@@ -166,6 +166,8 @@ jobs:
 
       - name: Run scheduled job
         if: steps.resolve.outputs.skip != 'true'
+        env:
+          MCPORTER_CONFIG: ${{ github.workspace }}/config/mcporter.json
         run: |
           set -euo pipefail
           job="${{ steps.resolve.outputs.job }}"
