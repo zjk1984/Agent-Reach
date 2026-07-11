@@ -181,6 +181,72 @@ def _mss_from_manifest(record: dict[str, Any]) -> Optional[float]:
     return None
 
 
+def _manifest_sort_key(record: dict[str, Any]) -> str:
+    path = record.get("_path") or ""
+    if path:
+        return path
+    return str(record.get("at") or "")
+
+
+def build_mss_trajectory(
+    manifests: list[dict[str, Any]],
+    week_start: date,
+    week_end: date,
+) -> list[dict[str, Any]]:
+    """
+    One MSS point per trading day (Mon–Fri): morning open + close EOD.
+
+    Uses last close manifest per day; falls back to last intraday scan MSS.
+    Avoids truncating to the last N raw manifests (which skews to the final day).
+    """
+    by_day: dict[str, list[dict[str, Any]]] = {}
+    for record in manifests:
+        day = str(record.get("_run_date") or "")
+        if not day:
+            continue
+        mss = _mss_from_manifest(record)
+        if mss is None:
+            continue
+        job = record.get("job")
+        if job not in ("morning", "close", "intraday"):
+            continue
+        by_day.setdefault(day, []).append({**record, "_mss": mss})
+
+    out: list[dict[str, Any]] = []
+    d = week_start
+    while d <= week_end:
+        if d.weekday() >= 5:
+            d += timedelta(days=1)
+            continue
+        ds = d.isoformat()
+        rows = sorted(by_day.get(ds, []), key=_manifest_sort_key)
+        morning_mss: Optional[float] = None
+        close_mss: Optional[float] = None
+        intraday_mss: Optional[float] = None
+        for row in rows:
+            job = row.get("job")
+            mss = float(row["_mss"])
+            if job == "morning" and morning_mss is None:
+                morning_mss = mss
+            elif job == "close":
+                close_mss = mss
+            elif job == "intraday":
+                intraday_mss = mss
+        eod = close_mss if close_mss is not None else intraday_mss
+        if morning_mss is not None:
+            out.append({"date": ds, "job": "morning", "mss_final": morning_mss})
+        if eod is not None:
+            out.append(
+                {
+                    "date": ds,
+                    "job": "close" if close_mss is not None else "intraday",
+                    "mss_final": eod,
+                }
+            )
+        d += timedelta(days=1)
+    return out
+
+
 def _load_week_manifests(start: date, end: date) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     for day, path in _iter_manifest_files(start, end):
@@ -427,7 +493,6 @@ def generate_weekly_report(
 
     start_total: Optional[float] = None
     end_total: Optional[float] = None
-    mss_summary: list[dict[str, Any]] = []
     notes: list[str] = []
 
     morning_totals: list[tuple[str, float]] = []
@@ -440,9 +505,8 @@ def generate_weekly_report(
             morning_totals.append((day, total))
         if job == "close" and total is not None:
             close_totals.append((day, total))
-        mss = _mss_from_manifest(record)
-        if mss is not None and job in ("morning", "close", "intraday"):
-            mss_summary.append({"date": day, "job": job, "mss_final": mss})
+
+    mss_summary = build_mss_trajectory(manifests, week_start, week_end)
 
     if morning_totals:
         morning_totals.sort(key=lambda x: x[0])
@@ -517,7 +581,7 @@ def generate_weekly_report(
         hot_sectors=hot_sectors,
         sector_groups=sector_groups,
         trades=trades,
-        mss_summary=mss_summary[-10:],
+        mss_summary=mss_summary,
         experience_snippets=experience_snippets,
         sector_research=sector_research,
         skill_learning=[s.to_dict() for s in skill_items],
@@ -624,8 +688,26 @@ def render_weekly_markdown(report: WeeklyReport) -> str:
 
     if report.mss_summary:
         lines.append("## 📈 MSS 本周轨迹")
+        weekday_cn = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+        by_date: dict[str, dict[str, float]] = {}
         for row in report.mss_summary:
-            lines.append(f"- {row['date']} {row['job']} MSS={row['mss_final']:.1f}")
+            ds = row["date"]
+            by_date.setdefault(ds, {})[row["job"]] = float(row["mss_final"])
+        for ds in sorted(by_date.keys()):
+            slots = by_date[ds]
+            wd = weekday_cn[date.fromisoformat(ds).weekday()]
+            short = ds[5:]  # MM-DD
+            parts: list[str] = []
+            if "morning" in slots:
+                parts.append(f"早 {slots['morning']:.1f}")
+            if "close" in slots:
+                parts.append(f"收 {slots['close']:.1f}")
+            elif "intraday" in slots:
+                parts.append(f"盘 {slots['intraday']:.1f}")
+            if parts:
+                lines.append(f"- **{short} {wd}** " + " → ".join(parts))
+        if not by_date:
+            lines.append("- 暂无 MSS 轨迹数据")
         lines.append("")
 
     if report.experience_snippets:
