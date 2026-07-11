@@ -74,10 +74,13 @@ class TestSnapshotBuilder:
         assert snap["price"] == 260.0
         assert snap["sources"]["flow"]["summary"] != "待更新"
 
-    def test_build_snapshot_no_enrich(self, portfolio):
+    @patch("agent_reach.daily_run.snapshot_builder.load_last_snapshot", return_value=None)
+    @patch("agent_reach.daily_run.snapshot_builder.fetch_quotes_map", return_value={})
+    def test_build_snapshot_no_enrich(self, mock_fetch, mock_last, portfolio):
         snap = build_snapshot(portfolio, enrich=False)
         assert snap["code"] == "688008"
-        assert "price" not in snap
+        assert snap.get("enrich_level") == "lite"
+        assert snap.get("price") in (None, portfolio["holdings"][0].get("cost"))
 
 
 class TestSchedule:

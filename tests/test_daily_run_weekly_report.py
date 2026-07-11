@@ -89,6 +89,30 @@ class TestWeeklyReport:
         assert "股市技能学习" in render_weekly_markdown(report)
         assert "流程改进意见" in render_weekly_markdown(report)
 
+    @patch("agent_reach.daily_run.weekly_report.run_sector_research", return_value=[])
+    @patch("agent_reach.daily_run.weekly_report._load_week_manifests", return_value=[])
+    @patch("agent_reach.daily_run.weekly_report._load_trade_ledger_range", return_value=[])
+    @patch("agent_reach.daily_run.weekly_report._portfolio_from_morning_baseline")
+    def test_generate_weekly_report_fallback_when_portfolio_empty(
+        self,
+        mock_baseline,
+        mock_ledger,
+        mock_manifests,
+        mock_exa,
+        portfolio,
+    ):
+        mock_baseline.return_value = portfolio
+        empty_snapshot = {"code": "688008", "portfolio": {"holdings": []}, "watchlist": []}
+        report = generate_weekly_report(
+            empty_snapshot,
+            {"weekly_report": {"enabled": True, "exa_sector_research": False}},
+            as_of=date(2026, 7, 11),
+            portfolio={"holdings": []},
+        )
+        assert len(report.holdings) == 2
+        assert len(report.watchlist) == 1
+        assert any("last_morning.json" in n for n in report.notes)
+
     def test_weekly_report_title(self):
         from agent_reach.daily_run.weekly_report import WeeklyReport
 

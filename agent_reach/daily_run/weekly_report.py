@@ -181,6 +181,72 @@ def _mss_from_manifest(record: dict[str, Any]) -> Optional[float]:
     return None
 
 
+def _manifest_sort_key(record: dict[str, Any]) -> str:
+    path = record.get("_path") or ""
+    if path:
+        return path
+    return str(record.get("at") or "")
+
+
+def build_mss_trajectory(
+    manifests: list[dict[str, Any]],
+    week_start: date,
+    week_end: date,
+) -> list[dict[str, Any]]:
+    """
+    One MSS point per trading day (Mon–Fri): morning open + close EOD.
+
+    Uses last close manifest per day; falls back to last intraday scan MSS.
+    Avoids truncating to the last N raw manifests (which skews to the final day).
+    """
+    by_day: dict[str, list[dict[str, Any]]] = {}
+    for record in manifests:
+        day = str(record.get("_run_date") or "")
+        if not day:
+            continue
+        mss = _mss_from_manifest(record)
+        if mss is None:
+            continue
+        job = record.get("job")
+        if job not in ("morning", "close", "intraday"):
+            continue
+        by_day.setdefault(day, []).append({**record, "_mss": mss})
+
+    out: list[dict[str, Any]] = []
+    d = week_start
+    while d <= week_end:
+        if d.weekday() >= 5:
+            d += timedelta(days=1)
+            continue
+        ds = d.isoformat()
+        rows = sorted(by_day.get(ds, []), key=_manifest_sort_key)
+        morning_mss: Optional[float] = None
+        close_mss: Optional[float] = None
+        intraday_mss: Optional[float] = None
+        for row in rows:
+            job = row.get("job")
+            mss = float(row["_mss"])
+            if job == "morning" and morning_mss is None:
+                morning_mss = mss
+            elif job == "close":
+                close_mss = mss
+            elif job == "intraday":
+                intraday_mss = mss
+        eod = close_mss if close_mss is not None else intraday_mss
+        if morning_mss is not None:
+            out.append({"date": ds, "job": "morning", "mss_final": morning_mss})
+        if eod is not None:
+            out.append(
+                {
+                    "date": ds,
+                    "job": "close" if close_mss is not None else "intraday",
+                    "mss_final": eod,
+                }
+            )
+        d += timedelta(days=1)
+    return out
+
+
 def _load_week_manifests(start: date, end: date) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     for day, path in _iter_manifest_files(start, end):
@@ -391,6 +457,95 @@ def run_sector_research(
     return [r for r in ordered if r is not None]
 
 
+def _portfolio_has_positions(portfolio: dict[str, Any]) -> bool:
+    return bool(portfolio.get("holdings") or portfolio.get("watchlist"))
+
+
+def _portfolio_from_morning_baseline() -> Optional[dict[str, Any]]:
+    from agent_reach.daily_run.workflows import load_morning_baseline
+
+    try:
+        baseline = load_morning_baseline()
+    except FileNotFoundError:
+        return None
+    pf = dict(baseline.get("portfolio") or {})
+    watchlist = baseline.get("watchlist") or pf.get("watchlist") or []
+    if watchlist:
+        pf["watchlist"] = [dict(w) for w in watchlist]
+    if _portfolio_has_positions(pf):
+        return pf
+    return None
+
+
+def _portfolio_from_manifests(
+    manifests: list[dict[str, Any]],
+    *,
+    prefer_date: Optional[date] = None,
+) -> Optional[dict[str, Any]]:
+    """Recover holdings/watchlist from the latest snapshot embedded in run manifests."""
+
+    def _from_snapshot(snap: dict[str, Any]) -> Optional[dict[str, Any]]:
+        pf = dict(snap.get("portfolio") or {})
+        watchlist = snap.get("watchlist") or pf.get("watchlist") or []
+        if watchlist:
+            pf["watchlist"] = [dict(w) for w in watchlist]
+        if _portfolio_has_positions(pf):
+            return pf
+        return None
+
+    if prefer_date is not None:
+        ds = prefer_date.isoformat()
+        day_rows = sorted(
+            [m for m in manifests if m.get("_run_date") == ds],
+            key=_manifest_sort_key,
+        )
+        for record in reversed(day_rows):
+            snap = _snapshot_from_manifest(record)
+            if snap:
+                pf = _from_snapshot(snap)
+                if pf:
+                    return pf
+
+    for record in sorted(manifests, key=_manifest_sort_key, reverse=True):
+        snap = _snapshot_from_manifest(record)
+        if snap:
+            pf = _from_snapshot(snap)
+            if pf:
+                return pf
+    return None
+
+
+def resolve_weekly_portfolio(
+    snapshot: dict[str, Any],
+    portfolio: Optional[dict[str, Any]],
+    manifests: list[dict[str, Any]],
+    *,
+    week_end: date,
+) -> tuple[dict[str, Any], list[str]]:
+    """Use portfolio.json when present; otherwise fall back to morning baseline or manifests."""
+    pf = dict(portfolio or snapshot.get("portfolio") or {})
+    if _portfolio_has_positions(pf):
+        return pf, []
+
+    notes: list[str] = []
+    baseline_pf = _portfolio_from_morning_baseline()
+    if baseline_pf:
+        notes.append("持仓/观察池来自 last_morning.json（portfolio.json 为空或缺失）")
+        return baseline_pf, notes
+
+    manifest_pf = _portfolio_from_manifests(manifests, prefer_date=week_end)
+    if manifest_pf:
+        notes.append(f"持仓/观察池来自 {week_end.isoformat()} 运行 manifest（portfolio.json 为空）")
+        return manifest_pf, notes
+
+    manifest_pf = _portfolio_from_manifests(manifests)
+    if manifest_pf:
+        notes.append("持仓/观察池来自本周 manifest（portfolio.json 为空）")
+        return manifest_pf, notes
+
+    return pf, notes
+
+
 def _load_experience_snippets(start: date, end: date, limit: int = 5) -> list[str]:
     from agent_reach.daily_run.experience import load_recent_experience
 
@@ -419,16 +574,23 @@ def generate_weekly_report(
 ) -> WeeklyReport:
     """Aggregate Mon–Fri manifests, ledger, portfolio into a weekly summary."""
     week_start, week_end = trading_week_range(as_of)
-    pf = portfolio or (snapshot.get("portfolio") or {})
-    enriched = build_enriched_symbols(snapshot)
     manifests = _load_week_manifests(week_start, week_end)
+    pf, pf_notes = resolve_weekly_portfolio(snapshot, portfolio, manifests, week_end=week_end)
+
+    snap_for_symbols = snapshot
+    if pf_notes:
+        from agent_reach.daily_run.symbols import sync_snapshot_portfolio
+
+        snap_for_symbols = dict(snapshot)
+        sync_snapshot_portfolio(snap_for_symbols, pf)
+
+    enriched = build_enriched_symbols(snap_for_symbols)
     trades = _load_trade_ledger_range(week_start, week_end)
     realized = _compute_realized_pnl(trades)
 
     start_total: Optional[float] = None
     end_total: Optional[float] = None
-    mss_summary: list[dict[str, Any]] = []
-    notes: list[str] = []
+    notes: list[str] = list(pf_notes)
 
     morning_totals: list[tuple[str, float]] = []
     close_totals: list[tuple[str, float]] = []
@@ -440,9 +602,8 @@ def generate_weekly_report(
             morning_totals.append((day, total))
         if job == "close" and total is not None:
             close_totals.append((day, total))
-        mss = _mss_from_manifest(record)
-        if mss is not None and job in ("morning", "close", "intraday"):
-            mss_summary.append({"date": day, "job": job, "mss_final": mss})
+
+    mss_summary = build_mss_trajectory(manifests, week_start, week_end)
 
     if morning_totals:
         morning_totals.sort(key=lambda x: x[0])
@@ -517,7 +678,7 @@ def generate_weekly_report(
         hot_sectors=hot_sectors,
         sector_groups=sector_groups,
         trades=trades,
-        mss_summary=mss_summary[-10:],
+        mss_summary=mss_summary,
         experience_snippets=experience_snippets,
         sector_research=sector_research,
         skill_learning=[s.to_dict() for s in skill_items],
