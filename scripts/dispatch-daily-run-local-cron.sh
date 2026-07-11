@@ -5,6 +5,8 @@
 #   crontab -e
 #   0 7 * * 1-5  /path/to/dispatch-daily-run-local-cron.sh intraday >>/tmp/daily-run-cron.log 2>&1
 #   0 8 * * 1-5  /path/to/dispatch-daily-run-local-cron.sh morning >>/tmp/daily-run-cron.log 2>&1
+#   0 9 * * 6   /path/to/dispatch-daily-run-local-cron.sh weekly >>/tmp/daily-run-cron.log 2>&1
+#   0 9 * * 0   /path/to/dispatch-daily-run-local-cron.sh forecast >>/tmp/daily-run-cron.log 2>&1
 #
 # 需要：gh auth login 且对 zjk1984/Agent-Reach 有 workflow 权限
 
