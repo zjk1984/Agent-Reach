@@ -3,7 +3,10 @@
 # Required repository secrets:
 #   AGENT_REACH_CONFIG_YAML  — full ~/.agent-reach/config.yaml contents
 # Optional:
-#   AGENT_REACH_PORTFOLIO_JSON — portfolio.json (defaults to repo example)
+#   AGENT_REACH_PORTFOLIO_JSON — one-time seed if no cache / no config/daily_run_portfolio.json
+#
+# Initial holdings without secrets: commit config/daily_run_portfolio.json to the repo.
+# Reset without secrets: Actions → Run workflow → reset_portfolio=true (uses repo file).
 #
 # Manual run: Actions → daily-run schedule → Run workflow
 
@@ -41,10 +44,16 @@ on:
     # 15:30 北京时间 — 收盘复盘 + MSS 曲线 + 验证
     - cron: "30 15 * * 1-5"
       timezone: Asia/Shanghai
+    # 09:00 北京时间 周六 — 周报总结（盈亏、持股、观察池、板块）
+    - cron: "0 9 * * 6"
+      timezone: Asia/Shanghai
+    # 09:00 北京时间 周日 — 下周预测（持股/观察池日走势、热点、MSS）
+    - cron: "0 9 * * 0"
+      timezone: Asia/Shanghai
   workflow_dispatch:
     inputs:
       job:
-        description: "morning | intraday | close"
+        description: "morning | intraday | close | weekly | forecast"
         required: true
         default: intraday
         type: choice
@@ -52,8 +61,15 @@ on:
           - morning
           - intraday
           - close
+          - weekly
+          - forecast
       dry_run:
         description: "Skip Feishu push"
+        required: false
+        default: false
+        type: boolean
+      reset_portfolio:
+        description: "Re-seed portfolio.json from repo config (ignore cache)"
         required: false
         default: false
         type: boolean
@@ -66,6 +82,9 @@ jobs:
   run:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
     env:
       TZ: Asia/Shanghai
       INPUT_JOB: ${{ github.event.inputs.job }}
@@ -73,9 +92,17 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          # daily-run 功能在集成分支；main 尚未合并 PR #7–#10
-          ref: cursor/daily-run-skill-a3e7
+
+      - name: Fork schedule notice
+        run: |
+          set -euo pipefail
+          is_fork=$(gh api "repos/${{ github.repository }}" --jq '.isFork' 2>/dev/null || echo "unknown")
+          if [ "$is_fork" = "true" ]; then
+            echo "::warning::Fork 仓库的 cron 默认不会自动触发。请到 Actions 页点击「Enable scheduled workflows」，或使用 scripts/dispatch-daily-run-local-cron.sh 本地定时触发。"
+          fi
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            echo "Scheduled run fired: schedule=${{ github.event.schedule }}"
+          fi
 
       - name: Resolve job (北京时间)
         id: resolve
@@ -102,9 +129,9 @@ jobs:
         id: daily-run-cache
         with:
           path: ~/.agent-reach/daily_run
-          key: daily-run-state-${{ steps.tz.outputs.date }}-${{ github.run_number }}
+          key: daily-run-state-${{ steps.tz.outputs.date }}
           restore-keys: |
-            daily-run-state-${{ steps.tz.outputs.date }}-
+            daily-run-state-${{ steps.tz.outputs.date }}
             daily-run-state-
 
       - name: Setup Python
@@ -131,6 +158,7 @@ jobs:
         env:
           AGENT_REACH_CONFIG_YAML: ${{ secrets.AGENT_REACH_CONFIG_YAML }}
           AGENT_REACH_PORTFOLIO_JSON: ${{ secrets.AGENT_REACH_PORTFOLIO_JSON }}
+          RESET_PORTFOLIO: ${{ github.event_name == 'workflow_dispatch' && inputs.reset_portfolio && 'true' || 'false' }}
         run: bash scripts/gha-daily-run-setup.sh
 
       - name: Run scheduled job
@@ -149,7 +177,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ~/.agent-reach/daily_run
-          key: daily-run-state-${{ steps.tz.outputs.date }}-${{ github.run_number }}
+          key: daily-run-state-${{ steps.tz.outputs.date }}
 
       - name: Upload run manifest
         if: steps.resolve.outputs.skip != 'true' && always()

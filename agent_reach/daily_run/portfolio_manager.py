@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from agent_reach.daily_run.snapshot_builder import _normalize_code
+from agent_reach.daily_run.symbols import build_enriched_symbols, copy_portfolio
 
 
 @dataclass
@@ -63,8 +64,44 @@ def is_auto_adjust_enabled(settings: dict[str, Any]) -> bool:
     return bool(portfolio_settings(settings).get("auto_adjust_enabled", False))
 
 
+def max_total_symbols(settings: dict[str, Any]) -> int:
+    """持仓 + 观察池（去重）合计上限。"""
+    pf = portfolio_settings(settings)
+    if "max_total_symbols" in pf:
+        return int(pf["max_total_symbols"])
+    return int(pf.get("max_holdings", 10))
+
+
 def max_holdings(settings: dict[str, Any]) -> int:
-    return int(portfolio_settings(settings).get("max_holdings", 10))
+    """Alias of max_total_symbols (legacy key: portfolio.max_holdings)."""
+    return max_total_symbols(settings)
+
+
+def unique_symbol_codes(portfolio: dict[str, Any]) -> set[str]:
+    codes: set[str] = set()
+    for h in portfolio.get("holdings") or []:
+        code = _normalize_code(str(h.get("code", "")))
+        if code:
+            codes.add(code)
+    for w in portfolio.get("watchlist") or []:
+        code = _normalize_code(str(w.get("code", "")))
+        if code:
+            codes.add(code)
+    return codes
+
+
+def unique_symbol_count(portfolio: dict[str, Any]) -> int:
+    return len(unique_symbol_codes(portfolio))
+
+
+def watchlist_capacity(settings: dict[str, Any], portfolio: dict[str, Any]) -> int:
+    """观察池可再容纳的非持仓标的数（在合计上限内）。"""
+    held = {
+        _normalize_code(str(h.get("code", "")))
+        for h in portfolio.get("holdings") or []
+        if _normalize_code(str(h.get("code", "")))
+    }
+    return max(0, max_total_symbols(settings) - len(held))
 
 
 def append_trade_ledger(
@@ -130,8 +167,8 @@ def apply_auto_adjust(
     if action == "buy" and (blocked or friction_blocked):
         return ApplyResult(applied=False, portfolio=portfolio, message="买入信号被风控或摩擦成本阻断")
 
-    pf = _copy_portfolio(portfolio)
-    enriched = _enriched_symbols(snapshot)
+    pf = copy_portfolio(portfolio)
+    enriched = build_enriched_symbols(snapshot)
 
     if action == "sell":
         return _apply_sell(pf, enriched, settings, decision, allow_watchlist_changes=allow_watchlist_changes)
@@ -188,7 +225,7 @@ def _apply_sell(
     if allow_watchlist_changes and portfolio_settings(settings).get("add_sold_to_watchlist", True):
         watchlist = list(pf.get("watchlist") or [])
         codes = {_normalize_code(str(w.get("code", ""))) for w in watchlist}
-        if code not in codes:
+        if code not in codes and unique_symbol_count(pf) < max_total_symbols(settings):
             watchlist.append({"code": code, "name": target.get("name", code)})
             pf["watchlist"] = watchlist
 
@@ -214,10 +251,6 @@ def _apply_buy(
     allow_watchlist_changes: bool = False,
 ) -> ApplyResult:
     holdings = list(pf.get("holdings") or [])
-    max_h = max_holdings(settings)
-    if len(holdings) >= max_h:
-        return ApplyResult(applied=False, portfolio=pf, message=f"持仓已达上限 {max_h} 只")
-
     held_codes = {_normalize_code(str(h.get("code", ""))) for h in holdings}
     candidates = []
     for w in pf.get("watchlist") or []:
@@ -232,6 +265,13 @@ def _apply_buy(
         candidates.append(row)
 
     if not candidates:
+        max_t = max_total_symbols(settings)
+        if unique_symbol_count(pf) >= max_t:
+            return ApplyResult(
+                applied=False,
+                portfolio=pf,
+                message=f"持仓+观察池已达合计上限 {max_t} 只，且无观察池可买标的",
+            )
         return ApplyResult(applied=False, portfolio=pf, message="观察池无可买入标的（或缺少报价）")
 
     candidates.sort(key=lambda x: _symbol_score(x, None, settings), reverse=True)
@@ -322,18 +362,7 @@ def _recalc_totals(pf: dict[str, Any], enriched: dict[str, dict[str, Any]]) -> N
 
 
 def _enriched_symbols(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    out: dict[str, dict[str, Any]] = {}
-    for h in (snapshot.get("portfolio") or {}).get("holdings") or []:
-        code = _normalize_code(str(h.get("code", "")))
-        out[code] = dict(h)
-    for w in snapshot.get("watchlist") or []:
-        code = _normalize_code(str(w.get("code", "")))
-        out[code] = {**out.get(code, {}), **dict(w)}
-    code = snapshot.get("code")
-    if code:
-        c = _normalize_code(str(code))
-        out[c] = {**out.get(c, {}), **{k: snapshot[k] for k in ("price", "name", "change_pct", "ma20") if k in snapshot}}
-    return out
+    return build_enriched_symbols(snapshot)
 
 
 def _price_for(row: dict[str, Any], enriched: dict[str, dict[str, Any]]) -> Optional[float]:
@@ -375,13 +404,6 @@ def _round_lot(code: str, shares: int) -> int:
         return (shares // lot) * lot if shares >= lot else 0
     lot = 100
     return (shares // lot) * lot
-
-
-def _copy_portfolio(portfolio: dict[str, Any]) -> dict[str, Any]:
-    pf = dict(portfolio)
-    pf["holdings"] = [dict(h) for h in (portfolio.get("holdings") or [])]
-    pf["watchlist"] = [dict(w) for w in (portfolio.get("watchlist") or [])]
-    return pf
 
 
 def _decision_reason(decision: Any, fallback: str) -> str:

@@ -76,6 +76,7 @@ def generate_close_improvements(
     scans: Optional[list[dict[str, Any]]] = None,
     trades: Optional[list[dict[str, Any]]] = None,
     watchlist_adjust: Optional[dict[str, Any]] = None,
+    forecast_review: Optional[dict[str, Any]] = None,
 ) -> CloseImprovements:
     """Produce actionable improvement notes for next-day tuning."""
     out = CloseImprovements()
@@ -90,8 +91,9 @@ def generate_close_improvements(
 
     _improve_mss(out, baseline, current, verify, curve, thresholds, settings)
     _improve_portfolio(out, current, verify, trades or [], portfolio_cfg, thresholds)
-    _improve_watchlist(out, current, watchlist_adjust, watchlist_cfg)
+    _improve_watchlist(out, current, watchlist_adjust, watchlist_cfg, portfolio_cfg)
     _improve_schedule(out, scans or [], trades or [], schedule_cfg, settings)
+    _improve_forecast(out, forecast_review, settings)
 
     # Always include a scan summary when we have data (confirms feature ran).
     from agent_reach.daily_run.intraday import MAX_SCANS
@@ -211,7 +213,17 @@ def _improve_portfolio(
     holdings = pf.get("holdings") or []
     cash_ratio = pf.get("cash_ratio")
     min_cash = float(thresholds.get("min_cash_ratio", 0.4))
-    max_h = int(portfolio_cfg.get("max_holdings", 10))
+    max_t = int(
+        portfolio_cfg["max_total_symbols"]
+        if "max_total_symbols" in portfolio_cfg
+        else portfolio_cfg.get("max_holdings", 10)
+    )
+    watchlist = current.get("watchlist") or []
+    held_codes = {str(h.get("code", "")).zfill(6)[-6:] for h in holdings}
+    wl_only = [
+        w for w in watchlist if str(w.get("code", "")).zfill(6)[-6:] not in held_codes
+    ]
+    unique_n = len(held_codes) + len(wl_only)
 
     if cash_ratio is not None:
         cr = float(cash_ratio)
@@ -230,12 +242,12 @@ def _improve_portfolio(
                 "MSS 允许进攻但仓位过轻，可在 aggressive_entry 确认后提高 deploy 比例或扩大观察池候选",
             )
 
-    if len(holdings) >= max_h:
+    if unique_n >= max_t:
         out.add(
             "portfolio",
             "medium",
-            f"持仓已满 {max_h} 只",
-            "盘中买入将被阻断；复盘时应先通过观察池置换 weakest，或提高 max_holdings",
+            f"持仓+观察池已达合计上限 {max_t} 只（持仓 {len(holdings)} + 观察 {len(wl_only)}）",
+            "需先卖出或移出弱势观察标的，才能纳入新票；可在 portfolio.max_total_symbols 调整上限",
         )
 
     losers = [h for h in holdings if (h.get("change_pct") or 0) <= -5]
@@ -280,11 +292,18 @@ def _improve_watchlist(
     current: dict[str, Any],
     watchlist_adjust: Optional[dict[str, Any]],
     watchlist_cfg: dict[str, Any],
+    portfolio_cfg: dict[str, Any],
 ) -> None:
     watchlist = current.get("watchlist") or []
     holdings = (current.get("portfolio") or {}).get("holdings") or []
     held = {str(h.get("code", "")).zfill(6)[-6:] for h in holdings}
-    max_size = int(watchlist_cfg.get("max_size", 20))
+    max_t = int(
+        portfolio_cfg["max_total_symbols"]
+        if "max_total_symbols" in portfolio_cfg
+        else portfolio_cfg.get("max_holdings", 10)
+    )
+    wl_capacity = max(0, max_t - len(held))
+    wl_only = [w for w in watchlist if str(w.get("code", "")).zfill(6)[-6:] not in held]
 
     overlap = [w for w in watchlist if str(w.get("code", "")).zfill(6)[-6:] in held]
     if overlap:
@@ -295,14 +314,14 @@ def _improve_watchlist(
             f"{len(overlap)} 只仍同时在观察池；明日早盘 adjust_watchlist 应清理，或检查复盘 adjust 是否执行",
         )
 
-    if len(watchlist) >= max_size:
+    if len(wl_only) >= wl_capacity and wl_capacity > 0:
         out.add(
             "watchlist",
             "medium",
-            f"观察池已达上限 {max_size}",
+            f"观察池非持仓标的已达 {len(wl_only)}/{wl_capacity}（合计上限 {max_t}）",
             "新增候选需先移出弱势标的；可在 watchlist.candidates 中控制质量",
         )
-    elif len(watchlist) < 2:
+    elif len(wl_only) < 2 and len(held) + len(wl_only) < max_t:
         out.add(
             "watchlist",
             "low",
@@ -365,10 +384,14 @@ def _improve_schedule(
             "可在波动放大日手动补跑 intraday；或确认 09:30–15:00 cron 是否全部触发",
         )
 
-    # Timing drift: compare actual vs expected for completed scans
+    # Timing drift: compare actual vs expected for completed scans (match by scan_id)
+    expected_by_id = {slot["scan_id"]: slot for slot in expected}
     drifts: list[str] = []
-    for scan, slot in zip(scans, expected):
+    for scan in scans:
         sid = scan.get("scan_id") or "?"
+        slot = expected_by_id.get(sid)
+        if slot is None:
+            continue
         actual = _scan_beijing_time(scan.get("as_of"))
         if actual and actual != slot["time"]:
             drifts.append(f"{sid} 预期 {slot['time']} 实际 {actual}")
@@ -411,6 +434,42 @@ def _improve_schedule(
                 f"盘中 MSS 振幅 {spread:.0f} 分",
                 "波动大但扫描次数未满，可考虑在 10:30/14:00 附近增加 manual intraday 或缩短 cron 间隔",
             )
+
+
+def _improve_forecast(
+    out: CloseImprovements,
+    forecast_review: Optional[dict[str, Any]],
+    settings: dict[str, Any],
+) -> None:
+    if not forecast_review:
+        return
+    wf_cfg = settings.get("week_forecast") or {}
+    if wf_cfg.get("enabled", True) is False:
+        return
+
+    acc = forecast_review.get("accuracy")
+    total = int(forecast_review.get("symbol_total") or 0)
+    if total and acc is not None and float(acc) < 0.45:
+        out.add(
+            "mss",
+            "high",
+            f"下周预测命中率 {float(acc):.0%}（{forecast_review.get('symbol_hits', 0)}/{total}）",
+            "已在 calibration.json 上调 vol_scale / bias；"
+            "若连续 3 日偏低，可增大 week_forecast.calibration_learning_rate",
+        )
+
+    if forecast_review.get("mss_hit") is False:
+        out.add(
+            "mss",
+            "medium",
+            "MSS 日预测未命中",
+            f"预测区间 {forecast_review.get('mss_predicted')} vs 实际 {forecast_review.get('mss_actual')}；"
+            "可增大 mss_forecast.base_spread 或检查 macro 因子滞后",
+        )
+
+    notes = forecast_review.get("optimization_notes") or []
+    for note in notes[:2]:
+        out.add("mss", "low", "预测校准", str(note))
 
 
 def _scan_beijing_time(as_of: Any) -> Optional[str]:

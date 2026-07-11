@@ -91,18 +91,39 @@ class TestSchedule:
         assert "schedule run close" in block
 
     def test_default_entries_count(self):
-        assert len(default_entries()) == 13
+        assert len(default_entries()) == 15
 
+    @patch("agent_reach.daily_run.trade_calendar.is_trading_day", return_value=(True, ""))
+    @patch("agent_reach.daily_run.intraday.load_state")
+    @patch("agent_reach.daily_run.pipeline.evaluate_snapshot")
     @patch("agent_reach.daily_run.intraday.record_scan_from_evaluation")
     @patch("agent_reach.daily_run.workflows.save_morning_baseline")
     @patch("agent_reach.daily_run.workflows.run_morning")
     @patch("agent_reach.daily_run.snapshot_builder.build_and_save")
     @patch("agent_reach.daily_run.snapshot_builder.load_portfolio")
     def test_run_scheduled_morning(
-        self, mock_load, mock_build, mock_morning, mock_save_baseline, mock_record_scan, portfolio, tmp_path
+        self,
+        mock_load,
+        mock_build,
+        mock_morning,
+        mock_save_baseline,
+        mock_record_scan,
+        mock_evaluate_snapshot,
+        mock_load_state,
+        portfolio,
+        tmp_path,
     ):
+        from agent_reach.daily_run.intraday import IntradayState
+
         mock_load.return_value = portfolio
         mock_build.return_value = ({"code": "688008"}, tmp_path / "snap.json")
+        mock_load_state.return_value = IntradayState(date="2026-07-10", scans=[], trades=[])
+        mock_evaluate_snapshot.return_value = {
+            "report": {"mss_final": 51, "as_of": "2026-07-10T00:00:00+00:00"},
+            "audit": __import__(
+                "agent_reach.daily_run.auditor", fromlist=["AuditResult"]
+            ).AuditResult(passed=True),
+        }
         mock_morning.return_value = {
             "snapshot": {"code": "688008"},
             "evaluation": {"report": {"mss_final": 48}, "audit": __import__(
@@ -110,15 +131,71 @@ class TestSchedule:
             ).AuditResult(passed=True)},
             "steps": [],
         }
-        mock_record_scan.return_value = {"scan": {"scan_id": "S2", "source": "morning"}}
+        mock_record_scan.side_effect = [
+            {"scan": {"scan_id": "S1", "source": "premarket"}},
+            {"scan": {"scan_id": "S2", "source": "morning"}},
+        ]
 
         from agent_reach.daily_run.schedule import run_scheduled
 
         result = run_scheduled("morning", push=False)
         assert result["job"] == "morning"
         mock_save_baseline.assert_called_once()
-        mock_record_scan.assert_called_once()
+        assert mock_record_scan.call_count == 2
+        assert mock_record_scan.call_args_list[0].kwargs.get("source") == "premarket"
+        assert mock_record_scan.call_args_list[1].kwargs.get("source") == "morning"
         assert result["result"]["scan"]["scan"]["scan_id"] == "S2"
+        assert "scan_s1_backfill" in result["result"]["steps"]
+
+    @patch("agent_reach.daily_run.trade_calendar.is_trading_day", return_value=(True, ""))
+    @patch("agent_reach.daily_run.workflows.run_close")
+    @patch("agent_reach.daily_run.workflows.prepare_close_run")
+    @patch("agent_reach.daily_run.workflows.load_morning_baseline")
+    @patch("agent_reach.daily_run.intraday.load_state")
+    @patch("agent_reach.daily_run.snapshot_builder.build_and_save")
+    @patch("agent_reach.daily_run.snapshot_builder.load_portfolio")
+    def test_run_scheduled_close(
+        self,
+        mock_load_portfolio,
+        mock_build,
+        mock_load_state,
+        mock_load_baseline,
+        mock_prepare_close,
+        mock_run_close,
+        portfolio,
+        tmp_path,
+    ):
+        from agent_reach.daily_run.intraday import IntradayState
+
+        mock_load_portfolio.return_value = portfolio
+        snap = {"code": "688008", "mss_final": 48}
+        mock_build.return_value = (snap, tmp_path / "close.json")
+        mock_load_state.return_value = IntradayState(
+            date="2026-07-10",
+            scans=[{"scan_id": "S1", "mss_final": 50}, {"scan_id": "S2", "mss_final": 48}],
+            trades=[],
+        )
+        mock_load_baseline.return_value = {"code": "688008", "mss_final": 52, "mss_range": [45, 55]}
+        mock_prepare_close.return_value = {
+            "snapshot": snap,
+            "portfolio": portfolio,
+            "verify": {"verdict_current": "观察", "summary": "ok"},
+            "pre_verify": {"verdict_current": "观察", "summary": "ok"},
+            "watchlist_adjust": {"applied": False, "message": "观察池无变更", "changes": []},
+            "code_review": {"findings": [], "fixes_applied": [], "portfolio_changed": False},
+            "steps": ["team_first", "verify", "code_review"],
+        }
+        mock_run_close.return_value = {"verify": {}, "markdown": "close"}
+
+        from agent_reach.daily_run.schedule import run_scheduled
+
+        result = run_scheduled("close", push=False)
+        assert result["job"] == "close"
+        mock_prepare_close.assert_called_once()
+        mock_run_close.assert_called_once()
+        assert snap.get("intraday_scans")
+        assert result["result"]["code_review"] is not None
+        assert result["result"]["prepare_steps"] == ["team_first", "verify", "code_review"]
 
 
 class TestRunManifest:
@@ -139,3 +216,27 @@ class TestRunManifest:
         data = json.loads(path.read_text(encoding="utf-8"))
         assert data["payload"]["evaluation"]["audit"]["passed"] is True
         assert data["payload"]["evaluation"]["audit"]["warnings"] == ["warn"]
+
+    def test_save_run_manifest_uses_shanghai_date_dir(self, tmp_path, monkeypatch):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        from agent_reach.daily_run.run_manifest import save_run_manifest
+
+        monkeypatch.setattr(
+            "agent_reach.daily_run.run_manifest.runs_dir",
+            lambda: tmp_path,
+        )
+        sh = ZoneInfo("Asia/Shanghai")
+        fake_now = datetime(2026, 7, 11, 7, 30, 0, tzinfo=sh)
+        monkeypatch.setattr(
+            "agent_reach.daily_run.run_manifest._manifest_shanghai_now",
+            lambda: fake_now,
+        )
+        monkeypatch.setattr(
+            "agent_reach.daily_run.run_manifest.today_shanghai",
+            lambda: fake_now.date(),
+        )
+        path = save_run_manifest("morning", {"job": "morning"})
+        assert path.parent.name == "2026-07-11"
+        assert path.name.startswith("morning_0730")

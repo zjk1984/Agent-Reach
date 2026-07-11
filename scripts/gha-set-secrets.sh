@@ -27,6 +27,7 @@ gh secret set AGENT_REACH_CONFIG_YAML "${GH_REPO[@]}" < "$CONFIG"
 
 if [ -f "$PORTFOLIO" ]; then
   echo "Setting AGENT_REACH_PORTFOLIO_JSON from $PORTFOLIO ..."
+  echo "(Optional — only used when GHA cache has no portfolio.json; prefer config/daily_run_portfolio.json in repo)"
   gh secret set AGENT_REACH_PORTFOLIO_JSON "${GH_REPO[@]}" < "$PORTFOLIO"
 else
   echo "Skip AGENT_REACH_PORTFOLIO_JSON (file not found: $PORTFOLIO)"

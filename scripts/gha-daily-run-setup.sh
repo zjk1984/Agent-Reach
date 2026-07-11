@@ -1,9 +1,18 @@
 #!/usr/bin/env bash
 # Bootstrap ~/.agent-reach for GitHub Actions daily-run jobs.
+#
+# Portfolio seeding (only when portfolio.json is missing, or RESET_PORTFOLIO=true):
+#   1. AGENT_REACH_PORTFOLIO_JSON secret (optional)
+#   2. config/daily_run_portfolio.json in repo (commit your baseline here)
+#   3. config/daily_run_portfolio.example.json
+#
+# After the first seed, GHA cache keeps portfolio.json — no secret update needed
+# for day-to-day paper trades or watchlist changes.
 set -euo pipefail
 
 AGENT_REACH_DIR="${HOME}/.agent-reach"
 DAILY_RUN_DIR="${AGENT_REACH_DIR}/daily_run"
+PORTFOLIO_PATH="${DAILY_RUN_DIR}/portfolio.json"
 mkdir -p "$DAILY_RUN_DIR"
 chmod 700 "$AGENT_REACH_DIR" "$DAILY_RUN_DIR"
 
@@ -15,10 +24,25 @@ elif [ ! -f "${AGENT_REACH_DIR}/config.yaml" ]; then
   exit 1
 fi
 
-if [ -n "${AGENT_REACH_PORTFOLIO_JSON:-}" ]; then
-  printf '%s\n' "$AGENT_REACH_PORTFOLIO_JSON" > "${DAILY_RUN_DIR}/portfolio.json"
-elif [ ! -f "${DAILY_RUN_DIR}/portfolio.json" ]; then
-  cp config/daily_run_portfolio.example.json "${DAILY_RUN_DIR}/portfolio.json"
+reset_portfolio="${RESET_PORTFOLIO:-false}"
+if [ "$reset_portfolio" = "true" ] && [ -f "$PORTFOLIO_PATH" ]; then
+  rm -f "$PORTFOLIO_PATH"
+  echo "RESET_PORTFOLIO=true — removed cached portfolio.json for re-seed"
+fi
+
+if [ ! -f "$PORTFOLIO_PATH" ]; then
+  if [ -n "${AGENT_REACH_PORTFOLIO_JSON:-}" ]; then
+    printf '%s\n' "$AGENT_REACH_PORTFOLIO_JSON" > "$PORTFOLIO_PATH"
+    echo "Seeded portfolio.json from AGENT_REACH_PORTFOLIO_JSON secret"
+  elif [ -f config/daily_run_portfolio.json ]; then
+    cp config/daily_run_portfolio.json "$PORTFOLIO_PATH"
+    echo "Seeded portfolio.json from config/daily_run_portfolio.json (repo)"
+  else
+    cp config/daily_run_portfolio.example.json "$PORTFOLIO_PATH"
+    echo "Seeded portfolio.json from config/daily_run_portfolio.example.json"
+  fi
+else
+  echo "Using existing portfolio.json (cache or prior run)"
 fi
 
 # Export Twitter creds for twitter-cli (optional, from config.yaml).

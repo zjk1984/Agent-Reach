@@ -9,6 +9,9 @@ from agent_reach.daily_run.portfolio_manager import (
     increment_holding_days,
     is_auto_adjust_enabled,
     max_holdings,
+    max_total_symbols,
+    unique_symbol_count,
+    watchlist_capacity,
 )
 from agent_reach.daily_run.settings import load_settings
 
@@ -61,7 +64,12 @@ class TestPortfolioConfig:
     def test_defaults(self):
         s = load_settings()
         assert max_holdings(s) == 10
+        assert max_total_symbols(s) == 10
         assert is_auto_adjust_enabled(s) is True
+
+    def test_unique_symbol_count(self, portfolio):
+        assert unique_symbol_count(portfolio) == 4
+        assert watchlist_capacity(load_settings(), portfolio) == 8
 
 
 class TestApplyAutoAdjust:
@@ -150,8 +158,15 @@ class TestApplyAutoAdjust:
         assert len(result.portfolio["holdings"]) == 3
         assert result.portfolio["cash"] < portfolio["cash"]
 
-    def test_max_holdings_blocks_buy(self, portfolio, snapshot, settings_enabled):
-        settings_enabled["portfolio"]["max_holdings"] = 2
+    def test_max_total_blocks_buy_when_full(self, portfolio, snapshot, settings_enabled):
+        settings_enabled["portfolio"]["max_holdings"] = 4
+        portfolio["holdings"] = [
+            {"code": "688008", "name": "澜起科技", "shares": 100, "cost": 255.87, "days_held": 5},
+            {"code": "002273", "name": "水晶光电", "shares": 300, "cost": 33.81, "days_held": 5},
+            {"code": "603986", "name": "兆易创新", "shares": 100, "cost": 600.0, "days_held": 5},
+            {"code": "000725", "name": "京东方A", "shares": 1000, "cost": 7.5, "days_held": 5},
+        ]
+        portfolio["watchlist"] = []
         decision = TradeDecision(
             action="buy",
             trade_id="T1",
@@ -162,7 +177,7 @@ class TestApplyAutoAdjust:
         )
         result = apply_auto_adjust(portfolio, decision, snapshot, settings_enabled)
         assert result.applied is False
-        assert "上限" in result.message
+        assert "合计上限" in result.message or "观察池" in result.message
 
     def test_buy_blocked_by_friction(self, portfolio, snapshot, settings_enabled):
         decision = TradeDecision(

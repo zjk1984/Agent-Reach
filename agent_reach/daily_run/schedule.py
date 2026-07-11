@@ -77,6 +77,12 @@ def default_entries() -> list[CronEntry]:
     entries.append(
         CronEntry("30", "15", "1-5", f"{cmd} daily-run schedule run close", "daily-run 收盘 15:30")
     )
+    entries.append(
+        CronEntry("0", "9", "6", f"{cmd} daily-run schedule run weekly", "daily-run 周报 周六 9:00")
+    )
+    entries.append(
+        CronEntry("0", "9", "0", f"{cmd} daily-run schedule run forecast", "daily-run 下周预测 周日 9:00")
+    )
     return entries
 
 
@@ -140,17 +146,33 @@ def _doctor_channels(config) -> dict:
     return check_all(config)
 
 
+def _enrich_level_for(job: str, report_type: str) -> str:
+    if job == "intraday" or report_type == "intraday":
+        return "quotes"
+    if job in ("weekly", "forecast"):
+        return "lite"
+    return "full"
+
+
+def _doctor_for_job(config, settings, job: str) -> dict:
+    if job in ("weekly", "forecast"):
+        return {}
+    from agent_reach.daily_run.doctor_cache import doctor_channels_cached
+
+    return doctor_channels_cached(config, settings)
+
+
 def run_scheduled(
     job: str,
     *,
     push: bool = True,
     config=None,
 ) -> dict:
-    """Execute morning | intraday | close with auto snapshot + doctor + manifest."""
+    """Execute morning | intraday | close | weekly with auto snapshot + doctor + manifest."""
     from agent_reach.config import Config
     from agent_reach.daily_run.settings import load_settings
     from agent_reach.daily_run.snapshot_builder import build_and_save, load_portfolio, save_portfolio
-    from agent_reach.daily_run.workflows import load_morning_baseline, run_close, run_morning
+    from agent_reach.daily_run.workflows import load_morning_baseline, run_close, run_forecast, run_morning, run_weekly
 
     cfg_obj = config or Config()
     settings = load_settings()
@@ -158,13 +180,14 @@ def run_scheduled(
 
     from agent_reach.daily_run.trade_calendar import is_trading_day
 
-    trading_ok, trading_reason = is_trading_day(settings=settings)
-    if not trading_ok:
-        result = {"job": job, "skipped": True, "reason": trading_reason}
-        save_run_manifest(job, result, duration_ms=0)
-        return result
+    if job not in ("weekly", "forecast"):
+        trading_ok, trading_reason = is_trading_day(settings=settings)
+        if not trading_ok:
+            result = {"job": job, "skipped": True, "reason": trading_reason}
+            save_run_manifest(job, result, duration_ms=0)
+            return result
 
-    doctor = _doctor_channels(cfg_obj)
+    doctor = _doctor_for_job(cfg_obj, settings, job)
 
     try:
         load_portfolio()
@@ -179,7 +202,8 @@ def run_scheduled(
     feishu = None
 
     if job == "morning":
-        from agent_reach.daily_run.intraday import record_scan_from_evaluation
+        from agent_reach.daily_run.intraday import load_state, record_scan_from_evaluation
+        from agent_reach.daily_run.pipeline import evaluate_snapshot
         from agent_reach.daily_run.portfolio_manager import increment_holding_days, is_auto_adjust_enabled
         from agent_reach.daily_run.watchlist_manager import adjust_watchlist, is_watchlist_adjust_enabled
 
@@ -188,7 +212,25 @@ def run_scheduled(
                 pf = load_portfolio()
                 save_portfolio(increment_holding_days(pf))
 
-            snap, path = build_and_save(report_type="premarket", config=cfg_obj)
+            snap, path = build_and_save(
+                report_type="premarket",
+                config=cfg_obj,
+                settings=settings,
+                enrich_level="full",
+            )
+
+            # 07:00 cron 未跑时（fork 仓库常见）：用盘前 snapshot 补 S1，08:00 全量仍为 S2
+            s1_backfill = None
+            state = load_state()
+            if not state.scans:
+                pre_eval = evaluate_snapshot(snap, settings, doctor_channels=doctor)
+                s1_backfill = record_scan_from_evaluation(
+                    snap,
+                    pre_eval,
+                    settings=settings,
+                    source="premarket",
+                )
+
             run_result = run_morning(
                 snap,
                 settings=settings,
@@ -208,6 +250,9 @@ def run_scheduled(
             )
             run_result["steps"].append("scan_s2")
             run_result["scan"] = scan_result
+            if s1_backfill is not None:
+                run_result["s1_backfill"] = s1_backfill
+                run_result["steps"].append("scan_s1_backfill")
 
             wl_result = None
             if is_watchlist_adjust_enabled(settings):
@@ -237,7 +282,12 @@ def run_scheduled(
                     "reason": f"今日扫描已达 {MAX_SCANS} 次上限",
                 }
             else:
-                snap, path = build_and_save(report_type="intraday", config=cfg_obj)
+                snap, path = build_and_save(
+                    report_type="intraday",
+                    config=cfg_obj,
+                    settings=settings,
+                    enrich_level="quotes",
+                )
                 do_trade = should_evaluate_trade(state, settings)
                 run_result = run_intraday(
                     snap,
@@ -257,51 +307,66 @@ def run_scheduled(
 
     elif job == "close":
         from agent_reach.daily_run.intraday import load_state
-        from agent_reach.daily_run.watchlist_manager import (
-            adjust_watchlist,
-            collect_intraday_sold_codes,
-            is_watchlist_adjust_enabled,
-        )
 
         with StepTimer("schedule.close"):
-            snap, path = build_and_save(report_type="close", config=cfg_obj)
+            pf = load_portfolio()
+            snap, path = build_and_save(
+                report_type="close",
+                config=cfg_obj,
+                settings=settings,
+                portfolio=pf,
+                enrich_level="full",
+            )
             state = load_state()
             if state.scans:
                 snap["intraday_scans"] = state.scans
                 snap["mss_intraday_actual"] = [s.get("mss_final") for s in state.scans]
 
+            from agent_reach.daily_run.baseline_fallback import load_close_baseline
+
+            baseline_source = "last_morning.json"
+            baseline_note = None
             try:
                 baseline = load_morning_baseline()
             except FileNotFoundError as exc:
-                if push:
-                    from agent_reach.integrations.feishu import send_card
+                try:
+                    baseline, baseline_source = load_close_baseline(scans=state.scans)
+                    baseline_note = f"降级基线：{baseline_source}（原错误：{exc}）"
+                    if push:
+                        from agent_reach.integrations.feishu import send_card
 
-                    send_card(
-                        cfg_obj,
-                        "⚠️ 收盘复盘缺少早盘基线",
-                        f"未找到 `last_morning.json`：{exc}\n\n请先运行 `daily-run morning --save-baseline`",
-                        template="red",
-                    )
-                raise
+                        send_card(
+                            cfg_obj,
+                            "⚠️ 收盘复盘使用降级基线",
+                            f"{baseline_note}\n\n建议补跑 `daily-run schedule run morning`",
+                            template="orange",
+                        )
+                except FileNotFoundError:
+                    if push:
+                        from agent_reach.integrations.feishu import send_card
 
-            wl_result = None
-            if is_watchlist_adjust_enabled(settings):
-                pf = load_portfolio()
-                wl_result = adjust_watchlist(
-                    pf,
-                    snap,
-                    settings,
-                    "close",
-                    sold_codes=collect_intraday_sold_codes(settings),
-                )
-                if wl_result.applied:
-                    save_portfolio(wl_result.portfolio)
-                    snap["watchlist"] = wl_result.portfolio.get("watchlist", [])
-                    block = snap.get("portfolio") or {}
-                    for key in ("holdings", "cash", "cash_ratio", "total"):
-                        if key in wl_result.portfolio:
-                            block[key] = wl_result.portfolio[key]
-                    snap["portfolio"] = block
+                        send_card(
+                            cfg_obj,
+                            "⚠️ 收盘复盘缺少早盘基线",
+                            f"未找到 `last_morning.json`：{exc}\n\n请先运行 `daily-run morning --save-baseline`",
+                            template="red",
+                        )
+                    raise
+
+            from agent_reach.daily_run.workflows import prepare_close_run
+
+            prepared = prepare_close_run(
+                snap,
+                baseline,
+                pf,
+                settings=settings,
+                scans=state.scans,
+                trades=state.trades,
+                attach_intraday=False,
+            )
+            snap = prepared["snapshot"]
+            wl_result_dict = prepared["watchlist_adjust"]
+            code_review_dict = prepared["code_review"]
 
             run_result = run_close(
                 snap,
@@ -311,15 +376,67 @@ def run_scheduled(
                 config=cfg_obj,
                 intraday_scans=state.scans,
                 intraday_trades=state.trades,
-                watchlist_adjust=wl_result.to_dict() if wl_result else None,
+                watchlist_adjust=wl_result_dict,
+                code_review=code_review_dict,
+                verify_dict=prepared.get("verify"),
             )
-            if wl_result is not None:
-                run_result["watchlist_adjust"] = wl_result.to_dict()
+            run_result["baseline_source"] = baseline_source
+            if baseline_note:
+                run_result["baseline_note"] = baseline_note
+            run_result["code_review"] = code_review_dict
+            run_result["prepare_steps"] = prepared["steps"]
+            if wl_result_dict is not None:
+                run_result["watchlist_adjust"] = wl_result_dict
 
             result = {"job": job, "snapshot_path": str(path), "result": run_result}
             feishu = run_result.get("feishu")
+
+    elif job == "weekly":
+        with StepTimer("schedule.weekly"):
+            pf = load_portfolio()
+            snap, path = build_and_save(
+                report_type="close",
+                config=cfg_obj,
+                settings=settings,
+                portfolio=pf,
+                enrich_level="lite",
+            )
+            run_result = run_weekly(
+                snap,
+                settings=settings,
+                push=push,
+                config=cfg_obj,
+                portfolio=pf,
+            )
+            result = {"job": job, "snapshot_path": str(path), "result": run_result}
+            feishu = run_result.get("feishu")
+
+    elif job == "forecast":
+        with StepTimer("schedule.forecast"):
+            pf = load_portfolio()
+            snap, path = build_and_save(
+                report_type="close",
+                config=cfg_obj,
+                settings=settings,
+                portfolio=pf,
+                enrich_level="lite",
+            )
+            run_result = run_forecast(
+                snap,
+                settings=settings,
+                push=push,
+                config=cfg_obj,
+                portfolio=pf,
+            )
+            result = {
+                "job": job,
+                "snapshot_path": str(path),
+                "forecast_path": run_result.get("forecast_path"),
+                "result": run_result,
+            }
+            feishu = run_result.get("feishu")
     else:
-        raise ValueError(f"未知定时任务：{job}，可选 morning | intraday | close")
+        raise ValueError(f"未知定时任务：{job}，可选 morning | intraday | close | weekly | forecast")
 
     duration_ms = (time.perf_counter() - t0) * 1000
     manifest_path = save_run_manifest(job, result, feishu=feishu, duration_ms=duration_ms)

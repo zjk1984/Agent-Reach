@@ -320,16 +320,28 @@ agent-reach daily-run schedule install
 agent-reach daily-run schedule run morning
 agent-reach daily-run schedule run intraday
 agent-reach daily-run schedule run close
+agent-reach daily-run schedule run weekly
+agent-reach daily-run schedule run forecast
 ```
 
-默认时间表（**北京时间**，工作日）：
+默认时间表（**北京时间**）：
 | 时间 | 任务 |
 |------|------|
-| 08:00 | 早盘分析 + 飞书推送 + 保存基线 |
-| 09:30–15:00 **10 次**扫描 | 盘中 S1–S10 + 条件调仓 T_n + 飞书 |
-| 15:30 | 收盘复盘（Team + 曲线 + Exa 模板 + 验证） |
+| 07:00 | 盘前 S1 扫描 + 飞书（smart 模式推送） |
+| 08:00 | 早盘全量分析 + S2 + 飞书 + 保存基线 |
+| 09:30–15:00 **11 次**扫描 | 盘中 S3–S12 + 条件调仓 T_n（smart 推送：S1/S2/S12 或调仓时） |
+| 15:30 | 收盘复盘（Team + 曲线 + Exa + 验证 + 预测校准） |
+| **周六 09:00** | **周报**：盈亏、持股、观察池、热门板块、技能学习 → 飞书 |
+| **周日 09:00** | **下周预测**：MSS/标的日走势、新闻热点 → 飞书 + `forecasts/` |
 
-定时任务默认 **doctor 预检**、**macro_collector 实时因子**、**MSS 蒙特卡洛预测**、**A 股交易日历跳过休市**。
+定时任务默认 **doctor 日缓存**、**macro/technicals 日缓存**（intraday 仅刷新 quotes）、**Exa TTL 缓存**、**A 股交易日历跳过休市**。
+
+**盘中飞书推送策略**（`schedule.intraday_push_mode`）：
+- `smart`（默认）：S1、S2、S12 或发生调仓时推送
+- `trade_only`：仅调仓时推送
+- `all`：每次扫描都推送
+
+**收盘预测校准**：每个交易日收盘自动对比 `forecasts/{week_start}.json` 中当日预测 vs 实盘，更新 `calibration.json` 并写入经验库 `forecast_review` 字段。
 
 ### GitHub Actions（无 iOS / 无 crontab 时推荐）
 
@@ -342,9 +354,9 @@ agent-reach daily-run schedule run close
 | `AGENT_REACH_CONFIG_YAML` | 本地 `~/.agent-reach/config.yaml` 全文（飞书、雪球 Cookie、Twitter 等） |
 | `AGENT_REACH_PORTFOLIO_JSON` | （可选）`~/.agent-reach/daily_run/portfolio.json` 全文 |
 
-**手动试跑：** Actions → `daily-run schedule` → Run workflow → 选 `morning` / `intraday` / `close`。
+**手动试跑：** Actions → `daily-run schedule` → Run workflow → 选 `morning` / `intraday` / `close` / `weekly` / `forecast`。
 
-**说明：** 盘中状态（S1–S10、早盘基线）通过 Actions Cache 按交易日持久化；GitHub cron 可能延迟数分钟，属正常现象。所有触发时间均为 **北京时间**。
+**说明：** 盘中状态（S1–S12、早盘基线、weekly_digest、forecasts）通过 Actions Cache **按上海日期**持久化（同一交易日所有 run 共享 key）；GitHub cron 可能延迟数分钟，属正常现象。所有触发时间均为 **北京时间**。
 
 ### Phase 5 — Exa / Channel / 经验沉淀
 

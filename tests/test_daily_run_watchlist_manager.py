@@ -2,9 +2,10 @@
 """Tests for watchlist adjust (morning/close only)."""
 
 import json
-from datetime import date
 
 import pytest
+
+from agent_reach.daily_run.trade_calendar import today_shanghai
 
 from agent_reach.daily_run.portfolio_manager import apply_auto_adjust
 from agent_reach.daily_run.intraday import TradeDecision
@@ -93,7 +94,7 @@ class TestWatchlistPolicy:
         from agent_reach.daily_run import portfolio_manager
 
         ledger = tmp_path / "ledger.jsonl"
-        today = date.today().isoformat()
+        today = today_shanghai().isoformat()
         sold_at = f"{today}T10:00:00+00:00"
         ledger.write_text(
             json.dumps(
@@ -118,6 +119,71 @@ class TestWatchlistPolicy:
         codes = {w["code"] for w in result.portfolio["watchlist"]}
         assert "002273" in codes
 
+    def test_close_trims_watchlist_to_total_cap(self, portfolio, snapshot, settings):
+        settings.setdefault("portfolio", {})
+        settings["portfolio"]["max_holdings"] = 3
+        portfolio["watchlist"] = [
+            {"code": "603986", "name": "兆易创新"},
+            {"code": "002273", "name": "水晶光电"},
+            {"code": "000725", "name": "京东方A"},
+        ]
+        result = adjust_watchlist(portfolio, snapshot, settings, "close")
+        wl_only = {
+            w["code"]
+            for w in result.portfolio["watchlist"]
+            if w["code"] not in {h["code"] for h in portfolio["holdings"]}
+        }
+        assert len(portfolio["holdings"]) + len(wl_only) <= 3
+
     def test_intraday_phase_rejected(self, portfolio, snapshot, settings):
         result = adjust_watchlist(portfolio, snapshot, settings, "intraday")  # type: ignore[arg-type]
         assert result.applied is False
+
+    def test_close_macro_avoid_trims_watchlist(self, portfolio, snapshot, settings):
+        portfolio["watchlist"] = [
+            {"code": "603986", "name": "兆易创新"},
+            {"code": "002273", "name": "水晶光电"},
+            {"code": "000725", "name": "京东方A"},
+            {"code": "002415", "name": "海康威视"},
+            {"code": "600519", "name": "贵州茅台"},
+        ]
+        result = adjust_watchlist(
+            portfolio,
+            snapshot,
+            settings,
+            "close",
+            verify={"verdict_current": "回避"},
+        )
+        assert result.applied is True
+        assert len(result.portfolio["watchlist"]) <= 3
+
+    def test_collect_intraday_sold_codes_uses_shanghai_date(
+        self, settings, tmp_path, monkeypatch
+    ):
+        from agent_reach.daily_run import portfolio_manager
+
+        ledger = tmp_path / "ledger.jsonl"
+        today = today_shanghai().isoformat()
+        ledger.write_text(
+            json.dumps(
+                {
+                    "at": f"{today}T10:00:00+08:00",
+                    "actions": [{"side": "sell", "code": "002273", "name": "水晶光电"}],
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(portfolio_manager, "default_ledger_path", lambda: ledger)
+        sold = collect_intraday_sold_codes(settings)
+        assert len(sold) == 1
+        assert sold[0]["code"] == "002273"
+
+    def test_render_watchlist_adjust_markdown(self, portfolio, snapshot, settings):
+        from agent_reach.daily_run.watchlist_manager import render_watchlist_adjust_markdown
+
+        portfolio["watchlist"].append({"code": "688008", "name": "澜起科技"})
+        result = adjust_watchlist(portfolio, snapshot, settings, "morning")
+        md = render_watchlist_adjust_markdown(result)
+        assert "观察池" in md
+        assert "688008" in md or "澜起" in md

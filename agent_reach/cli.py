@@ -223,7 +223,7 @@ def main():
     p_dr_sched.add_argument(
         "--job",
         default="",
-        choices=["morning", "intraday", "close"],
+        choices=["morning", "intraday", "close", "weekly", "forecast"],
         help="Job for schedule run (alternative to positional job_name)",
     )
     p_dr_sched.add_argument("--dry-run", action="store_true",
@@ -1560,9 +1560,15 @@ def _cmd_daily_run(args):
 
     if args.daily_action == "close":
         from agent_reach.config import Config
+        from agent_reach.daily_run.intraday import load_state
         from agent_reach.daily_run.plugins.loader import run_experts
         from agent_reach.daily_run.settings import load_settings
-        from agent_reach.daily_run.workflows import load_morning_baseline, run_close
+        from agent_reach.daily_run.snapshot_builder import load_portfolio
+        from agent_reach.daily_run.workflows import (
+            load_morning_baseline,
+            prepare_close_run,
+            run_close,
+        )
 
         current = json.loads(Path(args.input).read_text(encoding="utf-8"))
         settings = load_settings()
@@ -1578,15 +1584,36 @@ def _cmd_daily_run(args):
                 print(f"❌ {exc}")
                 sys.exit(1)
 
-        result = run_close(
+        portfolio = load_portfolio()
+        state = load_state()
+        prepared = prepare_close_run(
             current,
+            baseline,
+            portfolio,
+            settings=settings,
+            scans=state.scans,
+            trades=state.trades,
+        )
+
+        result = run_close(
+            prepared["snapshot"],
             baseline,
             settings=settings,
             push=not args.dry_run,
             title=args.title or None,
             config=Config(),
+            intraday_scans=state.scans,
+            intraday_trades=state.trades,
+            watchlist_adjust=prepared["watchlist_adjust"],
+            code_review=prepared["code_review"],
+            verify_dict=prepared.get("verify"),
         )
+        result["code_review"] = prepared["code_review"]
+        result["watchlist_adjust"] = prepared["watchlist_adjust"]
+        result["prepare_steps"] = prepared["steps"]
         print(json.dumps(result["verify"], ensure_ascii=False, indent=2))
+        if prepared["steps"]:
+            print(f"预处理：{' → '.join(prepared['steps'])}")
         print("\n--- Markdown ---\n")
         print(result["markdown"])
         if not args.dry_run:
@@ -1767,8 +1794,8 @@ def _cmd_daily_run(args):
 
         if args.schedule_action == "run":
             job = args.job or args.job_name or "intraday"
-            if job not in ("morning", "intraday", "close"):
-                print("❌ job must be morning, intraday, or close")
+            if job not in ("morning", "intraday", "close", "weekly", "forecast"):
+                print("❌ job must be morning, intraday, close, weekly, or forecast")
                 sys.exit(1)
             try:
                 result = run_scheduled(job, push=not args.dry_run, config=Config())
@@ -1787,11 +1814,19 @@ def _cmd_daily_run(args):
             elif job == "close":
                 verify = job_result.get("verify") or {}
                 print(f"   summary: {verify.get('summary', '')[:80]}")
+            elif job == "weekly":
+                wr = job_result.get("report") or {}
+                pnl = wr.get("weekly_pnl")
+                print(f"   weekly_pnl={pnl} holdings={len(wr.get('holdings') or [])}")
+            elif job == "forecast":
+                fc = job_result.get("forecast") or {}
+                print(f"   forecast {fc.get('week_start')}–{fc.get('week_end')} symbols={len(fc.get('symbols') or {})}")
+                print(f"   path: {result.get('forecast_path') or job_result.get('forecast_path')}")
             if not args.dry_run:
                 print("   Feishu push sent")
             return
 
-        print("Usage: agent-reach daily-run schedule {print|install|run} [--job morning|intraday|close]")
+        print("Usage: agent-reach daily-run schedule {print|install|run} [--job morning|intraday|close|weekly|forecast]")
         sys.exit(1)
 
     if args.daily_action not in ("evaluate", "push"):

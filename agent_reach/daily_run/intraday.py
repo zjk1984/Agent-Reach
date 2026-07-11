@@ -203,6 +203,7 @@ def should_evaluate_trade(
     settings: Optional[dict[str, Any]] = None,
     *,
     state_path: Optional[Path] = None,
+    trend_hint: Optional[str] = None,
 ) -> bool:
     """Heuristic: trade after ≥3 scans, <5 trades, on trend shift or every 2nd scan."""
     cfg = settings or load_settings()
@@ -216,7 +217,7 @@ def should_evaluate_trade(
     if len(st.trades) >= MAX_TRADES:
         return False
 
-    trend = detect_mss_trend(st.scans)
+    trend = trend_hint or detect_mss_trend(st.scans)
     if trend in ("turning_up", "turning_down", "rising", "falling"):
         return True
     return len(st.scans) % int(sched.get("trade_every_n_scans", 2)) == 0
@@ -233,6 +234,9 @@ def evaluate_trade(
     expected_return_pct: Optional[float] = None,
     pre_enriched: Optional[dict[str, Any]] = None,
     pre_evaluation: Optional[dict[str, Any]] = None,
+    pre_lookback_mss: Optional[float] = None,
+    pre_lookback_detail: Optional[list[dict[str, Any]]] = None,
+    pre_trend: Optional[str] = None,
 ) -> dict[str, Any]:
     """Evaluate T_n trade opportunity using lookback MSS over recent scans."""
     cfg = settings or load_settings()
@@ -254,8 +258,19 @@ def evaluate_trade(
     report = evaluation["report"]
     verdict = evaluation["verdict"]
 
-    lookback_mss, lookback_detail = compute_lookback_mss(st.scans, cfg)
-    trend = detect_mss_trend(st.scans)
+    if pre_lookback_mss is not None and pre_trend is not None:
+        lookback_mss = float(pre_lookback_mss)
+        lookback_detail = list(pre_lookback_detail or [])
+        trend = pre_trend
+    else:
+        lookback_mss, lookback_detail = compute_lookback_mss(st.scans, cfg)
+        trend = detect_mss_trend(st.scans)
+        if pre_lookback_mss is not None:
+            lookback_mss = float(pre_lookback_mss)
+        if pre_lookback_detail is not None:
+            lookback_detail = pre_lookback_detail
+        if pre_trend is not None:
+            trend = pre_trend
     decision = _decide_trade(
         lookback_mss=lookback_mss,
         trend=trend,
@@ -265,6 +280,7 @@ def evaluate_trade(
         settings=cfg,
         trade_index=len(st.trades) + 1,
         expected_return_pct=expected_return_pct,
+        lookback_detail=lookback_detail,
     )
 
     trade_record = {
@@ -283,14 +299,20 @@ def evaluate_trade(
             is_auto_adjust_enabled,
             render_apply_markdown,
         )
-        from agent_reach.daily_run.snapshot_builder import load_portfolio, save_portfolio
+        from agent_reach.daily_run.symbols import portfolio_from_snapshot
 
         if is_auto_adjust_enabled(cfg):
-            pf = load_portfolio()
+            pf = portfolio_from_snapshot(enriched)
+            if pf.get("cash") is None:
+                from agent_reach.daily_run.snapshot_builder import load_portfolio
+
+                pf = load_portfolio()
             portfolio_apply = apply_auto_adjust(
                 pf, decision, enriched, cfg, allow_watchlist_changes=False
             )
             if portfolio_apply.applied:
+                from agent_reach.daily_run.snapshot_builder import save_portfolio
+
                 save_portfolio(portfolio_apply.portfolio)
                 append_trade_ledger(
                     portfolio_apply.actions,
@@ -342,9 +364,13 @@ def run_intraday(
     )
     steps.append("scan")
 
+    st_after_scan = IntradayState.from_dict(scan_result["state"])
     trade_result = None
     do_trade = trade or should_evaluate_trade(
-        IntradayState.from_dict(scan_result["state"]), cfg, state_path=state_path
+        st_after_scan,
+        cfg,
+        state_path=state_path,
+        trend_hint=scan_result.get("trend"),
     )
     if do_trade and not trade:
         steps.append("trade_auto")
@@ -355,30 +381,45 @@ def run_intraday(
             settings=cfg,
             doctor_channels=doctor_channels,
             plugin_names=plugin_names,
-            state=IntradayState.from_dict(scan_result["state"]),
+            state=st_after_scan,
             state_path=state_path,
             expected_return_pct=expected_return_pct,
             pre_enriched=scan_result.get("enriched"),
             pre_evaluation=scan_result.get("evaluation"),
+            pre_lookback_mss=scan_result.get("lookback_mss"),
+            pre_lookback_detail=scan_result.get("lookback_detail"),
+            pre_trend=scan_result.get("trend"),
         )
         steps.append("trade")
 
     feishu_result = None
     if push:
-        from agent_reach.config import Config
-        from agent_reach.integrations.feishu import send_card
+        from agent_reach.daily_run.intraday_push import should_push_intraday
 
-        cfg_obj = config or Config()
-        tpl = cfg.get("report", {}).get("feishu_template_intraday", "blue")
         scan_id = scan_result["scan"]["scan_id"]
-        name = scan_result["scan"].get("name") or scan_result["scan"].get("code") or "大盘"
-        card_title = title or f"📊 盘中 {scan_id} · {name}"
+        scan_count = len(IntradayState.from_dict(scan_result["state"]).scans)
+        trade_happened = trade_result is not None
+        if should_push_intraday(
+            scan_id,
+            settings=cfg,
+            trade_happened=trade_happened,
+            scan_count=scan_count,
+        ):
+            from agent_reach.config import Config
+            from agent_reach.integrations.feishu import send_card
 
-        md_parts = [scan_result["markdown"]]
-        if trade_result:
-            md_parts.append("\n---\n\n" + trade_result["markdown"])
-        feishu_result = send_card(cfg_obj, card_title, "\n".join(md_parts), template=tpl)
-        steps.append("push")
+            cfg_obj = config or Config()
+            tpl = cfg.get("report", {}).get("feishu_template_intraday", "blue")
+            name = scan_result["scan"].get("name") or scan_result["scan"].get("code") or "大盘"
+            card_title = title or f"📊 盘中 {scan_id} · {name}"
+
+            md_parts = [scan_result["markdown"]]
+            if trade_result:
+                md_parts.append("\n---\n\n" + trade_result["markdown"])
+            feishu_result = send_card(cfg_obj, card_title, "\n".join(md_parts), template=tpl)
+            steps.append("push")
+        else:
+            steps.append("push_skipped")
 
     return {
         "steps": steps,
@@ -466,7 +507,9 @@ def _decide_trade(
     settings: dict[str, Any],
     trade_index: int,
     expected_return_pct: Optional[float],
+    lookback_detail: Optional[list[dict[str, Any]]] = None,
 ) -> TradeDecision:
+    detail = lookback_detail or []
     thresholds = settings.get("thresholds", {})
     trading = settings.get("trading", {})
     macro_veto = float(thresholds.get("macro_veto", 40))
@@ -489,7 +532,7 @@ def _decide_trade(
             action="sell" if not _holding_locked(snapshot, settings) else "hold",
             trade_id=trade_id,
             lookback_mss=lookback_mss,
-            lookback_detail=[],
+            lookback_detail=detail,
             trend=trend,
             reasoning=f"Lookback MSS {lookback_mss:.0f} 低于否决线 {macro_veto:.0f}，宏观避险",
             blocked=False,
@@ -502,7 +545,7 @@ def _decide_trade(
             action="hold",
             trade_id=trade_id,
             lookback_mss=lookback_mss,
-            lookback_detail=[],
+            lookback_detail=detail,
             trend=trend,
             reasoning=f"标签 {verdict.verdict} 阻断买入（即时 MSS {verdict.mss_final:.0f}）",
             blocked=True,
@@ -516,7 +559,7 @@ def _decide_trade(
                 action="hold",
                 trade_id=trade_id,
                 lookback_mss=lookback_mss,
-                lookback_detail=[],
+                lookback_detail=detail,
                 trend=trend,
                 reasoning=f"现金比例 {cash_ratio:.0%} 低于最低 {min_cash:.0%}，暂不加仓",
                 blocked=True,
@@ -528,7 +571,7 @@ def _decide_trade(
                 action="hold",
                 trade_id=trade_id,
                 lookback_mss=lookback_mss,
-                lookback_detail=[],
+                lookback_detail=detail,
                 trend=trend,
                 reasoning=f"MSS 达 {lookback_mss:.0f} 但预期收益 {exp_ret:.2%} 不足以覆盖摩擦成本",
                 blocked=False,
@@ -539,7 +582,7 @@ def _decide_trade(
             action="buy",
             trade_id=trade_id,
             lookback_mss=lookback_mss,
-            lookback_detail=[],
+            lookback_detail=detail,
             trend=trend,
             reasoning=f"Lookback MSS {lookback_mss:.0f} ≥ {aggressive:.0f} 且趋势 {trend}，条件性建仓",
             blocked=False,
