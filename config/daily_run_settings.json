@@ -90,6 +90,7 @@
     "exa_news_research": true,
     "max_news_queries": 2,
     "close_review": true,
+    "reuse_weekly_digest_exa": true,
     "calibration_learning_rate": 0.15,
     "max_bias_pct": 3.0,
     "min_vol_scale": 0.6,
@@ -174,7 +175,20 @@
     "intraday_trade_enabled": true,
     "trade_min_scans": 3,
     "trade_every_n_scans": 2,
-    "morning_doctor": true
+    "morning_doctor": true,
+    "intraday_push_mode": "smart",
+    "intraday_push_milestones": ["S1", "S2", "S12"],
+    "doctor_cache": true,
+    "doctor_cache_ttl_seconds": 14400
+  },
+
+  "snapshot": {
+    "intraday_enrich_level": "quotes"
+  },
+
+  "exa_cache": {
+    "enabled": true,
+    "ttl_seconds": 86400
   },
 
   "portfolio": {

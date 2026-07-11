@@ -146,6 +146,25 @@ def run_close(
     close_imp_cfg = cfg.get("close_improvements") or {}
     improvements_enabled = close_imp_cfg.get("enabled", True) is not False
 
+    forecast_review = None
+    forecast_review_dict = None
+    wf_cfg = cfg.get("week_forecast") or {}
+    if wf_cfg.get("enabled", True) is not False and wf_cfg.get("close_review", True) is not False:
+        from agent_reach.daily_run.week_forecast_tracker import (
+            render_forecast_review_markdown,
+            review_active_forecast,
+        )
+
+        mss_close = enriched.get("mss_final") or verify_dict.get("mss_current")
+        forecast_review = review_active_forecast(
+            enriched, settings=cfg, mss_actual=mss_close
+        )
+        if forecast_review:
+            forecast_review_dict = forecast_review.to_dict()
+            fc_md = render_forecast_review_markdown(forecast_review)
+            if fc_md:
+                extra_parts.append(fc_md)
+
     from concurrent.futures import ThreadPoolExecutor
 
     def _run_improvements():
@@ -158,6 +177,7 @@ def run_close(
             scans=scans,
             trades=intraday_trades or [],
             watchlist_adjust=watchlist_adjust,
+            forecast_review=forecast_review_dict,
         )
 
     with ThreadPoolExecutor(max_workers=2) as pool:
@@ -191,27 +211,16 @@ def run_close(
             extra_parts.append(wl_md)
 
     exp_path = append_experience_entry(
-        enriched, verify_dict, curve=curve, research=research_results, settings=cfg
+        enriched,
+        verify_dict,
+        curve=curve,
+        research=research_results,
+        settings=cfg,
+        forecast_review=forecast_review_dict,
     )
     exp_md = render_experience_markdown(limit=3)
     if exp_md:
         extra_parts.append(exp_md)
-
-    forecast_review = None
-    wf_cfg = cfg.get("week_forecast") or {}
-    if wf_cfg.get("enabled", True) is not False and wf_cfg.get("close_review", True) is not False:
-        from agent_reach.daily_run.week_forecast_tracker import (
-            render_forecast_review_markdown,
-            review_active_forecast,
-        )
-
-        mss_close = enriched.get("mss_final") or verify_dict.get("mss_current")
-        forecast_review = review_active_forecast(
-            enriched, settings=cfg, mss_actual=mss_close
-        )
-        fc_md = render_forecast_review_markdown(forecast_review) if forecast_review else ""
-        if fc_md:
-            extra_parts.append(fc_md)
 
     imp_md = render_improvements_markdown(improvements, enabled=improvements_enabled)
 
@@ -417,6 +426,10 @@ def run_weekly(
 
     steps: list[str] = ["generate"]
     report = generate_weekly_report(snapshot, cfg, portfolio=portfolio)
+    from agent_reach.daily_run.weekly_digest import save_weekly_digest
+
+    digest_path = save_weekly_digest(report.to_dict())
+    steps.append("digest")
     md = render_weekly_markdown(report)
     steps.append("render")
 
@@ -429,6 +442,7 @@ def run_weekly(
     return {
         "steps": steps,
         "report": report.to_dict(),
+        "digest_path": str(digest_path),
         "markdown": md,
         "feishu": feishu_result,
     }

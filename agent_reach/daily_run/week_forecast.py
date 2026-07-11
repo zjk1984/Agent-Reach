@@ -180,6 +180,79 @@ def _predict_mss_daily(
     return out
 
 
+def _load_experience_rules(limit: int = 5) -> list[str]:
+    from agent_reach.daily_run.experience import experience_dir
+
+    path = experience_dir() / "rules_summary.json"
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+    rules = list(data.get("rules") or [])
+    return [str(r) for r in rules[-limit:]]
+
+
+def _events_from_weekly_digest(digest: dict[str, Any]) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    for item in digest.get("hot_sectors") or []:
+        name = item.get("sector") or item.get("name") or "热点板块"
+        chg = item.get("avg_change_pct") or item.get("change_pct")
+        summary = f"周均 {chg:+.1f}%" if chg is not None else str(item.get("summary") or "")
+        events.append({"source": "weekly_digest", "title": name, "summary": summary})
+    for row in digest.get("sector_research") or []:
+        events.append(
+            {
+                "source": "weekly_research",
+                "title": row.get("label") or row.get("sector") or "板块调研",
+                "summary": str(row.get("summary") or "")[:200],
+            }
+        )
+    for skill in digest.get("skill_learning") or []:
+        title = skill.get("title") or skill.get("topic") or "技能学习"
+        events.append(
+            {
+                "source": "skill_learning",
+                "title": title,
+                "summary": str(skill.get("summary") or skill.get("insight") or "")[:160],
+            }
+        )
+    return events
+
+
+def _historical_vol_scale(calibration: dict[str, Any]) -> float:
+    """Blend calibration vol_scale with recent forecast review errors."""
+    base = float(calibration.get("vol_scale") or 1.0)
+    root = forecasts_dir()
+    if not root.exists():
+        return base
+
+    errors: list[float] = []
+    for path in sorted(root.glob("20*.json"))[-4:]:
+        if path.name == "calibration.json":
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        for review in (data.get("reviews") or [])[-5:]:
+            for ev in review.get("symbol_evals") or []:
+                err = ev.get("error_pct")
+                if err is not None:
+                    errors.append(abs(float(err)))
+
+    if not errors:
+        return base
+
+    mean_abs = sum(errors) / len(errors)
+    if mean_abs > 2.5:
+        return min(1.6, base * 1.08)
+    if mean_abs < 0.8:
+        return max(0.6, base * 0.95)
+    return base
+
+
 def build_news_queries(snapshot: dict[str, Any], week_start: date) -> list[dict[str, str]]:
     macro = snapshot.get("macro_summary") or ""
     sector = snapshot.get("industry") or snapshot.get("sector") or "A-share"
@@ -230,7 +303,11 @@ def run_news_research(
 
     def _run_one(q: dict[str, str]) -> dict[str, Any]:
         try:
-            hits = web_search_exa(q["query"], num_results=3, timeout=timeout)
+            from agent_reach.daily_run.exa_cache import cached_web_search_exa
+
+            hits, _cached = cached_web_search_exa(
+                q["query"], num_results=3, timeout=timeout, settings=settings
+            )
             return {**q, "hits": hits, "summary": summarize_hits(hits), "success": True}
         except ExaError as exc:
             return {**q, "hits": [], "summary": str(exc), "success": False}
@@ -285,9 +362,21 @@ def generate_week_forecast(
     week_start, week_end = next_trading_week_range(as_of)
     trading_days = list_trading_days(week_start, week_end, settings=settings)
     calibration = load_calibration()
+    vol_scale = _historical_vol_scale(calibration)
+    calibration = {**calibration, "vol_scale": vol_scale}
     pf = portfolio or (snapshot.get("portfolio") or {})
     enriched = build_enriched_symbols(snapshot)
     notes: list[str] = []
+
+    from agent_reach.daily_run.weekly_digest import load_weekly_digest
+
+    digest = load_weekly_digest()
+    if digest:
+        notes.append(f"复用周六周报 digest（{digest.get('week_end', '')}）")
+
+    experience_rules = _load_experience_rules()
+    if experience_rules:
+        notes.append("经验规则：" + "；".join(experience_rules[:2]))
 
     if not trading_days:
         notes.append("下周无交易日（节假日），预测仅作参考")
@@ -316,6 +405,8 @@ def generate_week_forecast(
     mss_daily = _predict_mss_daily(snapshot, trading_days, settings, calibration)
 
     news_events: list[dict[str, Any]] = []
+    if digest:
+        news_events.extend(_events_from_weekly_digest(digest))
     macro = snapshot.get("macro_summary")
     if macro:
         news_events.append({"source": "macro", "title": "宏观摘要", "summary": macro[:200]})
@@ -326,7 +417,21 @@ def generate_week_forecast(
             )
 
     news_queries = build_news_queries(snapshot, week_start)
-    news_research = run_news_research(news_queries, settings)
+    if digest and cfg.get("reuse_weekly_digest_exa", True) is not False:
+        cached_research = [
+            {
+                "type": "digest",
+                "label": r.get("title") or "周报调研",
+                "summary": r.get("summary") or "",
+                "hits": [],
+                "success": True,
+                "from_digest": True,
+            }
+            for r in (digest.get("sector_research") or [])[:2]
+        ]
+        news_research = cached_research + run_news_research(news_queries[:1], settings)
+    else:
+        news_research = run_news_research(news_queries, settings)
 
     return WeekForecast(
         week_start=week_start,

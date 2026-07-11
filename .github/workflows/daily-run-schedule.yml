@@ -129,9 +129,9 @@ jobs:
         id: daily-run-cache
         with:
           path: ~/.agent-reach/daily_run
-          key: daily-run-state-${{ steps.tz.outputs.date }}-${{ github.run_number }}
+          key: daily-run-state-${{ steps.tz.outputs.date }}
           restore-keys: |
-            daily-run-state-${{ steps.tz.outputs.date }}-
+            daily-run-state-${{ steps.tz.outputs.date }}
             daily-run-state-
 
       - name: Setup Python
@@ -177,7 +177,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ~/.agent-reach/daily_run
-          key: daily-run-state-${{ steps.tz.outputs.date }}-${{ github.run_number }}
+          key: daily-run-state-${{ steps.tz.outputs.date }}
 
       - name: Upload run manifest
         if: steps.resolve.outputs.skip != 'true' && always()

@@ -159,7 +159,11 @@ def run_skill_research(
 
     def _run_one(q: dict[str, str]) -> dict[str, Any]:
         try:
-            hits = web_search_exa(q["query"], num_results=3, timeout=timeout)
+            from agent_reach.daily_run.exa_cache import cached_web_search_exa
+
+            hits, _cached = cached_web_search_exa(
+                q["query"], num_results=3, timeout=timeout, settings=settings
+            )
             return {**q, "hits": hits, "summary": summarize_hits(hits), "success": True}
         except ExaError as exc:
             return {**q, "hits": [], "summary": str(exc), "success": False}
