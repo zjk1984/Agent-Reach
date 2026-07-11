@@ -76,6 +76,7 @@ def generate_close_improvements(
     scans: Optional[list[dict[str, Any]]] = None,
     trades: Optional[list[dict[str, Any]]] = None,
     watchlist_adjust: Optional[dict[str, Any]] = None,
+    forecast_review: Optional[dict[str, Any]] = None,
 ) -> CloseImprovements:
     """Produce actionable improvement notes for next-day tuning."""
     out = CloseImprovements()
@@ -92,6 +93,7 @@ def generate_close_improvements(
     _improve_portfolio(out, current, verify, trades or [], portfolio_cfg, thresholds)
     _improve_watchlist(out, current, watchlist_adjust, watchlist_cfg, portfolio_cfg)
     _improve_schedule(out, scans or [], trades or [], schedule_cfg, settings)
+    _improve_forecast(out, forecast_review, settings)
 
     # Always include a scan summary when we have data (confirms feature ran).
     from agent_reach.daily_run.intraday import MAX_SCANS
@@ -432,6 +434,42 @@ def _improve_schedule(
                 f"盘中 MSS 振幅 {spread:.0f} 分",
                 "波动大但扫描次数未满，可考虑在 10:30/14:00 附近增加 manual intraday 或缩短 cron 间隔",
             )
+
+
+def _improve_forecast(
+    out: CloseImprovements,
+    forecast_review: Optional[dict[str, Any]],
+    settings: dict[str, Any],
+) -> None:
+    if not forecast_review:
+        return
+    wf_cfg = settings.get("week_forecast") or {}
+    if wf_cfg.get("enabled", True) is False:
+        return
+
+    acc = forecast_review.get("accuracy")
+    total = int(forecast_review.get("symbol_total") or 0)
+    if total and acc is not None and float(acc) < 0.45:
+        out.add(
+            "mss",
+            "high",
+            f"下周预测命中率 {float(acc):.0%}（{forecast_review.get('symbol_hits', 0)}/{total}）",
+            "已在 calibration.json 上调 vol_scale / bias；"
+            "若连续 3 日偏低，可增大 week_forecast.calibration_learning_rate",
+        )
+
+    if forecast_review.get("mss_hit") is False:
+        out.add(
+            "mss",
+            "medium",
+            "MSS 日预测未命中",
+            f"预测区间 {forecast_review.get('mss_predicted')} vs 实际 {forecast_review.get('mss_actual')}；"
+            "可增大 mss_forecast.base_spread 或检查 macro 因子滞后",
+        )
+
+    notes = forecast_review.get("optimization_notes") or []
+    for note in notes[:2]:
+        out.add("mss", "low", "预测校准", str(note))
 
 
 def _scan_beijing_time(as_of: Any) -> Optional[str]:

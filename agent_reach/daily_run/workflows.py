@@ -105,6 +105,7 @@ def run_close(
     intraday_trades: Optional[list[dict[str, Any]]] = None,
     watchlist_adjust: Optional[dict[str, Any]] = None,
     code_review: Optional[dict[str, Any]] = None,
+    verify_dict: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Close workflow: Team-First experts → verify baseline vs current → Feishu push."""
     cfg = settings or load_settings()
@@ -113,11 +114,18 @@ def run_close(
 
     enriched = current
     team_md = ""
-    if team_first:
+    if verify_dict is not None:
+        team_md = render_team_markdown(enriched) if enriched.get("team_review") else ""
+    elif team_first:
         enriched = run_team_first(current, cfg, names=plugin_names)
         team_md = render_team_markdown(enriched)
 
-    verify = verify_snapshots(baseline, enriched, cfg)
+    if verify_dict is not None:
+        from agent_reach.daily_run.verify import verify_from_dict
+
+        verify = verify_from_dict(verify_dict)
+    else:
+        verify = verify_snapshots(baseline, enriched, cfg)
     verify_dict = verify.to_dict()
 
     extra_parts: list[str] = []
@@ -138,6 +146,25 @@ def run_close(
     close_imp_cfg = cfg.get("close_improvements") or {}
     improvements_enabled = close_imp_cfg.get("enabled", True) is not False
 
+    forecast_review = None
+    forecast_review_dict = None
+    wf_cfg = cfg.get("week_forecast") or {}
+    if wf_cfg.get("enabled", True) is not False and wf_cfg.get("close_review", True) is not False:
+        from agent_reach.daily_run.week_forecast_tracker import (
+            render_forecast_review_markdown,
+            review_active_forecast,
+        )
+
+        mss_close = enriched.get("mss_final") or verify_dict.get("mss_current")
+        forecast_review = review_active_forecast(
+            enriched, settings=cfg, mss_actual=mss_close
+        )
+        if forecast_review:
+            forecast_review_dict = forecast_review.to_dict()
+            fc_md = render_forecast_review_markdown(forecast_review)
+            if fc_md:
+                extra_parts.append(fc_md)
+
     from concurrent.futures import ThreadPoolExecutor
 
     def _run_improvements():
@@ -150,6 +177,7 @@ def run_close(
             scans=scans,
             trades=intraday_trades or [],
             watchlist_adjust=watchlist_adjust,
+            forecast_review=forecast_review_dict,
         )
 
     with ThreadPoolExecutor(max_workers=2) as pool:
@@ -183,7 +211,12 @@ def run_close(
             extra_parts.append(wl_md)
 
     exp_path = append_experience_entry(
-        enriched, verify_dict, curve=curve, research=research_results, settings=cfg
+        enriched,
+        verify_dict,
+        curve=curve,
+        research=research_results,
+        settings=cfg,
+        forecast_review=forecast_review_dict,
     )
     exp_md = render_experience_markdown(limit=3)
     if exp_md:
@@ -232,6 +265,7 @@ def run_close(
         "experience_path": str(exp_path),
         "improvements": improvements.to_dict(),
         "code_review": code_review,
+        "forecast_review": forecast_review.to_dict() if forecast_review else None,
         "feishu": feishu_result,
     }
 
@@ -273,8 +307,14 @@ def prepare_close_run(
         is_watchlist_adjust_enabled,
     )
 
-    pre_verify = verify_snapshots(baseline, snap, cfg).to_dict()
-    steps.append("pre_verify")
+    close_team = (cfg.get("team") or {}).get("close_team_first", True) is not False
+    if close_team:
+        snap = run_team_first(snap, cfg)
+        steps.append("team_first")
+
+    verify_result = verify_snapshots(baseline, snap, cfg)
+    verify_dict = verify_result.to_dict()
+    steps.append("verify")
 
     wl_result = None
     portfolio_dirty = False
@@ -284,7 +324,7 @@ def prepare_close_run(
             snap,
             cfg,
             "close",
-            verify=pre_verify,
+            verify=verify_dict,
             sold_codes=collect_intraday_sold_codes(cfg),
         )
         if wl_result.applied:
@@ -312,7 +352,8 @@ def prepare_close_run(
     return {
         "snapshot": snap,
         "portfolio": pf_work,
-        "pre_verify": pre_verify,
+        "verify": verify_dict,
+        "pre_verify": verify_dict,
         "watchlist_adjust": wl_result.to_dict() if wl_result else None,
         "code_review": code_review_result.to_dict(),
         "steps": steps,
@@ -360,6 +401,96 @@ def _push_markdown(
     templates = settings.get("report", {})
     tpl = template or templates.get(f"feishu_template_{report_type}", "blue")
     return send_card(cfg_obj, title, markdown, template=tpl)
+
+
+def run_weekly(
+    snapshot: dict[str, Any],
+    *,
+    settings: Optional[dict[str, Any]] = None,
+    push: bool = True,
+    title: Optional[str] = None,
+    config=None,
+    portfolio: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    """Saturday weekly summary: PnL, holdings, watchlist, hot sectors → Feishu."""
+    from agent_reach.daily_run.weekly_report import (
+        generate_weekly_report,
+        render_weekly_markdown,
+        weekly_report_title,
+    )
+
+    cfg = settings or load_settings()
+    weekly_cfg = cfg.get("weekly_report") or {}
+    if weekly_cfg.get("enabled", True) is False:
+        return {"steps": ["skipped"], "message": "weekly_report disabled", "feishu": None}
+
+    steps: list[str] = ["generate"]
+    report = generate_weekly_report(snapshot, cfg, portfolio=portfolio)
+    from agent_reach.daily_run.weekly_digest import save_weekly_digest
+
+    digest_path = save_weekly_digest(report.to_dict())
+    steps.append("digest")
+    md = render_weekly_markdown(report)
+    steps.append("render")
+
+    feishu_result = None
+    if push:
+        card_title = title or weekly_report_title(report)
+        feishu_result = _push_markdown(card_title, md, cfg, config, report_type="weekly")
+        steps.append("push")
+
+    return {
+        "steps": steps,
+        "report": report.to_dict(),
+        "digest_path": str(digest_path),
+        "markdown": md,
+        "feishu": feishu_result,
+    }
+
+
+def run_forecast(
+    snapshot: dict[str, Any],
+    *,
+    settings: Optional[dict[str, Any]] = None,
+    push: bool = True,
+    title: Optional[str] = None,
+    config=None,
+    portfolio: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    """Sunday next-week forecast: daily paths, news, MSS → Feishu."""
+    from agent_reach.daily_run.week_forecast import (
+        forecast_title,
+        generate_week_forecast,
+        persist_week_forecast,
+        render_forecast_markdown,
+    )
+
+    cfg = settings or load_settings()
+    wf_cfg = cfg.get("week_forecast") or {}
+    if wf_cfg.get("enabled", True) is False:
+        return {"steps": ["skipped"], "message": "week_forecast disabled", "feishu": None}
+
+    steps: list[str] = ["generate"]
+    forecast = generate_week_forecast(snapshot, cfg, portfolio=portfolio)
+    path = persist_week_forecast(forecast)
+    steps.append("persist")
+
+    md = render_forecast_markdown(forecast)
+    steps.append("render")
+
+    feishu_result = None
+    if push:
+        card_title = title or forecast_title(forecast)
+        feishu_result = _push_markdown(card_title, md, cfg, config, report_type="forecast")
+        steps.append("push")
+
+    return {
+        "steps": steps,
+        "forecast": forecast.to_dict(),
+        "forecast_path": str(path),
+        "markdown": md,
+        "feishu": feishu_result,
+    }
 
 
 def _send_start_notification(config, settings: dict[str, Any]) -> None:

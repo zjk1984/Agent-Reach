@@ -394,20 +394,32 @@ def run_intraday(
 
     feishu_result = None
     if push:
-        from agent_reach.config import Config
-        from agent_reach.integrations.feishu import send_card
+        from agent_reach.daily_run.intraday_push import should_push_intraday
 
-        cfg_obj = config or Config()
-        tpl = cfg.get("report", {}).get("feishu_template_intraday", "blue")
         scan_id = scan_result["scan"]["scan_id"]
-        name = scan_result["scan"].get("name") or scan_result["scan"].get("code") or "大盘"
-        card_title = title or f"📊 盘中 {scan_id} · {name}"
+        scan_count = len(IntradayState.from_dict(scan_result["state"]).scans)
+        trade_happened = trade_result is not None
+        if should_push_intraday(
+            scan_id,
+            settings=cfg,
+            trade_happened=trade_happened,
+            scan_count=scan_count,
+        ):
+            from agent_reach.config import Config
+            from agent_reach.integrations.feishu import send_card
 
-        md_parts = [scan_result["markdown"]]
-        if trade_result:
-            md_parts.append("\n---\n\n" + trade_result["markdown"])
-        feishu_result = send_card(cfg_obj, card_title, "\n".join(md_parts), template=tpl)
-        steps.append("push")
+            cfg_obj = config or Config()
+            tpl = cfg.get("report", {}).get("feishu_template_intraday", "blue")
+            name = scan_result["scan"].get("name") or scan_result["scan"].get("code") or "大盘"
+            card_title = title or f"📊 盘中 {scan_id} · {name}"
+
+            md_parts = [scan_result["markdown"]]
+            if trade_result:
+                md_parts.append("\n---\n\n" + trade_result["markdown"])
+            feishu_result = send_card(cfg_obj, card_title, "\n".join(md_parts), template=tpl)
+            steps.append("push")
+        else:
+            steps.append("push_skipped")
 
     return {
         "steps": steps,

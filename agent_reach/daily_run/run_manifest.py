@@ -9,6 +9,11 @@ from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
+
+from agent_reach.daily_run.trade_calendar import today_shanghai
+
+_SH_TZ = ZoneInfo("Asia/Shanghai")
 
 try:
     from loguru import logger
@@ -36,6 +41,10 @@ def _json_safe(value: Any) -> Any:
     return value
 
 
+def _manifest_shanghai_now() -> datetime:
+    return datetime.now(_SH_TZ)
+
+
 def save_run_manifest(
     job: str,
     payload: dict[str, Any],
@@ -43,11 +52,12 @@ def save_run_manifest(
     feishu: Optional[dict[str, Any]] = None,
     duration_ms: Optional[float] = None,
 ) -> Path:
-    """Write structured run record under runs/YYYY-MM-DD/."""
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    """Write structured run record under runs/YYYY-MM-DD/ (Asia/Shanghai trading date)."""
+    sh_now = _manifest_shanghai_now()
+    today = today_shanghai().isoformat()
     out_dir = runs_dir() / today
     out_dir.mkdir(parents=True, exist_ok=True)
-    ts = datetime.now(timezone.utc).strftime("%H%M%S")
+    ts = sh_now.strftime("%H%M%S")
     path = out_dir / f"{job}_{ts}.json"
     record = {
         "job": job,

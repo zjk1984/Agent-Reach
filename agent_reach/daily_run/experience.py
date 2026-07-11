@@ -20,6 +20,7 @@ def append_experience_entry(
     curve: Optional[dict[str, Any]] = None,
     research: Optional[list[dict[str, Any]]] = None,
     settings: Optional[dict[str, Any]] = None,
+    forecast_review: Optional[dict[str, Any]] = None,
 ) -> Path:
     """Append one close review atom to experience.jsonl and update rules summary."""
     cfg = (settings or {}).get("experience", {})
@@ -30,7 +31,7 @@ def append_experience_entry(
     out_dir.mkdir(parents=True, exist_ok=True)
     jsonl_path = out_dir / "experience.jsonl"
 
-    rules = _distill_rules(snapshot, verify, curve)
+    rules = _distill_rules(snapshot, verify, curve, forecast_review=forecast_review)
     entry = {
         "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         "at": datetime.now(timezone.utc).isoformat(),
@@ -46,6 +47,15 @@ def append_experience_entry(
         "rules": rules,
         "research_count": len(research or []),
     }
+    if forecast_review:
+        entry["forecast_review"] = {
+            "date": forecast_review.get("date"),
+            "accuracy": forecast_review.get("accuracy"),
+            "symbol_hits": forecast_review.get("symbol_hits"),
+            "symbol_total": forecast_review.get("symbol_total"),
+            "mss_hit": forecast_review.get("mss_hit"),
+            "optimization_notes": forecast_review.get("optimization_notes") or [],
+        }
 
     with open(jsonl_path, "a", encoding="utf-8") as f:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
@@ -86,6 +96,8 @@ def _distill_rules(
     snapshot: dict[str, Any],
     verify: dict[str, Any],
     curve: Optional[dict[str, Any]],
+    *,
+    forecast_review: Optional[dict[str, Any]] = None,
 ) -> list[str]:
     rules: list[str] = []
     vc = verify.get("verdict_current")
@@ -110,6 +122,17 @@ def _distill_rules(
         rules.append(f"偏差：{d}")
     for r in (verify.get("recommendations") or [])[:2]:
         rules.append(f"建议：{r}")
+
+    if forecast_review:
+        acc = forecast_review.get("accuracy")
+        total = forecast_review.get("symbol_total") or 0
+        if total and acc is not None:
+            if float(acc) < 0.4:
+                rules.append(f"下周预测命中率 {float(acc):.0%} 偏低：扩大 change_pct_range 或提高 vol_scale")
+            elif float(acc) >= 0.7:
+                rules.append(f"下周预测命中率 {float(acc):.0%} 良好：维持当前校准参数")
+        if forecast_review.get("mss_hit") is False:
+            rules.append("MSS 日预测未命中：收盘复盘时关注 mss_forecast.base_spread")
 
     return rules[:6]
 

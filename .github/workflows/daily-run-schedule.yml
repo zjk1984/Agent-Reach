@@ -44,10 +44,16 @@ on:
     # 15:30 北京时间 — 收盘复盘 + MSS 曲线 + 验证
     - cron: "30 15 * * 1-5"
       timezone: Asia/Shanghai
+    # 09:00 北京时间 周六 — 周报总结（盈亏、持股、观察池、板块）
+    - cron: "0 9 * * 6"
+      timezone: Asia/Shanghai
+    # 09:00 北京时间 周日 — 下周预测（持股/观察池日走势、热点、MSS）
+    - cron: "0 9 * * 0"
+      timezone: Asia/Shanghai
   workflow_dispatch:
     inputs:
       job:
-        description: "morning | intraday | close"
+        description: "morning | intraday | close | weekly | forecast"
         required: true
         default: intraday
         type: choice
@@ -55,6 +61,8 @@ on:
           - morning
           - intraday
           - close
+          - weekly
+          - forecast
       dry_run:
         description: "Skip Feishu push"
         required: false
@@ -121,9 +129,9 @@ jobs:
         id: daily-run-cache
         with:
           path: ~/.agent-reach/daily_run
-          key: daily-run-state-${{ steps.tz.outputs.date }}-${{ github.run_number }}
+          key: daily-run-state-${{ steps.tz.outputs.date }}
           restore-keys: |
-            daily-run-state-${{ steps.tz.outputs.date }}-
+            daily-run-state-${{ steps.tz.outputs.date }}
             daily-run-state-
 
       - name: Setup Python
@@ -169,7 +177,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ~/.agent-reach/daily_run
-          key: daily-run-state-${{ steps.tz.outputs.date }}-${{ github.run_number }}
+          key: daily-run-state-${{ steps.tz.outputs.date }}
 
       - name: Upload run manifest
         if: steps.resolve.outputs.skip != 'true' && always()
