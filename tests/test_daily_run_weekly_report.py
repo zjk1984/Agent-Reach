@@ -9,6 +9,7 @@ import pytest
 
 from agent_reach.daily_run.weekly_report import (
     _compute_realized_pnl,
+    build_mss_trajectory,
     generate_weekly_report,
     render_weekly_markdown,
     trading_week_range,
@@ -57,6 +58,109 @@ class TestTradingWeekRange:
         mon, end = trading_week_range(fri)
         assert mon == date(2026, 7, 6)
         assert end == date(2026, 7, 10)
+
+
+class TestMssTrajectory:
+    def test_build_mss_trajectory_one_point_per_day(self):
+        manifests = []
+        for day, morning, close in [
+            ("2026-07-08", 48.0, 49.1),
+            ("2026-07-09", 50.0, 51.2),
+            ("2026-07-10", 48.0, 48.9),
+        ]:
+            manifests.append(
+                {
+                    "_run_date": day,
+                    "_path": f"/runs/{day}/morning_080000.json",
+                    "job": "morning",
+                    "payload": {
+                        "result": {
+                            "snapshot": {"mss_final": morning},
+                            "evaluation": {"report": {"mss_final": morning}},
+                        }
+                    },
+                }
+            )
+            for i in range(5):
+                manifests.append(
+                    {
+                        "_run_date": day,
+                        "_path": f"/runs/{day}/morning_{i:06d}.json",
+                        "job": "morning",
+                        "payload": {
+                            "result": {
+                                "snapshot": {"mss_final": morning + i},
+                                "evaluation": {"report": {"mss_final": morning + i}},
+                            }
+                        },
+                    }
+                )
+            manifests.append(
+                {
+                    "_run_date": day,
+                    "_path": f"/runs/{day}/close_153000.json",
+                    "job": "close",
+                    "payload": {
+                        "result": {
+                            "verify": {"mss_current": close},
+                            "snapshot": {"mss_final": close},
+                        }
+                    },
+                }
+            )
+
+        traj = build_mss_trajectory(manifests, date(2026, 7, 6), date(2026, 7, 10))
+        dates = sorted({r["date"] for r in traj})
+        assert dates == ["2026-07-08", "2026-07-09", "2026-07-10"]
+        assert len(traj) == 6  # morning + close per day
+
+    @patch("agent_reach.daily_run.weekly_report._load_week_manifests")
+    @patch("agent_reach.daily_run.weekly_report._load_trade_ledger_range", return_value=[])
+    @patch("agent_reach.daily_run.weekly_report.run_sector_research", return_value=[])
+    def test_weekly_markdown_shows_all_days(self, mock_exa, mock_ledger, mock_manifests, snapshot, portfolio):
+        mock_manifests.return_value = [
+            {
+                "_run_date": "2026-07-08",
+                "_path": "/r/2026-07-08/morning.json",
+                "job": "morning",
+                "payload": {"result": {"snapshot": {"mss_final": 48.0}}},
+            },
+            {
+                "_run_date": "2026-07-08",
+                "_path": "/r/2026-07-08/close.json",
+                "job": "close",
+                "payload": {"result": {"verify": {"mss_current": 49.1}}},
+            },
+            {
+                "_run_date": "2026-07-10",
+                "_path": "/r/2026-07-10/morning.json",
+                "job": "morning",
+                "payload": {"result": {"snapshot": {"mss_final": 50.0}}},
+            },
+            {
+                "_run_date": "2026-07-10",
+                "_path": "/r/2026-07-10/close.json",
+                "job": "close",
+                "payload": {"result": {"verify": {"mss_current": 48.9}}},
+            },
+        ]
+        report = generate_weekly_report(
+            snapshot,
+            {
+                "weekly_report": {
+                    "exa_sector_research": False,
+                    "skill_learning": False,
+                    "process_improvements": False,
+                }
+            },
+            as_of=date(2026, 7, 11),
+            portfolio=portfolio,
+        )
+        md = render_weekly_markdown(report)
+        assert "07-08" in md
+        assert "07-10" in md
+        assert md.count("07-10") >= 1
+        assert "07-08" in md
 
 
 class TestWeeklyReport:
