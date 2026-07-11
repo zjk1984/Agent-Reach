@@ -105,6 +105,7 @@ def run_close(
     intraday_trades: Optional[list[dict[str, Any]]] = None,
     watchlist_adjust: Optional[dict[str, Any]] = None,
     code_review: Optional[dict[str, Any]] = None,
+    verify_dict: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Close workflow: Team-First experts → verify baseline vs current → Feishu push."""
     cfg = settings or load_settings()
@@ -113,11 +114,18 @@ def run_close(
 
     enriched = current
     team_md = ""
-    if team_first:
+    if verify_dict is not None:
+        team_md = render_team_markdown(enriched) if enriched.get("team_review") else ""
+    elif team_first:
         enriched = run_team_first(current, cfg, names=plugin_names)
         team_md = render_team_markdown(enriched)
 
-    verify = verify_snapshots(baseline, enriched, cfg)
+    if verify_dict is not None:
+        from agent_reach.daily_run.verify import verify_from_dict
+
+        verify = verify_from_dict(verify_dict)
+    else:
+        verify = verify_snapshots(baseline, enriched, cfg)
     verify_dict = verify.to_dict()
 
     extra_parts: list[str] = []
@@ -290,8 +298,14 @@ def prepare_close_run(
         is_watchlist_adjust_enabled,
     )
 
-    pre_verify = verify_snapshots(baseline, snap, cfg).to_dict()
-    steps.append("pre_verify")
+    close_team = (cfg.get("team") or {}).get("close_team_first", True) is not False
+    if close_team:
+        snap = run_team_first(snap, cfg)
+        steps.append("team_first")
+
+    verify_result = verify_snapshots(baseline, snap, cfg)
+    verify_dict = verify_result.to_dict()
+    steps.append("verify")
 
     wl_result = None
     portfolio_dirty = False
@@ -301,7 +315,7 @@ def prepare_close_run(
             snap,
             cfg,
             "close",
-            verify=pre_verify,
+            verify=verify_dict,
             sold_codes=collect_intraday_sold_codes(cfg),
         )
         if wl_result.applied:
@@ -329,7 +343,8 @@ def prepare_close_run(
     return {
         "snapshot": snap,
         "portfolio": pf_work,
-        "pre_verify": pre_verify,
+        "verify": verify_dict,
+        "pre_verify": verify_dict,
         "watchlist_adjust": wl_result.to_dict() if wl_result else None,
         "code_review": code_review_result.to_dict(),
         "steps": steps,

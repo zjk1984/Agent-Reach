@@ -156,6 +156,65 @@ class TestWeeklyReport:
         assert report.end_total == 100500
         assert report.weekly_pnl == 2500
 
+    @patch("agent_reach.daily_run.weekly_report.run_sector_research", return_value=[])
+    @patch("agent_reach.daily_run.weekly_report._load_trade_ledger_range", return_value=[])
+    def test_week_start_prices_from_morning_manifest(
+        self, mock_ledger, mock_exa, snapshot, portfolio, tmp_path, monkeypatch
+    ):
+        from agent_reach.daily_run.weekly_report import (
+            _week_start_prices_from_manifests,
+            generate_weekly_report,
+        )
+
+        monkeypatch.setattr(
+            "agent_reach.daily_run.weekly_report.runs_dir",
+            lambda: tmp_path,
+        )
+        day_dir = tmp_path / "2026-07-06"
+        day_dir.mkdir()
+        morning_manifest = {
+            "job": "morning",
+            "payload": {
+                "result": {
+                    "snapshot": {
+                        "code": "688008",
+                        "price": 250.0,
+                        "portfolio": portfolio,
+                        "holdings": portfolio["holdings"],
+                        "watchlist": portfolio["watchlist"],
+                    }
+                }
+            },
+        }
+        (day_dir / "morning_080000.json").write_text("{}", encoding="utf-8")
+
+        with patch(
+            "agent_reach.daily_run.weekly_report._load_manifest",
+            return_value=morning_manifest,
+        ):
+            prices = _week_start_prices_from_manifests(
+                [{"job": "morning", "_run_date": "2026-07-06", **morning_manifest}],
+                date(2026, 7, 6),
+            )
+        assert prices.get("688008") == 250.0
+
+        with patch("agent_reach.daily_run.weekly_report._load_week_manifests") as mock_m:
+            mock_m.return_value = [
+                {"job": "morning", "_run_date": "2026-07-06", **morning_manifest}
+            ]
+            with patch(
+                "agent_reach.daily_run.weekly_report._load_manifest",
+                return_value=morning_manifest,
+            ):
+                report = generate_weekly_report(
+                    snapshot,
+                    {"weekly_report": {"exa_sector_research": False}},
+                    as_of=date(2026, 7, 11),
+                    portfolio=portfolio,
+                )
+        holding = report.holdings[0]
+        assert holding.get("week_chg_pct") is not None
+
 
 class TestScheduleWeekly:
     @patch("agent_reach.daily_run.workflows.run_weekly")

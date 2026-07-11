@@ -342,6 +342,7 @@ def run_scheduled(
                 intraday_trades=state.trades,
                 watchlist_adjust=wl_result_dict,
                 code_review=code_review_dict,
+                verify_dict=prepared.get("verify"),
             )
             run_result["code_review"] = code_review_dict
             run_result["prepare_steps"] = prepared["steps"]

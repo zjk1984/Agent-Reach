@@ -119,6 +119,52 @@ def _portfolio_total_from_manifest(record: dict[str, Any]) -> Optional[float]:
     return None
 
 
+def _snapshot_from_manifest(record: dict[str, Any]) -> Optional[dict[str, Any]]:
+    payload = record.get("payload") or {}
+    result = payload.get("result") or {}
+    snap = result.get("snapshot")
+    if isinstance(snap, dict):
+        return snap
+    return None
+
+
+def _prices_from_snapshot(snap: dict[str, Any]) -> dict[str, float]:
+    enriched = build_enriched_symbols(snap)
+    prices: dict[str, float] = {}
+    for code, row in enriched.items():
+        for key in ("price", "cost"):
+            val = row.get(key)
+            if val is not None:
+                prices[code] = float(val)
+                break
+    return prices
+
+
+def _week_start_prices_from_manifests(
+    manifests: list[dict[str, Any]],
+    week_start: date,
+) -> dict[str, float]:
+    """First morning snapshot prices on/after week_start (Mon open baseline)."""
+    morning = sorted(
+        [m for m in manifests if m.get("job") == "morning"],
+        key=lambda m: str(m.get("_run_date") or ""),
+    )
+    ws = week_start.isoformat()
+    for record in morning:
+        day = str(record.get("_run_date") or "")
+        if day and day >= ws:
+            snap = _snapshot_from_manifest(record)
+            if snap:
+                prices = _prices_from_snapshot(snap)
+                if prices:
+                    return prices
+    if morning:
+        snap = _snapshot_from_manifest(morning[0])
+        if snap:
+            return _prices_from_snapshot(snap)
+    return {}
+
+
 def _mss_from_manifest(record: dict[str, Any]) -> Optional[float]:
     payload = record.get("payload") or {}
     result = payload.get("result") or {}
@@ -377,7 +423,6 @@ def generate_weekly_report(
 
     start_total: Optional[float] = None
     end_total: Optional[float] = None
-    week_start_prices: dict[str, float] = {}
     mss_summary: list[dict[str, Any]] = []
     notes: list[str] = []
 
@@ -414,6 +459,10 @@ def generate_weekly_report(
         weekly_pnl = round(end_total - start_total, 2)
         if start_total:
             weekly_pnl_pct = round(weekly_pnl / start_total * 100, 2)
+
+    week_start_prices = _week_start_prices_from_manifests(manifests, week_start)
+    if not week_start_prices and morning_totals:
+        notes.append("本周无早盘报价 manifest，持股周涨跌仅显示当日数据")
 
     holdings = _holding_pnl_rows(pf, enriched, week_start_prices)
     watchlist = _watchlist_rows(pf, enriched)

@@ -1606,6 +1606,7 @@ def _cmd_daily_run(args):
             intraday_trades=state.trades,
             watchlist_adjust=prepared["watchlist_adjust"],
             code_review=prepared["code_review"],
+            verify_dict=prepared.get("verify"),
         )
         result["code_review"] = prepared["code_review"]
         result["watchlist_adjust"] = prepared["watchlist_adjust"]

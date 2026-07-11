@@ -179,10 +179,11 @@ class TestSchedule:
         mock_prepare_close.return_value = {
             "snapshot": snap,
             "portfolio": portfolio,
-            "pre_verify": {"verdict_current": "观察"},
+            "verify": {"verdict_current": "观察", "summary": "ok"},
+            "pre_verify": {"verdict_current": "观察", "summary": "ok"},
             "watchlist_adjust": {"applied": False, "message": "观察池无变更", "changes": []},
             "code_review": {"findings": [], "fixes_applied": [], "portfolio_changed": False},
-            "steps": ["pre_verify", "code_review"],
+            "steps": ["team_first", "verify", "code_review"],
         }
         mock_run_close.return_value = {"verify": {}, "markdown": "close"}
 
@@ -194,7 +195,7 @@ class TestSchedule:
         mock_run_close.assert_called_once()
         assert snap.get("intraday_scans")
         assert result["result"]["code_review"] is not None
-        assert result["result"]["prepare_steps"] == ["pre_verify", "code_review"]
+        assert result["result"]["prepare_steps"] == ["team_first", "verify", "code_review"]
 
 
 class TestRunManifest:
@@ -215,3 +216,27 @@ class TestRunManifest:
         data = json.loads(path.read_text(encoding="utf-8"))
         assert data["payload"]["evaluation"]["audit"]["passed"] is True
         assert data["payload"]["evaluation"]["audit"]["warnings"] == ["warn"]
+
+    def test_save_run_manifest_uses_shanghai_date_dir(self, tmp_path, monkeypatch):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        from agent_reach.daily_run.run_manifest import save_run_manifest
+
+        monkeypatch.setattr(
+            "agent_reach.daily_run.run_manifest.runs_dir",
+            lambda: tmp_path,
+        )
+        sh = ZoneInfo("Asia/Shanghai")
+        fake_now = datetime(2026, 7, 11, 7, 30, 0, tzinfo=sh)
+        monkeypatch.setattr(
+            "agent_reach.daily_run.run_manifest._manifest_shanghai_now",
+            lambda: fake_now,
+        )
+        monkeypatch.setattr(
+            "agent_reach.daily_run.run_manifest.today_shanghai",
+            lambda: fake_now.date(),
+        )
+        path = save_run_manifest("morning", {"job": "morning"})
+        assert path.parent.name == "2026-07-11"
+        assert path.name.startswith("morning_0730")
