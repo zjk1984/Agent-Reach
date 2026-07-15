@@ -308,6 +308,14 @@ def run_intraday(
         card_title = title or f"📊 盘中 {scan_id} · {name}"
 
         md_parts = [scan_result["markdown"]]
+        audit = (scan_result.get("evaluation") or {}).get("audit")
+        if audit and (audit.warnings or not audit.passed):
+            warn_lines = ["**⚠️ 数据审计提示**"]
+            if not audit.passed:
+                warn_lines.append("；".join(audit.issues))
+            for w in audit.warnings:
+                warn_lines.append(f"- {w}")
+            md_parts.insert(0, "\n".join(warn_lines) + "\n\n---\n\n")
         if trade_result:
             md_parts.append("\n---\n\n" + trade_result["markdown"])
         try:

@@ -146,6 +146,11 @@ def push_report_sections(
 
     interval = float(cfg.get("split_push_interval_seconds", 0.3))
     split_tables = cfg.get("feishu_split_tables", True) is not False
+    feishu_cfg = cfg.get("feishu") or {}
+    max_retries = int(feishu_cfg.get("send_max_retries", 3))
+    backoff_raw = feishu_cfg.get("send_backoff_seconds") or [1, 2, 4]
+    backoff = tuple(float(x) for x in backoff_raw)
+    fallback_plaintext = feishu_cfg.get("fallback_plaintext_on_card_error", True) is not False
 
     def _send(title: str, markdown: str, tpl: str) -> dict[str, Any]:
         return send_card(
@@ -155,6 +160,9 @@ def push_report_sections(
             template=tpl,
             split_tables=split_tables,
             interval_seconds=interval if split_tables else 0.0,
+            max_retries=max_retries,
+            backoff=backoff,
+            fallback_plaintext=fallback_plaintext,
         )
 
     if not split or len(bodies) == 1:

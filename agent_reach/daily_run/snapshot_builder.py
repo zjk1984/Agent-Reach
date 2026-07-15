@@ -57,49 +57,12 @@ def _normalize_code(code: str) -> str:
     return code.zfill(6)[-6:] if str(code).isdigit() else str(code)
 
 
-def fetch_quotes_map(codes: list[str], config=None) -> dict[str, dict[str, Any]]:
-    """Batch fetch quotes for multiple codes (xueqiu per-symbol + AKShare batch fallback)."""
-    unique = list(dict.fromkeys(_normalize_code(c) for c in codes if c))
-    result: dict[str, dict[str, Any]] = {}
+def fetch_quotes_map(codes: list[str], config=None, *, settings=None) -> dict[str, dict[str, Any]]:
+    """Batch fetch quotes for multiple codes (multi-source + retry)."""
+    from agent_reach.daily_run.quote_fetch import fetch_quotes_map as _fetch
 
-    # Xueqiu per symbol (lightweight)
-    try:
-        from agent_reach.channels import xueqiu as xq_mod
-
-        xq_mod._ensure_cookies()
-        channel = xq_mod.XueqiuChannel()
-        for code in unique:
-            try:
-                q = channel.get_stock_quote(code_to_xueqiu_symbol(code))
-                price = q.get("current")
-                if price is None:
-                    continue
-                result[code] = {
-                    "code": code,
-                    "name": q.get("name", code),
-                    "price": float(price),
-                    "change_pct": float(q.get("percent") or 0),
-                    "reference_price": float(q.get("last_close") or price),
-                    "source": "xueqiu",
-                }
-            except Exception:
-                continue
-    except Exception:
-        pass
-
-    missing = [c for c in unique if c not in result]
-    if missing:
-        try:
-            from agent_reach.daily_run.akshare_adapter import fetch_quotes_batch
-
-            batch = fetch_quotes_batch(missing)
-            for code in missing:
-                if code in batch:
-                    result[code] = batch[code]
-        except Exception:
-            pass
-
-    return result
+    result = _fetch(codes, config=config, settings=settings)
+    return result.quotes
 
 
 def _attach_technicals(quote: dict[str, Any], code: str) -> dict[str, Any]:
@@ -170,12 +133,28 @@ def build_snapshot(
     primary_vol = None
     quote_summary_parts: list[str] = []
     has_cost_fallback = False
+    snapshot_quote_meta: dict[str, Any] = {}
 
     if enrich:
         all_codes = [code_norm] + [
             _normalize_code(str(h.get("code", ""))) for h in holdings
         ] + [_normalize_code(str(w.get("code", ""))) for w in watchlist]
-        quote_map = fetch_quotes_map(all_codes, config)
+        from agent_reach.daily_run.quote_fetch import fetch_quotes_map as _fetch_quotes
+
+        fetch_result = _fetch_quotes(all_codes, config, settings=cfg)
+        quote_map = fetch_result.quotes
+        coverage = fetch_result.coverage_for(all_codes)
+        if fetch_result.errors:
+            snapshot_quote_meta: dict[str, Any] = {
+                "coverage_pct": round(coverage * 100, 1),
+                "errors": fetch_result.errors,
+                "sources_used": fetch_result.sources_used,
+            }
+        else:
+            snapshot_quote_meta = {
+                "coverage_pct": round(coverage * 100, 1),
+                "sources_used": fetch_result.sources_used,
+            }
 
         if code_norm in quote_map:
             primary_quote = _attach_technicals(quote_map[code_norm], code_norm)
@@ -231,6 +210,7 @@ def build_snapshot(
         "portfolio": portfolio_block,
         "watchlist": watchlist,
         "has_cost_fallback": has_cost_fallback,
+        "quote_fetch": snapshot_quote_meta,
     }
 
     if primary_price is not None:

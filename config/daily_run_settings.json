@@ -53,7 +53,22 @@
     "required_source_categories": ["quote", "flow", "sentiment"],
     "block_on_audit_fail": true,
     "block_on_price_deviation": true,
+    "close_block_on_audit_fail": true,
+    "intraday_block_on_audit_fail": false,
+    "min_quote_coverage_pct": 80,
+    "quote_coverage_mode": "block",
     "required_doctor_channels": ["web", "xueqiu"]
+  },
+
+  "quote_fetch": {
+    "sources": ["xueqiu", "akshare"],
+    "max_retries": 2
+  },
+
+  "feishu": {
+    "send_max_retries": 3,
+    "send_backoff_seconds": [1, 2, 4],
+    "fallback_plaintext_on_card_error": true
   },
 
   "verdict_labels": {
@@ -154,7 +169,8 @@
     "intraday_trade_enabled": true,
     "trade_min_scans": 3,
     "trade_every_n_scans": 2,
-    "morning_doctor": true
+    "morning_doctor": true,
+    "alert_after_consecutive_failures": 3
   },
 
   "trade_calendar": {

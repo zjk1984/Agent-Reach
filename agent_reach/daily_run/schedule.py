@@ -8,7 +8,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from agent_reach.daily_run.run_manifest import StepTimer, save_run_manifest
 
@@ -146,8 +146,6 @@ def run_scheduled(
     """Execute morning | intraday | close with auto snapshot + doctor + manifest."""
     from agent_reach.config import Config
     from agent_reach.daily_run.settings import load_settings
-    from agent_reach.daily_run.snapshot_builder import build_and_save, load_portfolio, save_portfolio
-    from agent_reach.daily_run.workflows import load_morning_baseline, run_close, run_morning
 
     cfg_obj = config or Config()
     settings = load_settings()
@@ -161,7 +159,50 @@ def run_scheduled(
         save_run_manifest(job, result, duration_ms=0)
         return result
 
+    from agent_reach.daily_run.job_health import (
+        maybe_alert_consecutive_failures,
+        record_job_outcome,
+    )
+
     doctor = _doctor_channels(cfg_obj)
+
+    try:
+        result, feishu = _run_job_body(
+            job,
+            push=push,
+            config=cfg_obj,
+            settings=settings,
+            doctor=doctor,
+            t0=t0,
+        )
+        record_job_outcome(job, success=True)
+    except Exception as exc:
+        job_error = str(exc)
+        streak = record_job_outcome(job, success=False, error=job_error)
+        maybe_alert_consecutive_failures(job, settings=settings, config=cfg_obj)
+        duration_ms = (time.perf_counter() - t0) * 1000
+        fail_payload = {"job": job, "error": job_error, "consecutive_failures": streak}
+        save_run_manifest(job, fail_payload, duration_ms=duration_ms)
+        raise
+
+    duration_ms = (time.perf_counter() - t0) * 1000
+    manifest_path = save_run_manifest(job, result, feishu=feishu, duration_ms=duration_ms)
+    result["manifest_path"] = str(manifest_path)
+    return result
+
+
+def _run_job_body(
+    job: str,
+    *,
+    push: bool,
+    config,
+    settings: dict,
+    doctor: dict,
+    t0: float,
+) -> tuple[dict, Any]:
+    """Execute morning/intraday/close; returns (result, feishu)."""
+    from agent_reach.daily_run.snapshot_builder import build_and_save, load_portfolio, save_portfolio
+    from agent_reach.daily_run.workflows import load_morning_baseline, run_close, run_morning
 
     try:
         load_portfolio()
@@ -177,14 +218,14 @@ def run_scheduled(
 
     if job == "morning":
         with StepTimer("schedule.morning"):
-            snap, path = build_and_save(report_type="premarket", config=cfg_obj)
+            snap, path = build_and_save(report_type="premarket", config=config)
             run_result = run_morning(
                 snap,
                 settings=settings,
                 doctor_channels=doctor,
                 push=push,
                 start_notify=push,
-                config=cfg_obj,
+                config=config,
             )
             from agent_reach.daily_run.workflows import save_morning_baseline
 
@@ -199,8 +240,9 @@ def run_scheduled(
             state = load_state()
             if len(state.scans) >= 10:
                 result = {"job": job, "skipped": True, "reason": "今日扫描已达 10 次上限"}
+                feishu = None
             else:
-                snap, path = build_and_save(report_type="intraday", config=cfg_obj)
+                snap, path = build_and_save(report_type="intraday", config=config)
                 do_trade = should_evaluate_trade(state, settings)
                 run_result = run_intraday(
                     snap,
@@ -208,7 +250,7 @@ def run_scheduled(
                     doctor_channels=doctor,
                     push=push,
                     trade=do_trade,
-                    config=cfg_obj,
+                    config=config,
                 )
                 result = {
                     "job": job,
@@ -226,7 +268,7 @@ def run_scheduled(
         from agent_reach.daily_run.intraday import load_state
 
         with StepTimer("schedule.close"):
-            snap, path = build_and_save(report_type="close", config=cfg_obj)
+            snap, path = build_and_save(report_type="close", config=config)
             state = load_state()
             if state.scans:
                 snap["intraday_scans"] = state.scans
@@ -239,7 +281,7 @@ def run_scheduled(
                     from agent_reach.integrations.feishu import send_card
 
                     send_card(
-                        cfg_obj,
+                        config,
                         "⚠️ 收盘复盘缺少早盘基线",
                         f"未找到 `last_morning.json`：{exc}\n\n请先运行 `daily-run morning --save-baseline`",
                         template="red",
@@ -251,14 +293,11 @@ def run_scheduled(
                 baseline,
                 settings=settings,
                 push=push,
-                config=cfg_obj,
+                config=config,
             )
             result = {"job": job, "snapshot_path": str(path), "result": run_result}
             feishu = run_result.get("feishu")
     else:
         raise ValueError(f"未知定时任务：{job}，可选 morning | intraday | close")
 
-    duration_ms = (time.perf_counter() - t0) * 1000
-    manifest_path = save_run_manifest(job, result, feishu=feishu, duration_ms=duration_ms)
-    result["manifest_path"] = str(manifest_path)
-    return result
+    return result, feishu

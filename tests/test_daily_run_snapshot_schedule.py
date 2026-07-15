@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
+from agent_reach.daily_run.quote_fetch import QuoteFetchResult
 from agent_reach.daily_run.schedule import default_entries, render_crontab_block
 from agent_reach.daily_run.snapshot_builder import (
     build_snapshot,
@@ -39,7 +40,7 @@ class TestSnapshotBuilder:
         assert code_to_xueqiu_symbol("002273") == "SZ002273"
 
     @patch("agent_reach.daily_run.snapshot_builder.collect_macro_context")
-    @patch("agent_reach.daily_run.snapshot_builder.fetch_quotes_map")
+    @patch("agent_reach.daily_run.quote_fetch.fetch_quotes_map")
     def test_build_snapshot_enriched(self, mock_fetch, mock_macro, portfolio):
         mock_macro.return_value = {
             "mss_breakdown": {"fx": 40, "flow": 50, "global": 45, "sentiment": 48},
@@ -49,15 +50,18 @@ class TestSnapshotBuilder:
             },
             "macro_summary": "live macro",
         }
-        mock_fetch.return_value = {
-            "688008": {
-                "code": "688008",
-                "name": "澜起科技",
-                "price": 260.0,
-                "change_pct": 1.5,
-                "source": "xueqiu",
-            }
-        }
+        mock_fetch.return_value = QuoteFetchResult(
+            quotes={
+                "688008": {
+                    "code": "688008",
+                    "name": "澜起科技",
+                    "price": 260.0,
+                    "change_pct": 1.5,
+                    "source": "xueqiu",
+                }
+            },
+            sources_used=["xueqiu"],
+        )
         with patch("agent_reach.daily_run.snapshot_builder._attach_technicals") as mock_tech:
             mock_tech.return_value = {
                 "code": "688008",
@@ -72,6 +76,7 @@ class TestSnapshotBuilder:
             snap = build_snapshot(portfolio, enrich=True)
         assert snap["code"] == "688008"
         assert snap["price"] == 260.0
+        assert snap["quote_fetch"]["coverage_pct"] == 33.3
         assert snap["sources"]["flow"]["summary"] != "待更新"
 
     def test_build_snapshot_no_enrich(self, portfolio):

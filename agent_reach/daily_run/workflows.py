@@ -167,12 +167,30 @@ def run_close(
     exp_md = render_experience_markdown(limit=3) or ""
 
     verify_md = render_verify_markdown(verify)
+
+    from agent_reach.daily_run.auditor import run_data_audit
+
+    audit = run_data_audit(enriched, cfg)
+    audit_lines: list[str] = []
+    if not audit.passed:
+        audit_lines.append(f"**数据审计未通过：** {'；'.join(audit.issues)}")
+    if audit.warnings:
+        audit_lines.append("**审计警告：**")
+        audit_lines.extend(f"- {w}" for w in audit.warnings)
+    if audit_lines:
+        audit_block = "\n".join(audit_lines)
+        verify_md = audit_block + ("\n\n---\n\n" + verify_md if verify_md else "")
+
     md = "\n\n---\n\n".join(
         p for p in [team_md, curve_md, research_md, exp_md, verify_md] if p
     )
 
     feishu_result = None
     if push:
+        audit_cfg = cfg.get("data_audit", {})
+        if not audit.passed and audit_cfg.get("close_block_on_audit_fail", True):
+            raise RuntimeError(f"收盘数据审计未通过：{audit.summary()}")
+
         from agent_reach.config import Config
 
         cfg_obj = config or Config()
@@ -202,6 +220,11 @@ def run_close(
         "research": research_results,
         "experience_path": str(exp_path),
         "feishu": feishu_result,
+        "audit": {
+            "passed": audit.passed,
+            "issues": audit.issues,
+            "warnings": audit.warnings,
+        },
     }
 
 
