@@ -223,7 +223,7 @@ def main():
     p_dr_sched.add_argument(
         "--job",
         default="",
-        choices=["morning", "intraday", "close", "weekly"],
+        choices=["morning", "intraday", "close", "weekly", "forecast"],
         help="Job for schedule run (alternative to positional job_name)",
     )
     p_dr_sched.add_argument("--dry-run", action="store_true",
@@ -1767,8 +1767,8 @@ def _cmd_daily_run(args):
 
         if args.schedule_action == "run":
             job = args.job or args.job_name or "intraday"
-            if job not in ("morning", "intraday", "close", "weekly"):
-                print("❌ job must be morning, intraday, close, or weekly")
+            if job not in ("morning", "intraday", "close", "weekly", "forecast"):
+                print("❌ job must be morning, intraday, close, weekly, or forecast")
                 sys.exit(1)
             try:
                 result = run_scheduled(job, push=not args.dry_run, config=Config())
@@ -1794,6 +1794,12 @@ def _cmd_daily_run(args):
                 wr = job_result.get("report") or {}
                 pnl = wr.get("weekly_pnl")
                 print(f"   weekly_pnl={pnl} holdings={len(wr.get('holdings') or [])}")
+            elif job == "forecast":
+                fc = job_result.get("forecast") or {}
+                print(
+                    f"   week={fc.get('week_start')}–{fc.get('week_end')} "
+                    f"symbols={len(fc.get('symbols') or {})}"
+                )
             if not args.dry_run:
                 if result.get("push_error") or (job_result.get("push_error")):
                     print("   ⚠️ 扫描/复盘已完成，飞书推送未成功")
@@ -1801,7 +1807,7 @@ def _cmd_daily_run(args):
                     print("   Feishu push sent")
             return
 
-        print("Usage: agent-reach daily-run schedule {print|install|run} [--job morning|intraday|close|weekly]")
+        print("Usage: agent-reach daily-run schedule {print|install|run} [--job morning|intraday|close|weekly|forecast]")
         sys.exit(1)
 
     if args.daily_action not in ("evaluate", "push"):

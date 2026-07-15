@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 import pytest
 
 from agent_reach.daily_run.auditor import run_data_audit
-from agent_reach.daily_run.job_health import health_path, record_job_outcome
+from agent_reach.daily_run.job_health import record_job_outcome
 from agent_reach.daily_run.quote_fetch import QuoteFetchResult, normalize_code
 from agent_reach.daily_run.retry_utils import retry_with_backoff
 from agent_reach.daily_run.settings import load_settings, validate_settings

@@ -90,7 +90,9 @@
     "feishu_template_close": "purple",
     "feishu_template_verify": "purple",
     "feishu_template_weekly": "blue",
-    "weekly_split_push": true
+    "feishu_template_forecast": "blue",
+    "weekly_split_push": true,
+    "forecast_split_push": true
   },
 
   "weekly_report": {
@@ -99,6 +101,26 @@
     "exa_sector_research": true,
     "max_sector_queries": 3,
     "skill_learning": false
+  },
+
+  "week_forecast": {
+    "enabled": true,
+    "split_push": true,
+    "exa_news_research": true,
+    "max_news_queries": 2,
+    "close_review": true,
+    "reuse_weekly_digest_exa": true,
+    "calibration_learning_rate": 0.15,
+    "max_bias_pct": 3.0,
+    "min_vol_scale": 0.6,
+    "max_vol_scale": 1.6
+  },
+
+  "findskills": {
+    "enabled": true,
+    "result_limit": 3,
+    "timeout": 45,
+    "max_queries": 2
   },
 
   "akshare": {

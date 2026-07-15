@@ -75,7 +75,7 @@ class TestScheduleEntries:
         assert len(INTRADAY_SCAN_TIMES) == 10
 
     def test_default_entries_count(self):
-        assert len(default_entries()) == 13  # morning + 10 scans + close + weekly
+        assert len(default_entries()) == 14  # morning + 10 scans + close + weekly + forecast
 
 
 class TestMacroCollector:

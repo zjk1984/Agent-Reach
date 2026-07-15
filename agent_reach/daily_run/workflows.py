@@ -348,3 +348,67 @@ def run_weekly(
         "markdown": md,
         "feishu": feishu_result,
     }
+
+
+def run_forecast(
+    snapshot: dict[str, Any],
+    *,
+    settings: Optional[dict[str, Any]] = None,
+    push: bool = True,
+    title: Optional[str] = None,
+    config=None,
+    portfolio: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    """Sunday next-week forecast: MSS paths, symbols, news → Feishu."""
+    from agent_reach.daily_run.week_forecast import (
+        forecast_title,
+        generate_week_forecast,
+        persist_week_forecast,
+        render_forecast_markdown,
+    )
+
+    cfg = settings or load_settings()
+    wf_cfg = cfg.get("week_forecast") or {}
+    if wf_cfg.get("enabled", True) is False:
+        return {"steps": ["skipped"], "message": "week_forecast disabled", "feishu": None}
+
+    steps: list[str] = ["generate"]
+    forecast = generate_week_forecast(snapshot, cfg, portfolio=portfolio)
+    path = persist_week_forecast(forecast)
+    steps.append("persist")
+
+    md = render_forecast_markdown(forecast)
+    steps.append("render")
+
+    feishu_result = None
+    if push:
+        from agent_reach.config import Config
+
+        from agent_reach.daily_run.report_push import (
+            push_report_sections,
+            render_forecast_push_sections,
+            split_push_enabled,
+        )
+
+        cfg_obj = config or Config()
+        sections = render_forecast_push_sections(forecast)
+        feishu_result = push_report_sections(
+            sections,
+            settings=cfg,
+            config=cfg_obj,
+            report_type="forecast",
+            fallback_title=title or forecast_title(forecast),
+            template=cfg.get("report", {}).get("feishu_template_forecast", "blue"),
+            split=split_push_enabled(cfg, report_kind="forecast"),
+        )
+        steps.append("push")
+        if feishu_result.get("mode") == "split":
+            steps.append(f"push_split_{feishu_result.get('count', 0)}")
+
+    return {
+        "steps": steps,
+        "forecast": forecast.to_dict(),
+        "forecast_path": str(path),
+        "markdown": md,
+        "feishu": feishu_result,
+    }

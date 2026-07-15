@@ -27,6 +27,9 @@ _CATEGORY_LABELS: dict[str, str] = {
     "weekly_market": "板块·热点",
     "weekly_track": "MSS·经验",
     "weekly_insights": "学习·改进",
+    "forecast_mss": "MSS预测",
+    "forecast_symbols": "个股路径",
+    "forecast_news": "新闻热点",
 }
 
 
@@ -40,8 +43,10 @@ def section_title(
     extra: str = "",
 ) -> str:
     """Numbered section title (aligned with weekly report split push)."""
-    kind_icon = {"morning": "🌅", "close": "🧠"}.get(report_kind, "📋")
-    kind_label = {"morning": "早盘", "close": "收盘"}.get(report_kind, report_kind)
+    kind_icon = {"morning": "🌅", "close": "🧠", "forecast": "🔮"}.get(report_kind, "📋")
+    kind_label = {"morning": "早盘", "close": "收盘", "forecast": "下周预测"}.get(
+        report_kind, report_kind
+    )
     label = _CATEGORY_LABELS.get(category, category)
     title = f"{kind_icon} {kind_label} {index}/{total} · {label} · {name}"
     if extra:
@@ -54,7 +59,7 @@ def _report_cfg(settings: dict[str, Any]) -> dict[str, Any]:
 
 
 def split_push_enabled(settings: dict[str, Any], *, report_kind: str) -> bool:
-    """report_kind: morning | close | weekly"""
+    """report_kind: morning | close | weekly | forecast"""
     cfg = _report_cfg(settings)
     if cfg.get("split_push", True) is False:
         return False
@@ -65,6 +70,10 @@ def split_push_enabled(settings: dict[str, Any], *, report_kind: str) -> bool:
         weekly = settings.get("weekly_report") or {}
         if "split_push" in weekly:
             return bool(weekly["split_push"])
+    if report_kind == "forecast":
+        wf = settings.get("week_forecast") or {}
+        if "split_push" in wf:
+            return bool(wf["split_push"])
     return True
 
 
@@ -153,6 +162,34 @@ def render_weekly_push_sections(report) -> list[ReportSection]:
             ReportSection(
                 category=category,
                 title=weekly_section_title(report, i, total, sec.label),
+                body=sec.markdown.strip(),
+            )
+        )
+    return sections
+
+
+_FORECAST_CATEGORY_MAP = {
+    "MSS预测": "forecast_mss",
+    "个股路径": "forecast_symbols",
+    "新闻热点": "forecast_news",
+}
+
+
+def render_forecast_push_sections(forecast) -> list[ReportSection]:
+    """Convert WeekForecast sections to ReportSection for unified push."""
+    from agent_reach.daily_run.week_forecast import forecast_section_title, render_forecast_sections
+
+    raw = render_forecast_sections(forecast)
+    total = len(raw)
+    sections: list[ReportSection] = []
+    for i, sec in enumerate(raw, start=1):
+        if not (sec.markdown or "").strip():
+            continue
+        category = _FORECAST_CATEGORY_MAP.get(sec.label, f"forecast_{i}")
+        sections.append(
+            ReportSection(
+                category=category,
+                title=forecast_section_title(forecast, i, total, sec.label),
                 body=sec.markdown.strip(),
             )
         )

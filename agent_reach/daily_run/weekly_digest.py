@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date
 from pathlib import Path
 from typing import Any, Optional
 
@@ -12,6 +13,26 @@ from agent_reach.daily_run.trade_calendar import today_shanghai
 
 def digest_path() -> Path:
     return Path.home() / ".agent-reach" / "daily_run" / "weekly_digest.json"
+
+
+def load_weekly_digest(max_age_days: int = 2) -> Optional[dict[str, Any]]:
+    path = digest_path()
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    saved = data.get("saved_at")
+    if saved:
+        from datetime import timedelta
+
+        try:
+            if date.fromisoformat(str(saved)[:10]) < today_shanghai() - timedelta(days=max_age_days):
+                return None
+        except ValueError:
+            pass
+    return data
 
 
 def save_weekly_digest(report: dict[str, Any], *, week_end: Optional[str] = None) -> Path:
