@@ -169,6 +169,7 @@
   },
 
   "team": {
+    "enabled": false,
     "mode": "full_parallel",
     "experts": [
       "fundamental",
@@ -182,8 +183,9 @@
     ],
     "parallel": true,
     "supervisor": true,
-    "morning_team_first": true,
-    "close_team_first": true
+    "morning_team_first": false,
+    "close_team_first": false,
+    "intraday_experts": false
   },
 
   "macro_collector": {

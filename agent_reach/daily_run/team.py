@@ -21,6 +21,37 @@ EXPERT_LABELS: dict[str, str] = {
 }
 
 
+def experts_enabled(settings: dict[str, Any], *, workflow: str = "morning") -> bool:
+    """Whether to run expert plugins for a workflow (default off when team.enabled is false)."""
+    team = settings.get("team") or {}
+    if team.get("enabled", False) is not True:
+        return False
+    wf_keys = {
+        "morning": "morning_team_first",
+        "close": "close_team_first",
+        "intraday": "intraday_experts",
+    }
+    key = wf_keys.get(workflow)
+    if key and key in team:
+        return bool(team[key])
+    return True
+
+
+def team_first_enabled(settings: dict[str, Any], *, workflow: str = "morning") -> bool:
+    """Whether to use Team-First supervisor path (requires experts_enabled)."""
+    if not experts_enabled(settings, workflow=workflow):
+        return False
+    team = settings.get("team") or {}
+    wf_keys = {
+        "morning": "morning_team_first",
+        "close": "close_team_first",
+    }
+    key = wf_keys.get(workflow)
+    if key and key in team:
+        return bool(team[key])
+    return bool(team.get("supervisor", True))
+
+
 @dataclass
 class TeamReview:
     mode: str

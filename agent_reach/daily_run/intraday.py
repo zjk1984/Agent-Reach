@@ -124,9 +124,16 @@ def record_scan(
     if len(st.scans) >= MAX_SCANS:
         raise RuntimeError(f"今日扫描已达上限 {MAX_SCANS} 次（S1-S{MAX_SCANS}）")
 
-    enriched = run_experts(dict(snapshot), cfg, names=plugin_names)
+    enriched = dict(snapshot)
     enriched.setdefault("report_type", "intraday")
     enriched.setdefault("as_of", datetime.now(timezone.utc).isoformat())
+
+    from agent_reach.daily_run.team import experts_enabled
+
+    if experts_enabled(cfg, workflow="intraday"):
+        enriched = run_experts(dict(snapshot), cfg, names=plugin_names)
+        enriched.setdefault("report_type", "intraday")
+        enriched.setdefault("as_of", datetime.now(timezone.utc).isoformat())
 
     evaluation = evaluate_snapshot(enriched, cfg, doctor_channels=doctor_channels)
     report = evaluation["report"]
@@ -213,7 +220,12 @@ def evaluate_trade(
         enriched = pre_enriched
         evaluation = pre_evaluation
     else:
-        enriched = run_experts(dict(snapshot), cfg, names=plugin_names)
+        from agent_reach.daily_run.team import experts_enabled
+
+        if experts_enabled(cfg, workflow="intraday"):
+            enriched = run_experts(dict(snapshot), cfg, names=plugin_names)
+        else:
+            enriched = dict(snapshot)
         enriched.setdefault("report_type", "intraday")
         evaluation = evaluate_snapshot(enriched, cfg, doctor_channels=doctor_channels)
 
