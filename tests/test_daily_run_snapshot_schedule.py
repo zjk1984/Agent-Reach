@@ -95,7 +95,7 @@ class TestSchedule:
         assert "schedule run close" in block
 
     def test_default_entries_count(self):
-        assert len(default_entries()) == 12
+        assert len(default_entries()) == 13  # morning + 10 scans + close + weekly
 
     @patch("agent_reach.daily_run.workflows.save_morning_baseline")
     @patch("agent_reach.daily_run.workflows.run_morning")

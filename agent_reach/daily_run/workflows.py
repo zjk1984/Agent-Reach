@@ -285,3 +285,66 @@ def _send_start_notification(config, settings: dict[str, Any]) -> None:
         "预计完成时间：**3–5 分钟**",
         template=tpl,
     )
+
+
+def run_weekly(
+    snapshot: dict[str, Any],
+    *,
+    settings: Optional[dict[str, Any]] = None,
+    push: bool = True,
+    title: Optional[str] = None,
+    config=None,
+    portfolio: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    """Saturday weekly summary: PnL, holdings, watchlist, hot sectors → Feishu."""
+    from agent_reach.daily_run.weekly_digest import save_weekly_digest
+    from agent_reach.daily_run.weekly_report import (
+        generate_weekly_report,
+        render_weekly_markdown,
+        weekly_report_title,
+    )
+
+    cfg = settings or load_settings()
+    weekly_cfg = cfg.get("weekly_report") or {}
+    if weekly_cfg.get("enabled", True) is False:
+        return {"steps": ["skipped"], "message": "weekly_report disabled", "feishu": None}
+
+    steps: list[str] = ["generate"]
+    report = generate_weekly_report(snapshot, cfg, portfolio=portfolio)
+    digest_path = save_weekly_digest(report.to_dict())
+    steps.append("digest")
+    md = render_weekly_markdown(report)
+    steps.append("render")
+
+    feishu_result = None
+    if push:
+        from agent_reach.config import Config
+
+        from agent_reach.daily_run.report_push import (
+            push_report_sections,
+            render_weekly_push_sections,
+            split_push_enabled,
+        )
+
+        cfg_obj = config or Config()
+        sections = render_weekly_push_sections(report)
+        feishu_result = push_report_sections(
+            sections,
+            settings=cfg,
+            config=cfg_obj,
+            report_type="weekly",
+            fallback_title=title or weekly_report_title(report),
+            template=cfg.get("report", {}).get("feishu_template_weekly", "blue"),
+            split=split_push_enabled(cfg, report_kind="weekly"),
+        )
+        steps.append("push")
+        if feishu_result.get("mode") == "split":
+            steps.append(f"push_split_{feishu_result.get('count', 0)}")
+
+    return {
+        "steps": steps,
+        "report": report.to_dict(),
+        "digest_path": str(digest_path),
+        "markdown": md,
+        "feishu": feishu_result,
+    }

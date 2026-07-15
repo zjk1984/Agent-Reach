@@ -23,6 +23,10 @@ _CATEGORY_LABELS: dict[str, str] = {
     "research": "Exa 调研",
     "experience": "经验沉淀",
     "verify": "验证结论",
+    "weekly_portfolio": "盈亏·持仓",
+    "weekly_market": "板块·热点",
+    "weekly_track": "MSS·经验",
+    "weekly_insights": "学习·改进",
 }
 
 
@@ -57,6 +61,10 @@ def split_push_enabled(settings: dict[str, Any], *, report_kind: str) -> bool:
     key = f"{report_kind}_split_push"
     if key in cfg:
         return bool(cfg[key])
+    if report_kind == "weekly":
+        weekly = settings.get("weekly_report") or {}
+        if "split_push" in weekly:
+            return bool(weekly["split_push"])
     return True
 
 
@@ -118,6 +126,35 @@ def render_close_sections(
             name=label,
             index=i,
             total=total,
+        )
+    return sections
+
+
+_WEEKLY_CATEGORY_MAP = {
+    "盈亏·持仓": "weekly_portfolio",
+    "板块·热点": "weekly_market",
+    "MSS·经验": "weekly_track",
+    "学习·改进": "weekly_insights",
+}
+
+
+def render_weekly_push_sections(report) -> list[ReportSection]:
+    """Convert WeeklyReport sections to ReportSection for unified push."""
+    from agent_reach.daily_run.weekly_report import render_weekly_sections, weekly_section_title
+
+    raw = render_weekly_sections(report)
+    total = len(raw)
+    sections: list[ReportSection] = []
+    for i, sec in enumerate(raw, start=1):
+        if not (sec.markdown or "").strip():
+            continue
+        category = _WEEKLY_CATEGORY_MAP.get(sec.label, f"weekly_{i}")
+        sections.append(
+            ReportSection(
+                category=category,
+                title=weekly_section_title(report, i, total, sec.label),
+                body=sec.markdown.strip(),
+            )
         )
     return sections
 

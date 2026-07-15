@@ -74,6 +74,9 @@ def default_entries() -> list[CronEntry]:
     entries.append(
         CronEntry("30", "15", "1-5", f"{cmd} daily-run schedule run close", "daily-run 收盘 15:30")
     )
+    entries.append(
+        CronEntry("0", "9", "6", f"{cmd} daily-run schedule run weekly", "daily-run 周报 周六 9:00")
+    )
     return entries
 
 
@@ -264,6 +267,22 @@ def _run_job_body(
                 if run_result.get("push_error"):
                     result["push_error"] = run_result["push_error"]
 
+    elif job == "weekly":
+        from agent_reach.daily_run.workflows import run_weekly
+
+        with StepTimer("schedule.weekly"):
+            pf = load_portfolio()
+            snap, path = build_and_save(report_type="close", config=config)
+            run_result = run_weekly(
+                snap,
+                settings=settings,
+                push=push,
+                config=config,
+                portfolio=pf,
+            )
+            result = {"job": job, "snapshot_path": str(path), "result": run_result}
+            feishu = run_result.get("feishu")
+
     elif job == "close":
         from agent_reach.daily_run.intraday import load_state
 
@@ -298,6 +317,6 @@ def _run_job_body(
             result = {"job": job, "snapshot_path": str(path), "result": run_result}
             feishu = run_result.get("feishu")
     else:
-        raise ValueError(f"未知定时任务：{job}，可选 morning | intraday | close")
+        raise ValueError(f"未知定时任务：{job}，可选 morning | intraday | close | weekly")
 
     return result, feishu

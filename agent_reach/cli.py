@@ -223,7 +223,7 @@ def main():
     p_dr_sched.add_argument(
         "--job",
         default="",
-        choices=["morning", "intraday", "close"],
+        choices=["morning", "intraday", "close", "weekly"],
         help="Job for schedule run (alternative to positional job_name)",
     )
     p_dr_sched.add_argument("--dry-run", action="store_true",
@@ -1767,8 +1767,8 @@ def _cmd_daily_run(args):
 
         if args.schedule_action == "run":
             job = args.job or args.job_name or "intraday"
-            if job not in ("morning", "intraday", "close"):
-                print("❌ job must be morning, intraday, or close")
+            if job not in ("morning", "intraday", "close", "weekly"):
+                print("❌ job must be morning, intraday, close, or weekly")
                 sys.exit(1)
             try:
                 result = run_scheduled(job, push=not args.dry_run, config=Config())
@@ -1790,6 +1790,10 @@ def _cmd_daily_run(args):
             elif job == "close":
                 verify = job_result.get("verify") or {}
                 print(f"   summary: {verify.get('summary', '')[:80]}")
+            elif job == "weekly":
+                wr = job_result.get("report") or {}
+                pnl = wr.get("weekly_pnl")
+                print(f"   weekly_pnl={pnl} holdings={len(wr.get('holdings') or [])}")
             if not args.dry_run:
                 if result.get("push_error") or (job_result.get("push_error")):
                     print("   ⚠️ 扫描/复盘已完成，飞书推送未成功")
@@ -1797,7 +1801,7 @@ def _cmd_daily_run(args):
                     print("   Feishu push sent")
             return
 
-        print("Usage: agent-reach daily-run schedule {print|install|run} [--job morning|intraday|close]")
+        print("Usage: agent-reach daily-run schedule {print|install|run} [--job morning|intraday|close|weekly]")
         sys.exit(1)
 
     if args.daily_action not in ("evaluate", "push"):
