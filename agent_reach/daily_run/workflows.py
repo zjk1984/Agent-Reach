@@ -8,6 +8,12 @@ from pathlib import Path
 from typing import Any, Optional
 
 from agent_reach.daily_run.pipeline import evaluate_snapshot, render_markdown
+from agent_reach.daily_run.report_push import (
+    push_report_sections,
+    render_close_sections,
+    render_morning_sections,
+    split_push_enabled,
+)
 from agent_reach.daily_run.settings import load_settings
 from agent_reach.daily_run.close_research import render_research_markdown, run_exa_research
 from agent_reach.daily_run.curve_analysis import analyze_intraday_curve, render_curve_markdown
@@ -84,10 +90,24 @@ def run_morning(
             raise RuntimeError(f"数据审计未通过：{audit.summary()}")
         if not gate.passed:
             raise RuntimeError(f"质量门禁未通过：{gate.summary()}")
-        card_title = title or _morning_title(report)
-        body = render_team_markdown(enriched) + "\n\n---\n\n" + render_markdown(report)
-        feishu_result = _push_markdown(card_title, body, cfg, config, report_type="premarket")
+        team_md = render_team_markdown(enriched)
+        report_md = render_markdown(report)
+        sections = render_morning_sections(
+            team_markdown=team_md,
+            report_markdown=report_md,
+            report=report,
+        )
+        feishu_result = push_report_sections(
+            sections,
+            settings=cfg,
+            config=config,
+            report_type="premarket",
+            fallback_title=title or _morning_title(report),
+            split=split_push_enabled(cfg, report_kind="morning"),
+        )
         steps.append("push")
+        if feishu_result.get("mode") == "split":
+            steps.append(f"push_split_{feishu_result.get('count', 0)}")
 
     return {
         "steps": steps,
@@ -124,11 +144,8 @@ def run_close(
     verify = verify_snapshots(baseline, enriched, cfg)
     verify_dict = verify.to_dict()
 
-    extra_parts: list[str] = []
-    if team_md:
-        extra_parts.append(team_md)
-
     curve = None
+    curve_md = ""
     mss_actual = enriched.get("mss_intraday_actual") or []
     scan_ids = [str(s.get("scan_id") or f"S{i + 1}") for i, s in enumerate(enriched.get("intraday_scans") or [])]
     if mss_actual:
@@ -139,30 +156,43 @@ def run_close(
             predicted_range=pred_tuple,
             scan_ids=scan_ids or None,
         )
-        extra_parts.append(render_curve_markdown(curve))
+        curve_md = render_curve_markdown(curve)
 
     research_results = run_exa_research(enriched, cfg)
-    research_md = render_research_markdown(enriched, research_results=research_results, settings=cfg)
-    if research_md:
-        extra_parts.append(research_md)
+    research_md = render_research_markdown(enriched, research_results=research_results, settings=cfg) or ""
 
     exp_path = append_experience_entry(
         enriched, verify_dict, curve=curve, research=research_results, settings=cfg
     )
-    exp_md = render_experience_markdown(limit=3)
-    if exp_md:
-        extra_parts.append(exp_md)
+    exp_md = render_experience_markdown(limit=3) or ""
 
-    md = "\n\n---\n\n".join(extra_parts + [render_verify_markdown(verify)]) if extra_parts else render_verify_markdown(verify)
+    verify_md = render_verify_markdown(verify)
+    md = "\n\n---\n\n".join(
+        p for p in [team_md, curve_md, research_md, exp_md, verify_md] if p
+    )
 
     feishu_result = None
     if push:
         from agent_reach.config import Config
 
         cfg_obj = config or Config()
-        tpl = cfg.get("report", {}).get("feishu_template_verify", "purple")
-        card_title = title or f"🧠 收盘复盘 · {verify.name or verify.code or '大盘'}"
-        feishu_result = _push_markdown(card_title, md, cfg, cfg_obj, template=tpl)
+        sections = render_close_sections(
+            verify_name=verify.name or verify.code or "大盘",
+            team_markdown=team_md,
+            curve_markdown=curve_md,
+            research_markdown=research_md or "",
+            experience_markdown=exp_md or "",
+            verify_markdown=verify_md,
+        )
+        feishu_result = push_report_sections(
+            sections,
+            settings=cfg,
+            config=cfg_obj,
+            report_type="verify",
+            fallback_title=title or f"🧠 收盘复盘 · {verify.name or verify.code or '大盘'}",
+            template=cfg.get("report", {}).get("feishu_template_verify", "purple"),
+            split=split_push_enabled(cfg, report_kind="close"),
+        )
 
     return {
         "verify": verify_dict,

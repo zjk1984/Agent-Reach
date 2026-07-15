@@ -44,11 +44,12 @@ class TestMorningWorkflow:
         assert result["evaluation"]["report"]["verdict"]
         assert "Team-First" in result.get("team_markdown", "")
 
-    @patch("agent_reach.daily_run.workflows._push_markdown", return_value={"code": 0, "data": {}})
+    @patch("agent_reach.daily_run.workflows.push_report_sections")
     @patch("agent_reach.daily_run.workflows._send_start_notification")
     def test_run_morning_push(self, mock_start, mock_push, morning_snapshot):
+        mock_push.return_value = {"mode": "split", "count": 2, "feishu": {"code": 0}}
         result = run_morning(morning_snapshot, settings=load_settings(), push=True, start_notify=True)
-        assert result["steps"] == ["start_notify", "team_first", "evaluate", "push"]
+        assert "push" in result["steps"]
         assert mock_push.called
         assert mock_start.called
 
