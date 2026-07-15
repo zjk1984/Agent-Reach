@@ -196,6 +196,81 @@ def render_forecast_push_sections(forecast) -> list[ReportSection]:
     return sections
 
 
+def merged_category_title(
+    *,
+    report_kind: str,
+    category: str,
+    index: int,
+    total: int,
+    symbol_count: int,
+) -> str:
+    """Title for a category card merged across multiple symbols."""
+    kind_icon = {"morning": "🌅", "close": "🧠", "intraday": "📊"}.get(report_kind, "📋")
+    kind_label = {"morning": "早盘", "close": "收盘", "intraday": "盘中"}.get(report_kind, report_kind)
+    label = _CATEGORY_LABELS.get(category, category)
+    return f"{kind_icon} {kind_label} {index}/{total} · {label} · {symbol_count}只"
+
+
+def merge_sections_by_category(
+    groups: list[tuple[str, list[ReportSection]]],
+    *,
+    report_kind: str,
+) -> list[ReportSection]:
+    """Merge per-symbol sections into one card per category (experts, decision, …)."""
+    order: list[str] = []
+    buckets: dict[str, list[tuple[str, str]]] = {}
+
+    for symbol_name, sections in groups:
+        for sec in sections:
+            if not (sec.body or "").strip():
+                continue
+            if sec.category not in buckets:
+                order.append(sec.category)
+                buckets[sec.category] = []
+            buckets[sec.category].append((symbol_name, sec.body.strip()))
+
+    merged: list[ReportSection] = []
+    total = len(order)
+    for i, cat in enumerate(order, start=1):
+        rows = buckets[cat]
+        body_parts = [f"## {name}\n\n{content}" for name, content in rows]
+        merged.append(
+            ReportSection(
+                category=cat,
+                title=merged_category_title(
+                    report_kind=report_kind,
+                    category=cat,
+                    index=i,
+                    total=total,
+                    symbol_count=len(rows),
+                ),
+                body="\n\n---\n\n".join(body_parts),
+            )
+        )
+    return merged
+
+
+def morning_sections_from_run(run_result: dict[str, Any]) -> list[ReportSection]:
+    evaluation = run_result.get("evaluation") or {}
+    report = evaluation.get("report") or {}
+    return render_morning_sections(
+        team_markdown=run_result.get("team_markdown") or "",
+        report_markdown=run_result.get("report_markdown") or "",
+        report=report,
+    )
+
+
+def close_sections_from_run(run_result: dict[str, Any], *, verify_name: str) -> list[ReportSection]:
+    return render_close_sections(
+        verify_name=verify_name,
+        team_markdown=run_result.get("team_markdown") or "",
+        curve_markdown=run_result.get("curve_markdown") or "",
+        research_markdown=run_result.get("research_markdown") or "",
+        experience_markdown=run_result.get("experience_markdown") or "",
+        verify_markdown=run_result.get("verify_markdown") or "",
+    )
+
+
 def push_report_sections(
     sections: list[ReportSection],
     *,

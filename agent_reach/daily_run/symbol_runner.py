@@ -21,6 +21,16 @@ def symbol_push_interval(settings: dict[str, Any]) -> float:
     )
 
 
+def symbol_push_mode(settings: dict[str, Any]) -> str:
+    """merge_by_category | per_symbol"""
+    sched = settings.get("schedule") or {}
+    return str(sched.get("symbol_push_mode", "merge_by_category")).lower()
+
+
+def _should_merge_push(settings: dict[str, Any]) -> bool:
+    return symbol_push_mode(settings) == "merge_by_category"
+
+
 def run_morning_for_symbols(
     *,
     settings: Optional[dict[str, Any]] = None,
@@ -29,19 +39,25 @@ def run_morning_for_symbols(
     doctor_channels: Optional[dict[str, dict]] = None,
     symbols: Optional[list[str]] = None,
 ) -> dict[str, Any]:
+    from agent_reach.daily_run.report_push import (
+        merge_sections_by_category,
+        morning_sections_from_run,
+        push_report_sections,
+        split_push_enabled,
+    )
     from agent_reach.daily_run.workflows import run_morning, save_morning_baseline
 
     cfg = settings or load_settings()
     pf = load_portfolio()
     targets = symbols or resolve_target_symbols(pf, cfg)
     primary = pf.get("primary_code")
-    interval = symbol_push_interval(cfg)
+    merge_push = _should_merge_push(cfg)
     symbol_results: list[dict[str, Any]] = []
+    section_groups: list[tuple[str, list]] = []
     errors: list[str] = []
 
     for i, code in enumerate(targets):
-        if i > 0 and push:
-            time.sleep(interval)
+        name = symbol_display_name(pf, code)
         try:
             snap, path = build_and_save(
                 report_type="premarket",
@@ -53,8 +69,8 @@ def run_morning_for_symbols(
                 snap,
                 settings=cfg,
                 doctor_channels=doctor_channels,
-                push=push,
-                start_notify=push and i == 0,
+                push=push and not merge_push,
+                start_notify=push and not merge_push and i == 0,
                 config=config,
             )
             baseline_path = save_morning_baseline(
@@ -62,10 +78,12 @@ def run_morning_for_symbols(
                 code=code,
                 primary_code=primary,
             )
+            if merge_push:
+                section_groups.append((name, morning_sections_from_run(run_result)))
             symbol_results.append(
                 {
                     "code": code,
-                    "name": symbol_display_name(pf, code),
+                    "name": name,
                     "snapshot_path": str(path),
                     "baseline_path": str(baseline_path),
                     "result": run_result,
@@ -78,13 +96,30 @@ def run_morning_for_symbols(
     if errors and not symbol_results:
         raise RuntimeError(errors[0])
 
+    feishu_result = None
+    if push and merge_push and section_groups:
+        from agent_reach.config import Config
+        from agent_reach.daily_run.workflows import _send_start_notification
+
+        _send_start_notification(config, cfg)
+        merged = merge_sections_by_category(section_groups, report_kind="morning")
+        feishu_result = push_report_sections(
+            merged,
+            settings=cfg,
+            config=config or Config(),
+            report_type="premarket",
+            fallback_title="🌅 早盘 · 全持仓",
+            split=split_push_enabled(cfg, report_kind="morning"),
+        )
+
     return {
         "job": "morning",
         "symbols_mode": (cfg.get("schedule") or {}).get("symbols_mode", "primary"),
+        "symbol_push_mode": symbol_push_mode(cfg),
         "symbols": targets,
         "symbol_results": symbol_results,
         "errors": errors,
-        "feishu": symbol_results[-1]["feishu"] if symbol_results else None,
+        "feishu": feishu_result or (symbol_results[-1]["feishu"] if symbol_results else None),
     }
 
 
@@ -102,17 +137,19 @@ def run_intraday_for_symbols(
         run_intraday,
         should_evaluate_trade,
     )
+    from agent_reach.daily_run.report_push import ReportSection, merged_category_title, push_report_sections
 
     cfg = settings or load_settings()
     pf = load_portfolio()
     targets = symbols or resolve_target_symbols(pf, cfg)
-    interval = symbol_push_interval(cfg)
+    merge_push = _should_merge_push(cfg)
     symbol_results: list[dict[str, Any]] = []
+    scan_bodies: list[tuple[str, str]] = []
+    scan_id: Optional[str] = None
     errors: list[str] = []
 
-    for i, code in enumerate(targets):
-        if i > 0 and push:
-            time.sleep(interval)
+    for code in targets:
+        name = symbol_display_name(pf, code)
         state_path = default_state_path(code)
         state = load_state(state_path)
         if len(state.scans) >= 10:
@@ -132,15 +169,24 @@ def run_intraday_for_symbols(
                 snap,
                 settings=cfg,
                 doctor_channels=doctor_channels,
-                push=push,
+                push=push and not merge_push,
                 trade=do_trade,
                 config=config,
                 state_path=state_path,
             )
+            inner = run_result.get("scan") or {}
+            scan = inner.get("scan") or {}
+            scan_id = scan.get("scan_id") or scan_id
+            md = inner.get("markdown") or ""
+            if merge_push and md.strip():
+                scan_bodies.append((name, md.strip()))
+                trade_md = (run_result.get("trade") or {}).get("markdown")
+                if trade_md:
+                    scan_bodies[-1] = (name, md.strip() + "\n\n---\n\n" + trade_md.strip())
             symbol_results.append(
                 {
                     "code": code,
-                    "name": symbol_display_name(pf, code),
+                    "name": name,
                     "snapshot_path": str(path),
                     "trade_evaluated": do_trade,
                     "result": run_result,
@@ -153,12 +199,32 @@ def run_intraday_for_symbols(
     if errors and not symbol_results:
         raise RuntimeError(errors[0])
 
+    feishu_result = None
+    if push and merge_push and scan_bodies:
+        from agent_reach.config import Config
+
+        body = "\n\n---\n\n".join(f"## {name}\n\n{content}" for name, content in scan_bodies)
+        title = merged_category_title(
+            report_kind="intraday",
+            category="scan",
+            index=1,
+            total=1,
+            symbol_count=len(scan_bodies),
+        )
+        if scan_id:
+            title = f"📊 盘中 {scan_id} · {len(scan_bodies)}只"
+        tpl = cfg.get("report", {}).get("feishu_template_intraday", "blue")
+        from agent_reach.integrations.feishu import send_card
+
+        feishu_result = send_card(config or Config(), title, body, template=tpl)
+
     return {
         "job": "intraday",
+        "symbol_push_mode": symbol_push_mode(cfg),
         "symbols": targets,
         "symbol_results": symbol_results,
         "errors": errors,
-        "feishu": next((r.get("feishu") for r in reversed(symbol_results) if r.get("feishu")), None),
+        "feishu": feishu_result or next((r.get("feishu") for r in reversed(symbol_results) if r.get("feishu")), None),
     }
 
 
@@ -170,18 +236,24 @@ def run_close_for_symbols(
     symbols: Optional[list[str]] = None,
 ) -> dict[str, Any]:
     from agent_reach.daily_run.intraday import load_state
+    from agent_reach.daily_run.report_push import (
+        close_sections_from_run,
+        merge_sections_by_category,
+        push_report_sections,
+        split_push_enabled,
+    )
     from agent_reach.daily_run.workflows import load_morning_baseline, run_close
 
     cfg = settings or load_settings()
     pf = load_portfolio()
     targets = symbols or resolve_target_symbols(pf, cfg)
-    interval = symbol_push_interval(cfg)
+    merge_push = _should_merge_push(cfg)
     symbol_results: list[dict[str, Any]] = []
+    section_groups: list[tuple[str, list]] = []
     errors: list[str] = []
 
-    for i, code in enumerate(targets):
-        if i > 0 and push:
-            time.sleep(interval)
+    for code in targets:
+        name = symbol_display_name(pf, code)
         try:
             baseline = load_morning_baseline(code=code)
             snap, path = build_and_save(
@@ -199,13 +271,17 @@ def run_close_for_symbols(
                 snap,
                 baseline,
                 settings=cfg,
-                push=push,
+                push=push and not merge_push,
                 config=config,
             )
+            if merge_push:
+                section_groups.append(
+                    (name, close_sections_from_run(run_result, verify_name=name))
+                )
             symbol_results.append(
                 {
                     "code": code,
-                    "name": symbol_display_name(pf, code),
+                    "name": name,
                     "snapshot_path": str(path),
                     "result": run_result,
                     "feishu": run_result.get("feishu"),
@@ -217,10 +293,26 @@ def run_close_for_symbols(
     if errors and not symbol_results:
         raise RuntimeError(errors[0])
 
+    feishu_result = None
+    if push and merge_push and section_groups:
+        from agent_reach.config import Config
+
+        merged = merge_sections_by_category(section_groups, report_kind="close")
+        feishu_result = push_report_sections(
+            merged,
+            settings=cfg,
+            config=config or Config(),
+            report_type="verify",
+            fallback_title="🧠 收盘复盘 · 全持仓",
+            template=cfg.get("report", {}).get("feishu_template_verify", "purple"),
+            split=split_push_enabled(cfg, report_kind="close"),
+        )
+
     return {
         "job": "close",
+        "symbol_push_mode": symbol_push_mode(cfg),
         "symbols": targets,
         "symbol_results": symbol_results,
         "errors": errors,
-        "feishu": symbol_results[-1]["feishu"] if symbol_results else None,
+        "feishu": feishu_result or (symbol_results[-1]["feishu"] if symbol_results else None),
     }

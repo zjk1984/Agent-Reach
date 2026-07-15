@@ -85,14 +85,15 @@ def run_morning(
     gate = evaluation["gate"]
     report = evaluation["report"]
 
+    if not audit.passed:
+        raise RuntimeError(f"数据审计未通过：{audit.summary()}")
+    if not gate.passed:
+        raise RuntimeError(f"质量门禁未通过：{gate.summary()}")
+
+    team_md = render_team_markdown(enriched)
+    report_md = render_markdown(report)
     feishu_result = None
     if push:
-        if not audit.passed:
-            raise RuntimeError(f"数据审计未通过：{audit.summary()}")
-        if not gate.passed:
-            raise RuntimeError(f"质量门禁未通过：{gate.summary()}")
-        team_md = render_team_markdown(enriched)
-        report_md = render_markdown(report)
         sections = render_morning_sections(
             team_markdown=team_md,
             report_markdown=report_md,
@@ -114,8 +115,9 @@ def run_morning(
         "steps": steps,
         "snapshot": enriched,
         "evaluation": evaluation,
-        "markdown": render_team_markdown(enriched) + "\n\n---\n\n" + render_markdown(report),
-        "team_markdown": render_team_markdown(enriched),
+        "markdown": team_md + "\n\n---\n\n" + report_md,
+        "team_markdown": team_md,
+        "report_markdown": report_md,
         "feishu": feishu_result,
     }
 
@@ -218,6 +220,10 @@ def run_close(
         "snapshot": enriched,
         "markdown": md,
         "team_markdown": team_md,
+        "curve_markdown": curve_md,
+        "research_markdown": research_md,
+        "experience_markdown": exp_md,
+        "verify_markdown": verify_md,
         "research": research_results,
         "experience_path": str(exp_path),
         "feishu": feishu_result,

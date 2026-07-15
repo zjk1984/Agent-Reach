@@ -6,6 +6,7 @@ from unittest.mock import patch
 from agent_reach.daily_run.settings import load_settings
 from agent_reach.daily_run.snapshot_builder import build_snapshot
 from agent_reach.daily_run.symbols import list_target_symbols, resolve_target_symbols
+from agent_reach.daily_run.report_push import ReportSection, merge_sections_by_category
 from agent_reach.daily_run.symbol_runner import run_morning_for_symbols
 from agent_reach.daily_run.workflows import load_morning_baseline, save_morning_baseline
 
@@ -45,6 +46,26 @@ class TestPerSymbolSnapshot:
         snap = build_snapshot(PORTFOLIO, report_type="premarket", primary_code="002273", enrich=False)
         assert snap["code"] == "002273"
         assert snap["name"] == "002273"
+
+
+class TestMergeSections:
+    def test_merge_sections_by_category(self):
+        g1 = [
+            ReportSection("experts", "", "expert A"),
+            ReportSection("decision", "", "decision A"),
+        ]
+        g2 = [
+            ReportSection("experts", "", "expert B"),
+            ReportSection("decision", "", "decision B"),
+        ]
+        merged = merge_sections_by_category(
+            [("澜起科技", g1), ("水晶光电", g2)],
+            report_kind="morning",
+        )
+        assert len(merged) == 2
+        assert merged[0].category == "experts"
+        assert "澜起科技" in merged[0].body and "水晶光电" in merged[0].body
+        assert "2只" in merged[0].title
 
 
 class TestPerSymbolBaselines:

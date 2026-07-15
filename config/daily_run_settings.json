@@ -199,6 +199,7 @@
 
   "schedule": {
     "symbols_mode": "all",
+    "symbol_push_mode": "merge_by_category",
     "symbol_push_interval_seconds": 0.5,
     "intraday_trade_enabled": true,
     "trade_min_scans": 3,
