@@ -54,6 +54,7 @@ def run_morning_for_symbols(
     merge_push = _should_merge_push(cfg)
     symbol_results: list[dict[str, Any]] = []
     section_groups: list[tuple[str, list]] = []
+    expert_snapshots: list[tuple[str, str, dict[str, Any]]] = []
     errors: list[str] = []
 
     for i, code in enumerate(targets):
@@ -80,6 +81,7 @@ def run_morning_for_symbols(
             )
             if merge_push:
                 section_groups.append((name, morning_sections_from_run(run_result)))
+                expert_snapshots.append((name, code, run_result["snapshot"]))
             symbol_results.append(
                 {
                     "code": code,
@@ -102,7 +104,11 @@ def run_morning_for_symbols(
         from agent_reach.daily_run.workflows import _send_start_notification
 
         _send_start_notification(config, cfg)
-        merged = merge_sections_by_category(section_groups, report_kind="morning")
+        merged = merge_sections_by_category(
+            section_groups,
+            report_kind="morning",
+            expert_snapshots=expert_snapshots,
+        )
         feishu_result = push_report_sections(
             merged,
             settings=cfg,
@@ -250,6 +256,7 @@ def run_close_for_symbols(
     merge_push = _should_merge_push(cfg)
     symbol_results: list[dict[str, Any]] = []
     section_groups: list[tuple[str, list]] = []
+    expert_snapshots: list[tuple[str, str, dict[str, Any]]] = []
     errors: list[str] = []
 
     for code in targets:
@@ -278,6 +285,7 @@ def run_close_for_symbols(
                 section_groups.append(
                     (name, close_sections_from_run(run_result, verify_name=name))
                 )
+                expert_snapshots.append((name, code, run_result["snapshot"]))
             symbol_results.append(
                 {
                     "code": code,
@@ -297,7 +305,11 @@ def run_close_for_symbols(
     if push and merge_push and section_groups:
         from agent_reach.config import Config
 
-        merged = merge_sections_by_category(section_groups, report_kind="close")
+        merged = merge_sections_by_category(
+            section_groups,
+            report_kind="close",
+            expert_snapshots=expert_snapshots,
+        )
         feishu_result = push_report_sections(
             merged,
             settings=cfg,

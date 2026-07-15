@@ -215,8 +215,11 @@ def merge_sections_by_category(
     groups: list[tuple[str, list[ReportSection]]],
     *,
     report_kind: str,
+    expert_snapshots: Optional[list[tuple[str, str, dict[str, Any]]]] = None,
 ) -> list[ReportSection]:
     """Merge per-symbol sections into one card per category (experts, decision, …)."""
+    from agent_reach.daily_run.team import render_merged_experts_markdown
+
     order: list[str] = []
     buckets: dict[str, list[tuple[str, str]]] = {}
 
@@ -232,8 +235,14 @@ def merge_sections_by_category(
     merged: list[ReportSection] = []
     total = len(order)
     for i, cat in enumerate(order, start=1):
-        rows = buckets[cat]
-        body_parts = [f"## {name}\n\n{content}" for name, content in rows]
+        if cat == "experts" and expert_snapshots and len(expert_snapshots) > 1:
+            body = render_merged_experts_markdown(expert_snapshots)
+            symbol_count = len(expert_snapshots)
+        else:
+            rows = buckets[cat]
+            body_parts = [f"## {name}\n\n{content}" for name, content in rows]
+            body = "\n\n---\n\n".join(body_parts)
+            symbol_count = len(rows)
         merged.append(
             ReportSection(
                 category=cat,
@@ -242,9 +251,9 @@ def merge_sections_by_category(
                     category=cat,
                     index=i,
                     total=total,
-                    symbol_count=len(rows),
+                    symbol_count=symbol_count,
                 ),
-                body="\n\n---\n\n".join(body_parts),
+                body=body,
             )
         )
     return merged

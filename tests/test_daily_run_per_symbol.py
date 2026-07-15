@@ -67,6 +67,37 @@ class TestMergeSections:
         assert "澜起科技" in merged[0].body and "水晶光电" in merged[0].body
         assert "2只" in merged[0].title
 
+    def test_merge_experts_unified_body(self):
+        snap_a = {
+            "team_review": {"consensus_score": 42, "consensus_label": "观察", "conflicts": []},
+            "expert_results": [
+                {"name": "technical", "score": 45, "summary": "tech A", "success": True},
+            ],
+        }
+        snap_b = {
+            "team_review": {"consensus_score": 40, "consensus_label": "观察", "conflicts": []},
+            "expert_results": [
+                {"name": "technical", "score": 38, "summary": "tech B", "success": True},
+            ],
+        }
+        from agent_reach.daily_run.team import render_merged_experts_markdown
+
+        md = render_merged_experts_markdown([("澜起科技", "688008", snap_a), ("水晶光电", "002273", snap_b)])
+        assert "组合共识概览" in md
+        assert "各专家评分矩阵" in md
+        assert "澜起科技" in md and "水晶光电" in md
+        assert "## 澜起科技" not in md
+
+        g1 = [ReportSection("experts", "", "old")]
+        g2 = [ReportSection("experts", "", "old2")]
+        merged = merge_sections_by_category(
+            [("澜起科技", g1), ("水晶光电", g2)],
+            report_kind="morning",
+            expert_snapshots=[("澜起科技", "688008", snap_a), ("水晶光电", "002273", snap_b)],
+        )
+        assert len(merged) == 1
+        assert "组合共识概览" in merged[0].body
+
 
 class TestPerSymbolBaselines:
     def test_save_and_load_per_code_baseline(self, tmp_path, monkeypatch):
