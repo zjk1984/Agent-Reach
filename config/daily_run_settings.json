@@ -69,6 +69,7 @@
     "split_push_interval_seconds": 0.3,
     "morning_split_push": true,
     "close_split_push": true,
+    "feishu_split_tables": true,
     "feishu_template_premarket": "orange",
     "feishu_template_intraday": "blue",
     "feishu_template_close": "purple",

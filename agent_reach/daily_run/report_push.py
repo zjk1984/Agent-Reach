@@ -16,6 +16,35 @@ class ReportSection:
     template: Optional[str] = None
 
 
+_CATEGORY_LABELS: dict[str, str] = {
+    "experts": "专家共识",
+    "decision": "MSS 决策",
+    "intraday": "盘中曲线",
+    "research": "Exa 调研",
+    "experience": "经验沉淀",
+    "verify": "验证结论",
+}
+
+
+def section_title(
+    *,
+    report_kind: str,
+    category: str,
+    name: str,
+    index: int,
+    total: int,
+    extra: str = "",
+) -> str:
+    """Numbered section title (aligned with weekly report split push)."""
+    kind_icon = {"morning": "🌅", "close": "🧠"}.get(report_kind, "📋")
+    kind_label = {"morning": "早盘", "close": "收盘"}.get(report_kind, report_kind)
+    label = _CATEGORY_LABELS.get(category, category)
+    title = f"{kind_icon} {kind_label} {index}/{total} · {label} · {name}"
+    if extra:
+        title += f" · {extra}"
+    return title
+
+
 def _report_cfg(settings: dict[str, Any]) -> dict[str, Any]:
     return settings.get("report") or {}
 
@@ -41,20 +70,21 @@ def render_morning_sections(
     verdict = report.get("verdict") or "观察"
     sections: list[ReportSection] = []
     if team_markdown.strip():
-        sections.append(
-            ReportSection(
-                category="experts",
-                title=f"🌅 早盘 · 专家共识 · {name}",
-                body=team_markdown.strip(),
-            )
-        )
+        sections.append(ReportSection(category="experts", title="", body=team_markdown.strip()))
     if report_markdown.strip():
         sections.append(
-            ReportSection(
-                category="decision",
-                title=f"🌅 早盘 · MSS 决策 · {name} · {verdict}",
-                body=report_markdown.strip(),
-            )
+            ReportSection(category="decision", title="", body=report_markdown.strip(), template=None)
+        )
+    total = len(sections)
+    for i, sec in enumerate(sections, start=1):
+        extra = verdict if sec.category == "decision" else ""
+        sec.title = section_title(
+            report_kind="morning",
+            category=sec.category,
+            name=name,
+            index=i,
+            total=total,
+            extra=extra,
         )
     return sections
 
@@ -71,44 +101,23 @@ def render_close_sections(
     label = verify_name or "大盘"
     sections: list[ReportSection] = []
     if team_markdown.strip():
-        sections.append(
-            ReportSection(
-                category="experts",
-                title=f"🧠 收盘 · 专家观点 · {label}",
-                body=team_markdown.strip(),
-            )
-        )
+        sections.append(ReportSection(category="experts", title="", body=team_markdown.strip()))
     if curve_markdown.strip():
-        sections.append(
-            ReportSection(
-                category="intraday",
-                title=f"🧠 收盘 · 盘中曲线 · {label}",
-                body=curve_markdown.strip(),
-            )
-        )
+        sections.append(ReportSection(category="intraday", title="", body=curve_markdown.strip()))
     if research_markdown.strip():
-        sections.append(
-            ReportSection(
-                category="research",
-                title=f"🧠 收盘 · Exa 调研 · {label}",
-                body=research_markdown.strip(),
-            )
-        )
+        sections.append(ReportSection(category="research", title="", body=research_markdown.strip()))
     if experience_markdown.strip():
-        sections.append(
-            ReportSection(
-                category="experience",
-                title=f"🧠 收盘 · 经验沉淀 · {label}",
-                body=experience_markdown.strip(),
-            )
-        )
+        sections.append(ReportSection(category="experience", title="", body=experience_markdown.strip()))
     if verify_markdown.strip():
-        sections.append(
-            ReportSection(
-                category="verify",
-                title=f"🧠 收盘 · 验证结论 · {label}",
-                body=verify_markdown.strip(),
-            )
+        sections.append(ReportSection(category="verify", title="", body=verify_markdown.strip()))
+    total = len(sections)
+    for i, sec in enumerate(sections, start=1):
+        sec.title = section_title(
+            report_kind="close",
+            category=sec.category,
+            name=label,
+            index=i,
+            total=total,
         )
     return sections
 
@@ -135,22 +144,40 @@ def push_report_sections(
     tpl_default = template or cfg.get(f"feishu_template_{report_type}", "blue")
     cfg_obj = config or Config()
 
+    interval = float(cfg.get("split_push_interval_seconds", 0.3))
+    split_tables = cfg.get("feishu_split_tables", True) is not False
+
     def _send(title: str, markdown: str, tpl: str) -> dict[str, Any]:
-        return send_card(cfg_obj, title, markdown, template=tpl)
+        return send_card(
+            cfg_obj,
+            title,
+            markdown,
+            template=tpl,
+            split_tables=split_tables,
+            interval_seconds=interval if split_tables else 0.0,
+        )
 
     if not split or len(bodies) == 1:
         combined = "\n\n---\n\n".join(s.body for s in bodies)
         title = bodies[0].title if len(bodies) == 1 else fallback_title
         result = _send(title, combined, tpl_default)
-        return {"mode": "single", "count": 1, "results": [result], "feishu": result}
+        card_count = result.get("cards", 1)
+        return {
+            "mode": "single",
+            "count": card_count,
+            "results": [{"feishu": result}],
+            "feishu": result.get("feishu", result),
+        }
 
-    interval = float(cfg.get("split_push_interval_seconds", 0.3))
     results: list[dict[str, Any]] = []
     errors: list[str] = []
+    card_count = 0
     for i, sec in enumerate(bodies):
         try:
             r = _send(sec.title, sec.body, sec.template or tpl_default)
-            results.append({"category": sec.category, "title": sec.title, "feishu": r})
+            n = r.get("cards", 1)
+            card_count += n
+            results.append({"category": sec.category, "title": sec.title, "cards": n, "feishu": r})
         except FeishuError as exc:
             errors.append(f"{sec.category}: {exc}")
         if i + 1 < len(bodies):
@@ -161,7 +188,8 @@ def push_report_sections(
 
     out: dict[str, Any] = {
         "mode": "split",
-        "count": len(results),
+        "count": card_count or len(results),
+        "sections": len(results),
         "results": results,
         "feishu": results[-1]["feishu"] if results else None,
     }

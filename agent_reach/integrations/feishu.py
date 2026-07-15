@@ -13,6 +13,7 @@ from typing import Any, Optional, Tuple
 import requests
 
 from agent_reach.config import Config
+from agent_reach.integrations.feishu_card import build_card_payloads
 
 DEFAULT_DOMAIN = "feishu"
 API_HOSTS = {
@@ -98,17 +99,16 @@ def build_card(
     markdown: str,
     *,
     template: str = "blue",
+    split_tables: bool = True,
 ) -> dict[str, Any]:
-    return {
-        "config": {"wide_screen_mode": True},
-        "header": {
-            "title": {"tag": "plain_text", "content": title},
-            "template": template,
-        },
-        "elements": [
-            {"tag": "div", "text": {"tag": "lark_md", "content": markdown}},
-        ],
-    }
+    """Build a single Feishu card (first chunk when markdown has multiple tables)."""
+    return build_card_payloads(title, markdown, template=template, split_tables=split_tables)[0]
+
+
+def _title_with_part(title: str, index: int, total: int) -> str:
+    if total <= 1:
+        return title
+    return f"{title} ({index}/{total})"
 
 
 def send_card(
@@ -118,30 +118,51 @@ def send_card(
     *,
     template: str = "blue",
     timeout: float = 15.0,
+    split_tables: bool = True,
+    interval_seconds: float = 0.0,
 ) -> dict[str, Any]:
-    """Send an interactive card to Feishu using the configured mode."""
+    """Send one or more interactive cards to Feishu using the configured mode."""
     mode = feishu_mode(config)
-    if mode == "webhook":
-        return _send_webhook_card(config, title, markdown, template=template, timeout=timeout)
-    if mode == "app":
-        return _send_app_card(config, title, markdown, template=template, timeout=timeout)
-    raise FeishuError(
-        "飞书未配置。请设置 FEISHU_WEBHOOK_URL，或 FEISHU_APP_ID + FEISHU_APP_SECRET + FEISHU_CHAT_ID"
-    )
+    if mode not in ("webhook", "app"):
+        raise FeishuError(
+            "飞书未配置。请设置 FEISHU_WEBHOOK_URL，或 FEISHU_APP_ID + FEISHU_APP_SECRET + FEISHU_CHAT_ID"
+        )
+
+    payloads = build_card_payloads(title, markdown, template=template, split_tables=split_tables)
+    results: list[dict[str, Any]] = []
+    total = len(payloads)
+    for i, card in enumerate(payloads, start=1):
+        card_title = _title_with_part(title, i, total)
+        card = dict(card)
+        card["header"] = dict(card["header"])
+        card["header"]["title"] = dict(card["header"]["title"])
+        card["header"]["title"]["content"] = card_title
+        if mode == "webhook":
+            results.append(_send_webhook_card_payload(config, card, timeout=timeout))
+        else:
+            results.append(_send_app_card_payload(config, card, timeout=timeout))
+        if interval_seconds > 0 and i < total:
+            time.sleep(interval_seconds)
+
+    if total == 1:
+        return results[0]
+    return {
+        "code": 0,
+        "cards": total,
+        "results": results,
+        "feishu": results[-1],
+    }
 
 
-def _send_app_card(
+def _send_app_card_payload(
     config: Config,
-    title: str,
-    markdown: str,
+    card: dict[str, Any],
     *,
-    template: str,
     timeout: float,
 ) -> dict[str, Any]:
     token = get_tenant_access_token(config, timeout=timeout)
     chat_id = (config.get("feishu_chat_id") or "").strip()
     receive_id_type = (config.get("feishu_receive_id_type") or "chat_id").strip()
-    card = build_card(title, markdown, template=template)
     payload = {
         "receive_id": chat_id,
         "msg_type": "interactive",
@@ -171,16 +192,13 @@ def _webhook_sign(secret: str) -> Tuple[str, str]:
     return timestamp, sign
 
 
-def _send_webhook_card(
+def _send_webhook_card_payload(
     config: Config,
-    title: str,
-    markdown: str,
+    card: dict[str, Any],
     *,
-    template: str,
     timeout: float,
 ) -> dict[str, Any]:
     webhook_url = (config.get("feishu_webhook_url") or "").strip()
-    card = build_card(title, markdown, template=template)
     payload: dict[str, Any] = {
         "msg_type": "interactive",
         "card": card,

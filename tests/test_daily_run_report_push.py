@@ -21,7 +21,10 @@ class TestReportPush:
         )
         assert len(sections) == 2
         assert sections[0].category == "experts"
+        assert sections[0].title == "🌅 早盘 1/2 · 专家共识 · 澜起"
         assert sections[1].category == "decision"
+        assert "2/2" in sections[1].title
+        assert "可做" in sections[1].title
 
     def test_render_close_sections_skips_empty(self):
         sections = render_close_sections(
