@@ -1775,19 +1775,41 @@ def _cmd_daily_run(args):
             except Exception as exc:
                 print(f"❌ Schedule run failed: {exc}")
                 sys.exit(1)
+            symbol_results = result.get("symbol_results")
             job_result = result.get("result") or {}
             print(f"✅ Scheduled job '{job}' completed")
-            print(f"   snapshot: {result.get('snapshot_path')}")
-            if job == "morning":
+            if symbol_results:
+                print(f"   per-symbol: {len(symbol_results)} 只 · mode={result.get('symbols_mode', 'all')}")
+                for row in symbol_results:
+                    code = row.get("code")
+                    name = row.get("name") or code
+                    if row.get("skipped"):
+                        print(f"   - {code} {name}: skipped ({row.get('reason')})")
+                        continue
+                    inner = row.get("result") or {}
+                    if job == "morning":
+                        report = (inner.get("evaluation") or {}).get("report") or {}
+                        print(f"   - {code} {name}: {report.get('verdict')} MSS={report.get('mss_final')}")
+                    elif job == "intraday":
+                        scan = (inner.get("scan") or {}).get("scan") or {}
+                        print(f"   - {code} {name}: {scan.get('scan_id')} MSS={scan.get('mss_final')}")
+                    elif job == "close":
+                        verify = inner.get("verify") or {}
+                        print(f"   - {code} {name}: {str(verify.get('summary', ''))[:60]}")
+                if result.get("errors"):
+                    print(f"   ⚠️ partial errors: {'; '.join(result['errors'][:3])}")
+            else:
+                print(f"   snapshot: {result.get('snapshot_path')}")
+            if not symbol_results and job == "morning":
                 report = (job_result.get("evaluation") or {}).get("report") or {}
                 print(f"   verdict={report.get('verdict')} MSS={report.get('mss_final')}")
-            elif job == "intraday":
+            elif not symbol_results and job == "intraday":
                 scan = (job_result.get("scan") or {}).get("scan") or {}
                 scan_count = result.get("scan_count") or scan.get("scan_id")
                 print(f"   {scan.get('scan_id')} MSS={scan.get('mss_final')} · {scan.get('verdict')} · 累计 {scan_count} 次")
                 if result.get("push_error"):
                     print(f"   ⚠️ 飞书推送失败（扫描已记录）：{result['push_error'][:120]}")
-            elif job == "close":
+            elif not symbol_results and job == "close":
                 verify = job_result.get("verify") or {}
                 print(f"   summary: {verify.get('summary', '')[:80]}")
             elif job == "weekly":

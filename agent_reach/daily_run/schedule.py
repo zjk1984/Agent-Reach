@@ -197,6 +197,11 @@ def run_scheduled(
     return result
 
 
+def _uses_per_symbol_jobs(settings: dict) -> bool:
+    mode = str((settings.get("schedule") or {}).get("symbols_mode", "primary")).lower()
+    return mode != "primary"
+
+
 def _run_job_body(
     job: str,
     *,
@@ -207,17 +212,57 @@ def _run_job_body(
     t0: float,
 ) -> tuple[dict, Any]:
     """Execute morning/intraday/close; returns (result, feishu)."""
-    from agent_reach.daily_run.snapshot_builder import build_and_save, load_portfolio, save_portfolio
-    from agent_reach.daily_run.workflows import load_morning_baseline, run_close, run_morning
+    from agent_reach.daily_run.snapshot_builder import example_portfolio_path, load_portfolio, save_portfolio
 
     try:
         load_portfolio()
     except FileNotFoundError:
-        from agent_reach.daily_run.snapshot_builder import example_portfolio_path
-
         save_portfolio(
             __import__("json").loads(example_portfolio_path().read_text(encoding="utf-8"))
         )
+
+    per_symbol = job in ("morning", "intraday", "close") and _uses_per_symbol_jobs(settings)
+
+    if per_symbol and job == "morning":
+        from agent_reach.daily_run.symbol_runner import run_morning_for_symbols
+
+        with StepTimer("schedule.morning"):
+            result = run_morning_for_symbols(
+                settings=settings,
+                push=push,
+                config=config,
+                doctor_channels=doctor,
+            )
+            feishu = result.get("feishu")
+        return result, feishu
+
+    if per_symbol and job == "intraday":
+        from agent_reach.daily_run.symbol_runner import run_intraday_for_symbols
+
+        with StepTimer("schedule.intraday"):
+            result = run_intraday_for_symbols(
+                settings=settings,
+                push=push,
+                config=config,
+                doctor_channels=doctor,
+            )
+            feishu = result.get("feishu")
+        return result, feishu
+
+    if per_symbol and job == "close":
+        from agent_reach.daily_run.symbol_runner import run_close_for_symbols
+
+        with StepTimer("schedule.close"):
+            result = run_close_for_symbols(
+                settings=settings,
+                push=push,
+                config=config,
+            )
+            feishu = result.get("feishu")
+        return result, feishu
+
+    from agent_reach.daily_run.snapshot_builder import build_and_save
+    from agent_reach.daily_run.workflows import load_morning_baseline, run_close, run_morning
 
     result: dict
     feishu = None

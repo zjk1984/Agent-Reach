@@ -197,11 +197,16 @@ def build_snapshot(
     mss_breakdown = dict(macro_ctx.get("mss_breakdown") or pf.get("mss_breakdown") or {})
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
+    if report_type == "premarket" and (code_norm == "MARKET" or not primary_code):
+        snap_name = f"{today} 早盘"
+    else:
+        snap_name = primary_name
+
     snapshot: dict[str, Any] = {
         "as_of": datetime.now(timezone.utc).isoformat(),
         "report_type": report_type,
         "code": code_norm,
-        "name": primary_name if report_type != "premarket" else f"{today} 早盘",
+        "name": snap_name,
         "mss_breakdown": mss_breakdown,
         "sources": sources,
         "structured_review_complete": primary_ma20 is not None,
@@ -240,8 +245,15 @@ def build_and_save(
     *,
     report_type: str = "intraday",
     config=None,
+    primary_code: Optional[str] = None,
+    portfolio: Optional[dict[str, Any]] = None,
 ) -> tuple[dict[str, Any], Path]:
-    snap = build_snapshot(report_type=report_type, config=config)
+    snap = build_snapshot(
+        portfolio=portfolio,
+        report_type=report_type,
+        config=config,
+        primary_code=primary_code,
+    )
     out = output or (Path.home() / ".agent-reach" / "daily_run" / "last_snapshot.json")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(snap, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

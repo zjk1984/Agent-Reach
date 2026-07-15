@@ -26,12 +26,13 @@ def _default_baseline_path() -> Path:
     return Path.home() / ".agent-reach" / "daily_run" / "last_morning.json"
 
 
-def _attach_intraday_scans(snapshot: dict[str, Any]) -> dict[str, Any]:
-    """Merge today's intraday_state.json scans into close snapshot (source of truth)."""
+def _attach_intraday_scans(snapshot: dict[str, Any], *, code: Optional[str] = None) -> dict[str, Any]:
+    """Merge today's intraday scans into close snapshot (source of truth)."""
     from agent_reach.daily_run.intraday import load_state
 
     enriched = dict(snapshot)
-    state = load_state()
+    sym = code or enriched.get("code")
+    state = load_state(code=sym)
     if not state.scans:
         return enriched
     enriched["intraday_scans"] = state.scans
@@ -132,7 +133,7 @@ def run_close(
 ) -> dict[str, Any]:
     """Close workflow: Team-First experts → verify baseline vs current → Feishu push."""
     cfg = settings or load_settings()
-    current = _attach_intraday_scans(dict(current))
+    current = _attach_intraday_scans(dict(current), code=current.get("code"))
     current.setdefault("report_type", "close")
 
     enriched = current
@@ -228,18 +229,65 @@ def run_close(
     }
 
 
-def save_morning_baseline(snapshot: dict[str, Any], path: Optional[Path] = None) -> Path:
+def morning_baseline_path(code: str) -> Path:
+    from agent_reach.daily_run.snapshot_builder import _normalize_code
+
+    norm = _normalize_code(str(code))
+    return Path.home() / ".agent-reach" / "daily_run" / "baselines" / "morning" / f"{norm}.json"
+
+
+def save_morning_baseline(
+    snapshot: dict[str, Any],
+    path: Optional[Path] = None,
+    *,
+    code: Optional[str] = None,
+    primary_code: Optional[str] = None,
+) -> Path:
     """Persist morning snapshot for later close verification."""
     import json
 
+    from agent_reach.daily_run.snapshot_builder import _normalize_code
+
+    norm = _normalize_code(str(code or snapshot.get("code") or ""))
+    written: Optional[Path] = None
+    if norm and norm != "MARKET":
+        out = morning_baseline_path(norm)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        written = out
+
+    pc = _normalize_code(str(primary_code)) if primary_code else None
+    if path is not None or (pc and norm == pc):
+        legacy = path or _default_baseline_path()
+        legacy.parent.mkdir(parents=True, exist_ok=True)
+        legacy.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        return legacy
+    if written:
+        return written
     out = path or _default_baseline_path()
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return out
 
 
-def load_morning_baseline(path: Optional[Path] = None) -> dict[str, Any]:
+def load_morning_baseline(path: Optional[Path] = None, *, code: Optional[str] = None) -> dict[str, Any]:
     import json
+
+    from agent_reach.daily_run.snapshot_builder import _normalize_code
+
+    if code:
+        norm = _normalize_code(str(code))
+        per = morning_baseline_path(norm)
+        if per.exists():
+            return json.loads(per.read_text(encoding="utf-8"))
+        legacy = _default_baseline_path()
+        if legacy.exists():
+            data = json.loads(legacy.read_text(encoding="utf-8"))
+            if _normalize_code(str(data.get("code", ""))) == norm:
+                return data
+        raise FileNotFoundError(
+            f"未找到 {norm} 的早盘基线：{per}，请先运行 daily-run morning --save-baseline"
+        )
 
     p = path or _default_baseline_path()
     if not p.exists():

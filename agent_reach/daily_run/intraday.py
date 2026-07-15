@@ -64,12 +64,17 @@ class IntradayState:
         )
 
 
-def default_state_path() -> Path:
+def default_state_path(code: Optional[str] = None) -> Path:
+    if code:
+        from agent_reach.daily_run.snapshot_builder import _normalize_code
+
+        norm = _normalize_code(str(code))
+        return Path.home() / ".agent-reach" / "daily_run" / "intraday" / f"{norm}.json"
     return Path.home() / ".agent-reach" / "daily_run" / "intraday_state.json"
 
 
-def load_state(path: Optional[Path] = None) -> IntradayState:
-    p = path or default_state_path()
+def load_state(path: Optional[Path] = None, *, code: Optional[str] = None) -> IntradayState:
+    p = path or default_state_path(code)
     if not p.exists():
         return IntradayState(date=_today_str())
     data = json.loads(p.read_text(encoding="utf-8"))
