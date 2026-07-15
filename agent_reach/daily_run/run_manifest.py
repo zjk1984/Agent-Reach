@@ -21,6 +21,21 @@ def runs_dir() -> Path:
     return Path.home() / ".agent-reach" / "daily_run" / "runs"
 
 
+def _json_safe(value: Any) -> Any:
+    """Coerce manifest payload to JSON-serializable structures."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    if hasattr(value, "to_dict") and callable(value.to_dict):
+        return _json_safe(value.to_dict())
+    if hasattr(value, "__dict__"):
+        return _json_safe(vars(value))
+    return str(value)
+
+
 def save_run_manifest(
     job: str,
     payload: dict[str, Any],
@@ -41,7 +56,10 @@ def save_run_manifest(
         "feishu": feishu,
         "payload": payload,
     }
-    path.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(_json_safe(record), ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
     logger.info("daily-run manifest saved: {}", path)
     return path
 

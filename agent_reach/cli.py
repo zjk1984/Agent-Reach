@@ -1783,12 +1783,18 @@ def _cmd_daily_run(args):
                 print(f"   verdict={report.get('verdict')} MSS={report.get('mss_final')}")
             elif job == "intraday":
                 scan = (job_result.get("scan") or {}).get("scan") or {}
-                print(f"   {scan.get('scan_id')} MSS={scan.get('mss_final')} · {scan.get('verdict')}")
+                scan_count = result.get("scan_count") or scan.get("scan_id")
+                print(f"   {scan.get('scan_id')} MSS={scan.get('mss_final')} · {scan.get('verdict')} · 累计 {scan_count} 次")
+                if result.get("push_error"):
+                    print(f"   ⚠️ 飞书推送失败（扫描已记录）：{result['push_error'][:120]}")
             elif job == "close":
                 verify = job_result.get("verify") or {}
                 print(f"   summary: {verify.get('summary', '')[:80]}")
             if not args.dry_run:
-                print("   Feishu push sent")
+                if result.get("push_error") or (job_result.get("push_error")):
+                    print("   ⚠️ 扫描/复盘已完成，飞书推送未成功")
+                elif job_result.get("feishu") or result.get("feishu"):
+                    print("   Feishu push sent")
             return
 
         print("Usage: agent-reach daily-run schedule {print|install|run} [--job morning|intraday|close]")

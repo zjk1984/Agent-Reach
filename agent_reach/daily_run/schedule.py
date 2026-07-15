@@ -215,8 +215,12 @@ def run_scheduled(
                     "snapshot_path": str(path),
                     "trade_evaluated": do_trade,
                     "result": run_result,
+                    "scan_count": (run_result.get("scan_count")
+                                   or len((run_result.get("scan") or {}).get("state", {}).get("scans") or [])),
                 }
                 feishu = run_result.get("feishu")
+                if run_result.get("push_error"):
+                    result["push_error"] = run_result["push_error"]
 
     elif job == "close":
         from agent_reach.daily_run.intraday import load_state

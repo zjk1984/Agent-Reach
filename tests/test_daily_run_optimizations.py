@@ -23,10 +23,16 @@ class TestMssForecast:
 
 class TestCurveAnalysis:
     def test_analyze_intraday_curve(self):
-        analysis = analyze_intraday_curve([42, 44, 46, 45], predicted_range=(40, 52))
+        analysis = analyze_intraday_curve(
+            [42, 44, 46, 45],
+            predicted_range=(40, 52),
+            scan_ids=["S1", "S2", "S3", "S4"],
+        )
         assert analysis["points"] == 4
         md = render_curve_markdown(analysis)
         assert "盘中 MSS 曲线" in md
+        assert "扫描次数：**4**" in md
+        assert "S1=42" in md
 
 
 class TestVerdictFusion:

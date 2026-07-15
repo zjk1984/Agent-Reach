@@ -153,7 +153,9 @@ def record_scan(
         "lookback_mss": lookback_mss,
         "lookback_detail": lookback_detail,
         "trend": trend,
-        "markdown": render_intraday_scan_markdown(entry, lookback_mss, lookback_detail, trend, report),
+        "markdown": render_intraday_scan_markdown(
+            entry, lookback_mss, lookback_detail, trend, report, scan_count=len(st.scans)
+        ),
     }
 
 
@@ -294,9 +296,10 @@ def run_intraday(
         steps.append("trade")
 
     feishu_result = None
+    push_error: Optional[str] = None
     if push:
         from agent_reach.config import Config
-        from agent_reach.integrations.feishu import send_card
+        from agent_reach.integrations.feishu import FeishuError, send_card
 
         cfg_obj = config or Config()
         tpl = cfg.get("report", {}).get("feishu_template_intraday", "blue")
@@ -307,15 +310,22 @@ def run_intraday(
         md_parts = [scan_result["markdown"]]
         if trade_result:
             md_parts.append("\n---\n\n" + trade_result["markdown"])
-        feishu_result = send_card(cfg_obj, card_title, "\n".join(md_parts), template=tpl)
-        steps.append("push")
+        try:
+            feishu_result = send_card(cfg_obj, card_title, "\n".join(md_parts), template=tpl)
+            steps.append("push")
+        except FeishuError as exc:
+            push_error = str(exc)
 
-    return {
+    out: dict[str, Any] = {
         "steps": steps,
         "scan": scan_result,
         "trade": trade_result,
         "feishu": feishu_result,
+        "scan_count": len(scan_result.get("state", {}).get("scans") or []),
     }
+    if push_error:
+        out["push_error"] = push_error
+    return out
 
 
 def render_intraday_scan_markdown(
@@ -324,6 +334,8 @@ def render_intraday_scan_markdown(
     lookback_detail: list[dict[str, Any]],
     trend: str,
     report: dict[str, Any],
+    *,
+    scan_count: Optional[int] = None,
 ) -> str:
     trend_map = {
         "rising": "上升",
@@ -340,6 +352,9 @@ def render_intraday_scan_markdown(
         f"**即时 MSS：** {scan.get('mss_final')} 分 · **标签：** {scan.get('verdict')}",
         f"**Lookback MSS：** {lookback_mss} 分 · **趋势：** {trend_map.get(trend, trend)}",
     ]
+    total = scan_count if scan_count is not None else len(lookback_detail)
+    if total > 1:
+        lines.append(f"**今日累计扫描：** {total} 次")
     if lookback_detail:
         lines.extend(["", "**Lookback 加权拆解：**"])
         for item in lookback_detail:

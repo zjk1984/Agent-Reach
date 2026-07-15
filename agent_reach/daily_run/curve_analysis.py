@@ -10,14 +10,16 @@ def analyze_intraday_curve(
     mss_values: list[float],
     *,
     predicted_range: Optional[tuple[float, float]] = None,
+    scan_ids: Optional[list[str]] = None,
 ) -> dict[str, Any]:
     """Polynomial-lite curve analysis on S1-Sn MSS series."""
     if not mss_values:
-        return {"summary": "无盘中 MSS 数据", "points": 0}
+        return {"summary": "无盘中 MSS 数据", "points": 0, "scan_ids": []}
 
     n = len(mss_values)
     xs = list(range(n))
     ys = [float(v) for v in mss_values]
+    labels = list(scan_ids or [f"S{i + 1}" for i in range(n)])
 
     # Linear regression slope (1st derivative proxy)
     x_mean = sum(xs) / n
@@ -51,6 +53,7 @@ def analyze_intraday_curve(
     return {
         "points": n,
         "values": ys,
+        "scan_ids": labels,
         "slope": round(slope, 3),
         "acceleration": round(accel, 3),
         "trend": trend,
@@ -65,9 +68,19 @@ def render_curve_markdown(analysis: dict[str, Any]) -> str:
         "**📈 盘中 MSS 曲线**",
         "",
         analysis.get("summary", ""),
+    ]
+    n = int(analysis.get("points") or 0)
+    if n > 0:
+        labels = analysis.get("scan_ids") or [f"S{i + 1}" for i in range(n)]
+        values = analysis.get("values") or []
+        seq = " → ".join(f"{labels[i]}={values[i]:.0f}" for i in range(n) if i < len(values))
+        lines.append(f"- 扫描次数：**{n}** 次（{' · '.join(labels)}）")
+        if seq:
+            lines.append(f"- MSS 序列：{seq}")
+    lines.extend([
         f"- 斜率：{analysis.get('slope', '—')} · 加速度：{analysis.get('acceleration', '—')}",
         f"- 趋势研判：**{analysis.get('trend', '—')}**",
-    ]
+    ])
     if analysis.get("prediction_hit") is not None:
         hit = "✅ 命中" if analysis["prediction_hit"] else "❌ 偏离"
         lines.append(f"- 预测区间：{hit}")

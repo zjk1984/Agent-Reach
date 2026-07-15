@@ -20,6 +20,21 @@ def _default_baseline_path() -> Path:
     return Path.home() / ".agent-reach" / "daily_run" / "last_morning.json"
 
 
+def _attach_intraday_scans(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Merge today's intraday_state.json scans into close snapshot (source of truth)."""
+    from agent_reach.daily_run.intraday import load_state
+
+    enriched = dict(snapshot)
+    state = load_state()
+    if not state.scans:
+        return enriched
+    enriched["intraday_scans"] = state.scans
+    enriched["mss_intraday_actual"] = [
+        float(s["mss_final"]) for s in state.scans if s.get("mss_final") is not None
+    ]
+    return enriched
+
+
 def run_morning(
     snapshot: dict[str, Any],
     *,
@@ -97,7 +112,7 @@ def run_close(
 ) -> dict[str, Any]:
     """Close workflow: Team-First experts → verify baseline vs current → Feishu push."""
     cfg = settings or load_settings()
-    current = dict(current)
+    current = _attach_intraday_scans(dict(current))
     current.setdefault("report_type", "close")
 
     enriched = current
@@ -115,11 +130,14 @@ def run_close(
 
     curve = None
     mss_actual = enriched.get("mss_intraday_actual") or []
+    scan_ids = [str(s.get("scan_id") or f"S{i + 1}") for i, s in enumerate(enriched.get("intraday_scans") or [])]
     if mss_actual:
         pred = baseline.get("mss_range")
         pred_tuple = (float(pred[0]), float(pred[1])) if pred and len(pred) == 2 else None
         curve = analyze_intraday_curve(
-            [float(x) for x in mss_actual if x is not None], predicted_range=pred_tuple
+            [float(x) for x in mss_actual if x is not None],
+            predicted_range=pred_tuple,
+            scan_ids=scan_ids or None,
         )
         extra_parts.append(render_curve_markdown(curve))
 
