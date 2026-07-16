@@ -14,16 +14,18 @@ on:
   schedule:
     # 08:00 CST — morning + MSS forecast + Feishu
     - cron: "0 0 * * 1-5"
-    # 09:30–15:00 CST — intraday S1–S10 + Lookback MSS
+    # 09:30–15:00 CST — intraday S1–S12 + Lookback MSS (~every 24 min)
     - cron: "30 1 * * 1-5"
-    - cron: "0 2 * * 1-5"
-    - cron: "30 2 * * 1-5"
-    - cron: "0 3 * * 1-5"
+    - cron: "54 1 * * 1-5"
+    - cron: "18 2 * * 1-5"
+    - cron: "42 2 * * 1-5"
+    - cron: "6 3 * * 1-5"
     - cron: "30 3 * * 1-5"
     - cron: "0 5 * * 1-5"
-    - cron: "30 5 * * 1-5"
-    - cron: "0 6 * * 1-5"
-    - cron: "30 6 * * 1-5"
+    - cron: "24 5 * * 1-5"
+    - cron: "48 5 * * 1-5"
+    - cron: "12 6 * * 1-5"
+    - cron: "36 6 * * 1-5"
     - cron: "0 7 * * 1-5"
     # 15:30 CST — close + MSS curve + verify
     - cron: "30 7 * * 1-5"

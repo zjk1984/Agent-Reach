@@ -150,6 +150,7 @@ def run_intraday_for_symbols(
         should_evaluate_trade,
     )
     from agent_reach.daily_run.report_push import ReportSection, merged_category_title, push_report_sections
+    from agent_reach.daily_run.schedule import INTRADAY_MAX_SCANS
 
     cfg = settings or load_settings()
     pf = load_portfolio()
@@ -164,9 +165,14 @@ def run_intraday_for_symbols(
         name = symbol_display_name(pf, code)
         state_path = default_state_path(code)
         state = load_state(state_path)
-        if len(state.scans) >= 10:
+
+        if len(state.scans) >= INTRADAY_MAX_SCANS:
             symbol_results.append(
-                {"code": code, "skipped": True, "reason": "今日扫描已达 10 次上限"}
+                {
+                    "code": code,
+                    "skipped": True,
+                    "reason": f"今日扫描已达 {INTRADAY_MAX_SCANS} 次上限",
+                }
             )
             continue
         try:

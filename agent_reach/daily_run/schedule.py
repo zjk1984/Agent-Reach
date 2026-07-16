@@ -16,19 +16,22 @@ from agent_reach.daily_run.run_manifest import StepTimer, save_run_manifest
 MARKER_BEGIN = "# agent-reach daily-run schedule BEGIN"
 MARKER_END = "# agent-reach daily-run schedule END"
 
-# 10 intraday scans: 9:30–15:00 (Asia/Shanghai)
+# 12 intraday scans: 9:30–15:00 (Asia/Shanghai), ~every 24 min (6 per session)
 INTRADAY_SCAN_TIMES: list[tuple[str, str]] = [
-    ("30", "9"),
-    ("0", "10"),
-    ("30", "10"),
-    ("0", "11"),
-    ("30", "11"),
-    ("0", "13"),
-    ("30", "13"),
-    ("0", "14"),
-    ("30", "14"),
-    ("0", "15"),
+    ("30", "9"),   # 09:30 S1
+    ("54", "9"),   # 09:54 S2
+    ("18", "10"),  # 10:18 S3
+    ("42", "10"),  # 10:42 S4
+    ("6", "11"),   # 11:06 S5
+    ("30", "11"),  # 11:30 S6
+    ("0", "13"),   # 13:00 S7
+    ("24", "13"),  # 13:24 S8
+    ("48", "13"),  # 13:48 S9
+    ("12", "14"),  # 14:12 S10
+    ("36", "14"),  # 14:36 S11
+    ("0", "15"),   # 15:00 S12
 ]
+INTRADAY_MAX_SCANS = len(INTRADAY_SCAN_TIMES)
 
 
 @dataclass
@@ -68,7 +71,7 @@ def default_entries() -> list[CronEntry]:
                 hour,
                 "1-5",
                 f"{cmd} daily-run schedule run intraday",
-                f"daily-run 盘中 S{i}/10",
+                f"daily-run 盘中 S{i}/{INTRADAY_MAX_SCANS}",
             )
         )
     entries.append(
@@ -289,8 +292,12 @@ def _run_job_body(
 
         with StepTimer("schedule.intraday"):
             state = load_state()
-            if len(state.scans) >= 10:
-                result = {"job": job, "skipped": True, "reason": "今日扫描已达 10 次上限"}
+            if len(state.scans) >= INTRADAY_MAX_SCANS:
+                result = {
+                    "job": job,
+                    "skipped": True,
+                    "reason": f"今日扫描已达 {INTRADAY_MAX_SCANS} 次上限",
+                }
                 feishu = None
             else:
                 snap, path = build_and_save(report_type="intraday", config=config)

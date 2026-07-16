@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Intraday scan (S1-S10) and trade (T1-T5) workflow with lookback MSS."""
+"""Intraday scan (S1-S12) and trade (T1-T5) workflow with lookback MSS."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from agent_reach.daily_run.plugins.loader import run_experts
 from agent_reach.daily_run.settings import load_settings
 
 
-MAX_SCANS = 10
+from agent_reach.daily_run.schedule import INTRADAY_MAX_SCANS as MAX_SCANS
 MAX_TRADES = 5
 
 

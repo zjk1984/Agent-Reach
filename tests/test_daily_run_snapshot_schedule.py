@@ -93,15 +93,18 @@ class TestSchedule:
         assert "schedule run morning" in block
         assert "schedule run intraday" in block
         assert "schedule run close" in block
+        assert "S12/12" in block
+        assert block.count("schedule run intraday") == 12
 
     def test_default_entries_count(self):
-        assert len(default_entries()) == 14  # morning + 10 scans + close + weekly + forecast
+        assert len(default_entries()) == 16  # morning + 12 scans + close + weekly + forecast
 
     @patch("agent_reach.daily_run.workflows.save_morning_baseline")
     @patch("agent_reach.daily_run.workflows.run_morning")
     @patch("agent_reach.daily_run.snapshot_builder.build_and_save")
     @patch("agent_reach.daily_run.snapshot_builder.load_portfolio")
-    def test_run_scheduled_morning(self, mock_load, mock_build, mock_morning, mock_save_baseline, portfolio, tmp_path):
+    @patch("agent_reach.daily_run.schedule._uses_per_symbol_jobs", return_value=False)
+    def test_run_scheduled_morning(self, mock_per_symbol, mock_load, mock_build, mock_morning, mock_save_baseline, portfolio, tmp_path):
         mock_load.return_value = portfolio
         mock_build.return_value = ({"code": "688008"}, tmp_path / "snap.json")
         mock_morning.return_value = {"snapshot": {"code": "688008"}, "evaluation": {"report": {}}}
