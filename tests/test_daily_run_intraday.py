@@ -1,7 +1,7 @@
 # -*- coding: utf-8
 """Tests for intraday scan/trade workflow and lookback MSS."""
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from unittest.mock import patch
 
 import pytest
@@ -9,6 +9,7 @@ import pytest
 from agent_reach.daily_run.intraday import (
     IntradayState,
     evaluate_trade,
+    load_state,
     record_scan,
     reset_state,
     run_intraday,
@@ -63,6 +64,17 @@ class TestLookback:
 
 
 class TestIntradayWorkflow:
+    def test_load_state_rolls_over_on_beijing_date(self, tmp_path):
+        state_path = tmp_path / "intraday.json"
+        state_path.write_text(
+            '{"date": "1999-01-01", "scans": [{"scan_id": "S1"}], "trades": []}',
+            encoding="utf-8",
+        )
+        with patch("agent_reach.daily_run.intraday.today_shanghai", return_value=date(2026, 7, 9)):
+            state = load_state(state_path)
+        assert state.date == "2026-07-09"
+        assert state.scans == []
+
     def test_record_scan(self, intraday_snapshot, tmp_path):
         state_path = tmp_path / "intraday.json"
         reset_state(state_path)
