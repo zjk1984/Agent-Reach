@@ -53,7 +53,22 @@
     "required_source_categories": ["quote", "flow", "sentiment"],
     "block_on_audit_fail": true,
     "block_on_price_deviation": true,
+    "close_block_on_audit_fail": true,
+    "intraday_block_on_audit_fail": false,
+    "min_quote_coverage_pct": 0.8,
+    "quote_coverage_mode": "block",
     "required_doctor_channels": ["web", "xueqiu"]
+  },
+
+  "quote_fetch": {
+    "sources": ["xueqiu", "akshare"],
+    "max_retries": 2
+  },
+
+  "feishu": {
+    "send_max_retries": 3,
+    "send_backoff_seconds": [1, 2, 4],
+    "fallback_plaintext_on_card_error": true
   },
 
   "verdict_labels": {
@@ -65,19 +80,27 @@
   "confidence_levels": ["高", "中", "低"],
 
   "report": {
+    "split_push": true,
+    "split_push_interval_seconds": 0.3,
+    "morning_split_push": true,
+    "close_split_push": true,
+    "feishu_split_tables": true,
     "feishu_template_premarket": "orange",
     "feishu_template_intraday": "blue",
     "feishu_template_close": "purple",
     "feishu_template_verify": "purple",
-    "feishu_template_weekly": "green",
-    "feishu_template_forecast": "blue"
+    "feishu_template_weekly": "blue",
+    "feishu_template_forecast": "blue",
+    "weekly_split_push": true,
+    "forecast_split_push": true
   },
 
   "weekly_report": {
     "enabled": true,
+    "split_push": true,
     "exa_sector_research": true,
     "max_sector_queries": 3,
-    "skill_learning": true,
+    "skill_learning": false,
     "exa_skill_research": true,
     "max_skill_queries": 2,
     "max_skill_items": 8,
@@ -87,6 +110,7 @@
 
   "week_forecast": {
     "enabled": true,
+    "split_push": true,
     "exa_news_research": true,
     "max_news_queries": 2,
     "close_review": true,
@@ -95,6 +119,13 @@
     "max_bias_pct": 3.0,
     "min_vol_scale": 0.6,
     "max_vol_scale": 1.6
+  },
+
+  "findskills": {
+    "enabled": true,
+    "result_limit": 3,
+    "timeout": 45,
+    "max_queries": 2
   },
 
   "akshare": {
@@ -143,6 +174,7 @@
   },
 
   "team": {
+    "enabled": false,
     "mode": "full_parallel",
     "experts": [
       "fundamental",
@@ -156,8 +188,9 @@
     ],
     "parallel": true,
     "supervisor": true,
-    "morning_team_first": true,
-    "close_team_first": true
+    "morning_team_first": false,
+    "close_team_first": false,
+    "intraday_experts": false
   },
 
   "macro_collector": {
@@ -172,10 +205,14 @@
   },
 
   "schedule": {
+    "symbols_mode": "all",
+    "symbol_push_mode": "merge_by_category",
+    "symbol_push_interval_seconds": 0.5,
     "intraday_trade_enabled": true,
     "trade_min_scans": 3,
     "trade_every_n_scans": 2,
     "morning_doctor": true,
+    "alert_after_consecutive_failures": 3,
     "intraday_push_mode": "smart",
     "intraday_push_milestones": ["S1", "S2", "S12"],
     "doctor_cache": true,

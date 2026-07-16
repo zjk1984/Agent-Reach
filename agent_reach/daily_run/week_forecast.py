@@ -303,11 +303,7 @@ def run_news_research(
 
     def _run_one(q: dict[str, str]) -> dict[str, Any]:
         try:
-            from agent_reach.daily_run.exa_cache import cached_web_search_exa
-
-            hits, _cached = cached_web_search_exa(
-                q["query"], num_results=3, timeout=timeout, settings=settings
-            )
+            hits = web_search_exa(q["query"], num_results=3, timeout=timeout)
             return {**q, "hits": hits, "summary": summarize_hits(hits), "success": True}
         except ExaError as exc:
             return {**q, "hits": [], "summary": str(exc), "success": False}
@@ -450,17 +446,19 @@ def persist_week_forecast(forecast: WeekForecast) -> Path:
     return save_forecast(forecast.to_dict())
 
 
-def render_forecast_markdown(forecast: WeekForecast | dict[str, Any]) -> str:
-    if isinstance(forecast, WeekForecast):
-        data = forecast.to_dict()
-    else:
-        data = forecast
+@dataclass
+class ForecastSection:
+    """One Feishu card body when split_push is enabled."""
 
+    label: str
+    markdown: str
+
+
+def _render_mss_section(data: dict[str, Any]) -> str:
     lines: list[str] = []
     ws, we = data["week_start"], data["week_end"]
     lines.append(f"**📅 预测周期：** {ws} ~ {we}")
     lines.append("")
-
     lines.append("## 📈 下周 MSS 预测")
     mss_daily = data.get("mss_daily") or {}
     if mss_daily:
@@ -472,17 +470,30 @@ def render_forecast_markdown(forecast: WeekForecast | dict[str, Any]) -> str:
                 lines.append(f"- **{ds} {wd}** 区间 [{rng[0]}, {rng[1]}] 中位 {med}")
     else:
         lines.append("- 暂无 MSS 日预测")
-    lines.append("")
+    cal = data.get("calibration_used") or {}
+    if cal.get("hit_rate") is not None:
+        lines.append("")
+        lines.append("## 🎯 预测校准")
+        lines.append(
+            f"- 历史命中率 **{float(cal['hit_rate']):.0%}** · "
+            f"偏差校正 bias={cal.get('bias_pct', 0):+.2f}% vol_scale={cal.get('vol_scale', 1):.2f}"
+        )
+    for note in data.get("notes") or []:
+        lines.append(f"\n_{note}_")
+    return "\n".join(lines).strip()
 
-    lines.append("## 📊 持股 / 观察池 · 每日走势预测")
+
+def _render_symbols_section(data: dict[str, Any]) -> str:
+    lines: list[str] = ["## 📊 持股 / 观察池 · 每日走势预测"]
     symbols = data.get("symbols") or {}
     if not symbols:
         lines.append("- 无持仓或观察池标的")
+        return "\n".join(lines)
+    dir_cn = {"up": "↑看涨", "down": "↓看跌", "flat": "→震荡"}
     for code, sym in symbols.items():
         role = "持仓" if sym.get("role") == "holding" else "观察"
         lines.append(f"### {sym.get('name')} ({code}) · {role}")
         days = sym.get("days") or {}
-        dir_cn = {"up": "↑看涨", "down": "↓看跌", "flat": "→震荡"}
         for ds in sorted(days.keys()):
             day = days[ds]
             wd = WEEKDAY_CN[date.fromisoformat(ds).weekday()]
@@ -490,35 +501,63 @@ def render_forecast_markdown(forecast: WeekForecast | dict[str, Any]) -> str:
             d_label = dir_cn.get(day.get("direction"), "→震荡")
             conf = day.get("confidence")
             conf_s = f" 置信 {conf:.0%}" if conf is not None else ""
-            lines.append(
-                f"- **{ds} {wd}** {d_label} 预期 {lo:+.1f}% ~ {hi:+.1f}%{conf_s}"
-            )
+            lines.append(f"- **{ds} {wd}** {d_label} 预期 {lo:+.1f}% ~ {hi:+.1f}%{conf_s}")
         lines.append("")
+    return "\n".join(lines).strip()
 
-    lines.append("## 📰 新闻与热点事件")
-    for ev in data.get("news_events") or []:
+
+def _render_news_section(data: dict[str, Any]) -> str:
+    lines: list[str] = ["## 📰 新闻与热点事件"]
+    events = data.get("news_events") or []
+    research = data.get("news_research") or []
+    if not events and not research:
+        lines.append("- 暂无新闻调研")
+        return "\n".join(lines)
+    for ev in events:
         lines.append(f"- **{ev.get('title', '事件')}** ({ev.get('source', '')})")
         if ev.get("summary"):
             lines.append(f"  {ev['summary']}")
-    for r in data.get("news_research") or []:
+    for r in research:
         status = "✅" if r.get("success") else "⚠️"
         lines.append(f"**{status} {r.get('label', '调研')}**")
         if r.get("summary"):
             lines.append(r["summary"])
         lines.append("")
-
-    cal = data.get("calibration_used") or {}
-    if cal.get("hit_rate") is not None:
-        lines.append("## 🎯 预测校准")
-        lines.append(
-            f"- 历史命中率 **{float(cal['hit_rate']):.0%}** · "
-            f"偏差校正 bias={cal.get('bias_pct', 0):+.2f}% vol_scale={cal.get('vol_scale', 1):.2f}"
-        )
-
-    for note in data.get("notes") or []:
-        lines.append(f"\n_{note}_")
-
     return "\n".join(lines).strip()
+
+
+def render_forecast_sections(forecast: WeekForecast | dict[str, Any]) -> list[ForecastSection]:
+    data = forecast.to_dict() if isinstance(forecast, WeekForecast) else forecast
+    sections: list[ForecastSection] = []
+    mss_md = _render_mss_section(data)
+    if mss_md.strip():
+        sections.append(ForecastSection(label="MSS预测", markdown=mss_md))
+    sym_md = _render_symbols_section(data)
+    if sym_md.strip():
+        sections.append(ForecastSection(label="个股路径", markdown=sym_md))
+    news_md = _render_news_section(data)
+    if news_md.strip():
+        sections.append(ForecastSection(label="新闻热点", markdown=news_md))
+    return sections
+
+
+def render_forecast_markdown(forecast: WeekForecast | dict[str, Any]) -> str:
+    parts = [s.markdown for s in render_forecast_sections(forecast) if s.markdown.strip()]
+    return "\n\n".join(parts).strip()
+
+
+def forecast_section_title(
+    forecast: WeekForecast | dict[str, Any],
+    index: int,
+    total: int,
+    label: str,
+) -> str:
+    if isinstance(forecast, WeekForecast):
+        ws, we = forecast.week_start, forecast.week_end
+    else:
+        ws = date.fromisoformat(str(forecast["week_start"]))
+        we = date.fromisoformat(str(forecast["week_end"]))
+    return f"🔮 下周预测 {index}/{total} · {label} · {ws:%m/%d}–{we:%m/%d}"
 
 
 def forecast_title(forecast: WeekForecast | dict[str, Any]) -> str:

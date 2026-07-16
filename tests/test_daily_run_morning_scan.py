@@ -63,14 +63,11 @@ class TestMorningScanMerge:
         state_path = tmp_path / "state.json"
         reset_state(state_path)
         enriched = {"code": "688008", "price": 247.15}
-        with patch("agent_reach.daily_run.intraday.run_experts") as mock_experts:
-            result = record_scan(
-                enriched,
-                settings=load_settings(),
-                state_path=state_path,
-                pre_enriched=enriched,
-                pre_evaluation=evaluation,
-                source="morning",
-            )
-        mock_experts.assert_not_called()
+        result = record_scan_from_evaluation(
+            enriched,
+            evaluation,
+            settings=load_settings(),
+            state_path=state_path,
+            source="morning",
+        )
         assert result["scan"]["scan_id"] == "S1"

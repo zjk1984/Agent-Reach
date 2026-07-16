@@ -371,7 +371,7 @@ class TestScheduleWeekly:
         from agent_reach.daily_run.schedule import default_entries
 
         entries = default_entries()
-        assert len(entries) == 15
+        assert len(entries) == 16
         assert any("weekly" in e.job for e in entries)
         assert any("forecast" in e.job for e in entries)
         assert any(e.weekday == "6" and e.hour == "9" for e in entries)

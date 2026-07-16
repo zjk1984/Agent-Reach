@@ -439,11 +439,7 @@ def run_sector_research(
 
     def _run_one(q: dict[str, str]) -> dict[str, Any]:
         try:
-            from agent_reach.daily_run.exa_cache import cached_web_search_exa
-
-            hits, _cached = cached_web_search_exa(
-                q["query"], num_results=3, timeout=timeout, settings=settings
-            )
+            hits = web_search_exa(q["query"], num_results=3, timeout=timeout)
             return {**q, "hits": hits, "summary": summarize_hits(hits), "success": True}
         except ExaError as exc:
             return {**q, "hits": [], "summary": str(exc), "success": False}
@@ -455,6 +451,95 @@ def run_sector_research(
         for fut in as_completed(futures):
             ordered[futures[fut]] = fut.result()
     return [r for r in ordered if r is not None]
+
+
+def _portfolio_has_positions(portfolio: dict[str, Any]) -> bool:
+    return bool(portfolio.get("holdings") or portfolio.get("watchlist"))
+
+
+def _portfolio_from_morning_baseline() -> Optional[dict[str, Any]]:
+    from agent_reach.daily_run.workflows import load_morning_baseline
+
+    try:
+        baseline = load_morning_baseline()
+    except FileNotFoundError:
+        return None
+    pf = dict(baseline.get("portfolio") or {})
+    watchlist = baseline.get("watchlist") or pf.get("watchlist") or []
+    if watchlist:
+        pf["watchlist"] = [dict(w) for w in watchlist]
+    if _portfolio_has_positions(pf):
+        return pf
+    return None
+
+
+def _portfolio_from_manifests(
+    manifests: list[dict[str, Any]],
+    *,
+    prefer_date: Optional[date] = None,
+) -> Optional[dict[str, Any]]:
+    """Recover holdings/watchlist from the latest snapshot embedded in run manifests."""
+
+    def _from_snapshot(snap: dict[str, Any]) -> Optional[dict[str, Any]]:
+        pf = dict(snap.get("portfolio") or {})
+        watchlist = snap.get("watchlist") or pf.get("watchlist") or []
+        if watchlist:
+            pf["watchlist"] = [dict(w) for w in watchlist]
+        if _portfolio_has_positions(pf):
+            return pf
+        return None
+
+    if prefer_date is not None:
+        ds = prefer_date.isoformat()
+        day_rows = sorted(
+            [m for m in manifests if m.get("_run_date") == ds],
+            key=_manifest_sort_key,
+        )
+        for record in reversed(day_rows):
+            snap = _snapshot_from_manifest(record)
+            if snap:
+                pf = _from_snapshot(snap)
+                if pf:
+                    return pf
+
+    for record in sorted(manifests, key=_manifest_sort_key, reverse=True):
+        snap = _snapshot_from_manifest(record)
+        if snap:
+            pf = _from_snapshot(snap)
+            if pf:
+                return pf
+    return None
+
+
+def resolve_weekly_portfolio(
+    snapshot: dict[str, Any],
+    portfolio: Optional[dict[str, Any]],
+    manifests: list[dict[str, Any]],
+    *,
+    week_end: date,
+) -> tuple[dict[str, Any], list[str]]:
+    """Use portfolio.json when present; otherwise fall back to morning baseline or manifests."""
+    pf = dict(portfolio or snapshot.get("portfolio") or {})
+    if _portfolio_has_positions(pf):
+        return pf, []
+
+    notes: list[str] = []
+    baseline_pf = _portfolio_from_morning_baseline()
+    if baseline_pf:
+        notes.append("持仓/观察池来自 last_morning.json（portfolio.json 为空或缺失）")
+        return baseline_pf, notes
+
+    manifest_pf = _portfolio_from_manifests(manifests, prefer_date=week_end)
+    if manifest_pf:
+        notes.append(f"持仓/观察池来自 {week_end.isoformat()} 运行 manifest（portfolio.json 为空）")
+        return manifest_pf, notes
+
+    manifest_pf = _portfolio_from_manifests(manifests)
+    if manifest_pf:
+        notes.append("持仓/观察池来自本周 manifest（portfolio.json 为空）")
+        return manifest_pf, notes
+
+    return pf, notes
 
 
 def _load_experience_snippets(start: date, end: date, limit: int = 5) -> list[str]:
@@ -485,15 +570,23 @@ def generate_weekly_report(
 ) -> WeeklyReport:
     """Aggregate Mon–Fri manifests, ledger, portfolio into a weekly summary."""
     week_start, week_end = trading_week_range(as_of)
-    pf = portfolio or (snapshot.get("portfolio") or {})
-    enriched = build_enriched_symbols(snapshot)
     manifests = _load_week_manifests(week_start, week_end)
+    pf, pf_notes = resolve_weekly_portfolio(snapshot, portfolio, manifests, week_end=week_end)
+
+    snap_for_symbols = snapshot
+    if pf_notes:
+        from agent_reach.daily_run.symbols import sync_snapshot_portfolio
+
+        snap_for_symbols = dict(snapshot)
+        sync_snapshot_portfolio(snap_for_symbols, pf)
+
+    enriched = build_enriched_symbols(snap_for_symbols)
     trades = _load_trade_ledger_range(week_start, week_end)
     realized = _compute_realized_pnl(trades)
 
     start_total: Optional[float] = None
     end_total: Optional[float] = None
-    notes: list[str] = []
+    notes: list[str] = list(pf_notes)
 
     morning_totals: list[tuple[str, float]] = []
     close_totals: list[tuple[str, float]] = []
@@ -591,26 +684,35 @@ def generate_weekly_report(
     )
 
 
-def render_weekly_markdown(report: WeeklyReport) -> str:
-    """Render Feishu-friendly weekly summary markdown."""
-    lines: list[str] = []
-    ws, we = report.week_start.isoformat(), report.week_end.isoformat()
-    lines.append(f"**📅 周期：** {ws} ~ {we}")
-    lines.append("")
+@dataclass
+class WeeklySection:
+    """One Feishu card body when split_push is enabled."""
 
-    lines.append("## 💰 本周盈亏")
+    label: str
+    markdown: str
+
+
+def _join_section_lines(lines: list[str]) -> str:
+    return "\n".join(lines).strip()
+
+
+def _period_header_lines(report: WeeklyReport, *, continuation: bool = False) -> list[str]:
+    ws, we = report.week_start.isoformat(), report.week_end.isoformat()
+    if continuation:
+        return [f"_📅 {ws} ~ {we}（续）_", ""]
+    return [f"**📅 周期：** {ws} ~ {we}", ""]
+
+
+def _render_pnl_lines(report: WeeklyReport) -> list[str]:
+    lines = ["## 💰 本周盈亏"]
     if report.weekly_pnl is not None:
         sign = "+" if report.weekly_pnl >= 0 else ""
         pct = ""
         if report.weekly_pnl_pct is not None:
             pct = f"（{sign}{report.weekly_pnl_pct}%）"
-        lines.append(
-            f"- **组合净值变动：** {sign}¥{report.weekly_pnl:,.2f}{pct}"
-        )
+        lines.append(f"- **组合净值变动：** {sign}¥{report.weekly_pnl:,.2f}{pct}")
         if report.start_total is not None and report.end_total is not None:
-            lines.append(
-                f"- 周初 ¥{report.start_total:,.2f} → 周末 ¥{report.end_total:,.2f}"
-            )
+            lines.append(f"- 周初 ¥{report.start_total:,.2f} → 周末 ¥{report.end_total:,.2f}")
     else:
         lines.append("- 暂无完整净值数据（需本周 daily-run manifest）")
     if report.realized_pnl:
@@ -621,8 +723,11 @@ def render_weekly_markdown(report: WeeklyReport) -> str:
     for note in report.notes:
         lines.append(f"- _{note}_")
     lines.append("")
+    return lines
 
-    lines.append("## 📊 持股")
+
+def _render_holdings_lines(report: WeeklyReport) -> list[str]:
+    lines = ["## 📊 持股"]
     if report.holdings:
         for h in report.holdings:
             chg = h.get("change_pct")
@@ -639,8 +744,11 @@ def render_weekly_markdown(report: WeeklyReport) -> str:
     else:
         lines.append("- 当前无持仓")
     lines.append("")
+    return lines
 
-    lines.append("## 👀 观察池")
+
+def _render_watchlist_lines(report: WeeklyReport) -> list[str]:
+    lines = ["## 👀 观察池"]
     if report.watchlist:
         for w in report.watchlist:
             chg = w.get("change_pct")
@@ -650,8 +758,11 @@ def render_weekly_markdown(report: WeeklyReport) -> str:
     else:
         lines.append("- 观察池为空或标的已在持仓中")
     lines.append("")
+    return lines
 
-    lines.append("## 🔥 热门板块 / 强势标的")
+
+def _render_market_lines(report: WeeklyReport) -> list[str]:
+    lines = ["## 🔥 热门板块 / 强势标的"]
     if report.hot_sectors:
         for item in report.hot_sectors:
             lines.append(
@@ -685,37 +796,46 @@ def render_weekly_markdown(report: WeeklyReport) -> str:
             if r.get("summary"):
                 lines.append(r["summary"])
             lines.append("")
+    return lines
 
-    if report.mss_summary:
-        lines.append("## 📈 MSS 本周轨迹")
-        weekday_cn = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
-        by_date: dict[str, dict[str, float]] = {}
-        for row in report.mss_summary:
-            ds = row["date"]
-            by_date.setdefault(ds, {})[row["job"]] = float(row["mss_final"])
-        for ds in sorted(by_date.keys()):
-            slots = by_date[ds]
-            wd = weekday_cn[date.fromisoformat(ds).weekday()]
-            short = ds[5:]  # MM-DD
-            parts: list[str] = []
-            if "morning" in slots:
-                parts.append(f"早 {slots['morning']:.1f}")
-            if "close" in slots:
-                parts.append(f"收 {slots['close']:.1f}")
-            elif "intraday" in slots:
-                parts.append(f"盘 {slots['intraday']:.1f}")
-            if parts:
-                lines.append(f"- **{short} {wd}** " + " → ".join(parts))
-        if not by_date:
-            lines.append("- 暂无 MSS 轨迹数据")
-        lines.append("")
 
-    if report.experience_snippets:
-        lines.append("## 📚 本周经验")
-        for s in report.experience_snippets:
-            lines.append(f"- {s}")
-        lines.append("")
+def _render_mss_lines(report: WeeklyReport) -> list[str]:
+    if not report.mss_summary:
+        return []
+    lines = ["## 📈 MSS 本周轨迹"]
+    weekday_cn = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+    by_date: dict[str, dict[str, float]] = {}
+    for row in report.mss_summary:
+        ds = row["date"]
+        by_date.setdefault(ds, {})[row["job"]] = float(row["mss_final"])
+    for ds in sorted(by_date.keys()):
+        slots = by_date[ds]
+        wd = weekday_cn[date.fromisoformat(ds).weekday()]
+        short = ds[5:]
+        parts: list[str] = []
+        if "morning" in slots:
+            parts.append(f"早 {slots['morning']:.1f}")
+        if "close" in slots:
+            parts.append(f"收 {slots['close']:.1f}")
+        elif "intraday" in slots:
+            parts.append(f"盘 {slots['intraday']:.1f}")
+        if parts:
+            lines.append(f"- **{short} {wd}** " + " → ".join(parts))
+    lines.append("")
+    return lines
 
+
+def _render_experience_lines(report: WeeklyReport) -> list[str]:
+    if not report.experience_snippets:
+        return []
+    lines = ["## 📚 本周经验"]
+    for s in report.experience_snippets:
+        lines.append(f"- {s}")
+    lines.append("")
+    return lines
+
+
+def _render_insights_lines(report: WeeklyReport) -> list[str]:
     from agent_reach.daily_run.weekly_insights import (
         InsightItem,
         SkillLearningItem,
@@ -723,21 +843,69 @@ def render_weekly_markdown(report: WeeklyReport) -> str:
         render_skill_learning_markdown,
     )
 
+    lines: list[str] = []
     skill_md = render_skill_learning_markdown(
         [SkillLearningItem(**s) for s in report.skill_learning],
         report.skill_research,
     )
     if skill_md:
-        lines.append(skill_md)
+        lines.extend(skill_md.splitlines())
         lines.append("")
 
     imp_md = render_improvements_markdown(
         [InsightItem(**i) for i in report.process_improvements]
     )
     if imp_md:
-        lines.append(imp_md)
+        lines.extend(imp_md.splitlines())
+    return lines
 
-    return "\n".join(lines).strip()
+
+def render_weekly_sections(report: WeeklyReport) -> list[WeeklySection]:
+    """Split weekly report into Feishu-friendly sections (one card each)."""
+    sections: list[WeeklySection] = []
+
+    portfolio_lines = (
+        _period_header_lines(report)
+        + _render_pnl_lines(report)
+        + _render_holdings_lines(report)
+        + _render_watchlist_lines(report)
+    )
+    sections.append(WeeklySection("盈亏·持仓", _join_section_lines(portfolio_lines)))
+
+    market_lines = _period_header_lines(report, continuation=True) + _render_market_lines(report)
+    sections.append(WeeklySection("板块·热点", _join_section_lines(market_lines)))
+
+    track_body = _render_mss_lines(report) + _render_experience_lines(report)
+    if track_body:
+        track_lines = _period_header_lines(report, continuation=True) + track_body
+        sections.append(WeeklySection("MSS·经验", _join_section_lines(track_lines)))
+
+    insight_body = _render_insights_lines(report)
+    if insight_body:
+        insight_lines = _period_header_lines(report, continuation=True) + insight_body
+        sections.append(WeeklySection("学习·改进", _join_section_lines(insight_lines)))
+
+    return sections
+
+
+def render_weekly_markdown(report: WeeklyReport) -> str:
+    """Render full weekly summary markdown (all sections joined)."""
+    parts = [s.markdown for s in render_weekly_sections(report) if s.markdown]
+    return "\n\n".join(parts).strip()
+
+
+def weekly_section_title(
+    report: WeeklyReport,
+    index: int,
+    total: int,
+    label: str,
+) -> str:
+    range_part = f"{report.week_start:%m/%d}–{report.week_end:%m/%d}"
+    title = f"📋 周报 {index}/{total} · {label} · {range_part}"
+    if index == 1 and report.weekly_pnl is not None:
+        sign = "+" if report.weekly_pnl >= 0 else ""
+        title += f" · {sign}¥{report.weekly_pnl:,.0f}"
+    return title
 
 
 def weekly_report_title(report: WeeklyReport) -> str:

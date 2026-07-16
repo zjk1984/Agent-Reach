@@ -62,7 +62,9 @@ def settings_enabled():
 
 class TestPortfolioConfig:
     def test_defaults(self):
-        s = load_settings()
+        from agent_reach.daily_run.settings import _DEFAULT_PATH
+
+        s = load_settings(_DEFAULT_PATH)
         assert max_holdings(s) == 10
         assert max_total_symbols(s) == 10
         assert is_auto_adjust_enabled(s) is True

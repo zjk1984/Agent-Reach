@@ -48,7 +48,8 @@ class TestFeishuConfig:
         card = build_card("Title", "Hello **world**", template="orange")
         assert card["header"]["title"]["content"] == "Title"
         assert card["header"]["template"] == "orange"
-        assert card["elements"][0]["text"]["content"] == "Hello **world**"
+        assert card["elements"][0]["tag"] == "markdown"
+        assert card["elements"][0]["content"] == "Hello **world**"
 
 
 class TestFeishuSend:

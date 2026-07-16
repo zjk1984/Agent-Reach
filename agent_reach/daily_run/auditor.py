@@ -79,6 +79,23 @@ def run_data_audit(
         warnings.append("部分标的使用成本价 fallback，行情可能过期")
         structured_review_complete = False
 
+    quote_meta = snapshot.get("quote_fetch") or {}
+    coverage_pct = quote_meta.get("coverage_pct")
+    min_cov = float(audit_cfg.get("min_quote_coverage_pct", 0.8))
+    if coverage_pct is not None:
+        cov = float(coverage_pct) / 100.0
+        if cov < min_cov:
+            msg = f"行情覆盖率 {coverage_pct}% 低于阈值 {min_cov:.0%}"
+            mode = audit_cfg.get("quote_coverage_mode", "block")
+            if mode == "block":
+                issues.append(msg)
+            else:
+                warnings.append(msg)
+        fetch_errors = quote_meta.get("errors") or {}
+        if fetch_errors:
+            sample = ", ".join(f"{k}: {v}" for k, v in list(fetch_errors.items())[:3])
+            warnings.append(f"部分标的报价失败：{sample}")
+
     ref_price = snapshot.get("reference_price")
     live_price = snapshot.get("price")
     if ref_price is not None and live_price is not None:

@@ -23,10 +23,16 @@ class TestMssForecast:
 
 class TestCurveAnalysis:
     def test_analyze_intraday_curve(self):
-        analysis = analyze_intraday_curve([42, 44, 46, 45], predicted_range=(40, 52))
+        analysis = analyze_intraday_curve(
+            [42, 44, 46, 45],
+            predicted_range=(40, 52),
+            scan_ids=["S1", "S2", "S3", "S4"],
+        )
         assert analysis["points"] == 4
         md = render_curve_markdown(analysis)
         assert "盘中 MSS 曲线" in md
+        assert "扫描次数：**4**" in md
+        assert "S1=42" in md
 
 
 class TestVerdictFusion:
@@ -65,11 +71,11 @@ class TestVerdictFusion:
 
 
 class TestScheduleEntries:
-    def test_eleven_intraday_scan_slots(self):
-        assert len(INTRADAY_SCAN_TIMES) == 11
+    def test_twelve_intraday_scans(self):
+        assert len(INTRADAY_SCAN_TIMES) == 12
 
     def test_default_entries_count(self):
-        assert len(default_entries()) == 15  # morning + 11 scans + close + weekly + forecast
+        assert len(default_entries()) == 16  # morning + 12 scans + close + weekly + forecast
 
 
 class TestMacroCollector:

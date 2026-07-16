@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Intraday scan (S1-S10) and trade (T1-T5) workflow with lookback MSS."""
+"""Intraday scan (S1-S12) and trade (T1-T5) workflow with lookback MSS."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from agent_reach.daily_run.plugins.loader import run_experts
 from agent_reach.daily_run.settings import load_settings
 
 
-MAX_SCANS = 12
+from agent_reach.daily_run.schedule import INTRADAY_MAX_SCANS as MAX_SCANS
 MAX_TRADES = 5
 
 
@@ -64,12 +64,17 @@ class IntradayState:
         )
 
 
-def default_state_path() -> Path:
+def default_state_path(code: Optional[str] = None) -> Path:
+    if code:
+        from agent_reach.daily_run.snapshot_builder import _normalize_code
+
+        norm = _normalize_code(str(code))
+        return Path.home() / ".agent-reach" / "daily_run" / "intraday" / f"{norm}.json"
     return Path.home() / ".agent-reach" / "daily_run" / "intraday_state.json"
 
 
-def load_state(path: Optional[Path] = None) -> IntradayState:
-    p = path or default_state_path()
+def load_state(path: Optional[Path] = None, *, code: Optional[str] = None) -> IntradayState:
+    p = path or default_state_path(code)
     if not p.exists():
         return IntradayState(date=_today_str())
     data = json.loads(p.read_text(encoding="utf-8"))
@@ -111,40 +116,59 @@ def record_scan(
     plugin_names: Optional[list[str]] = None,
     state: Optional[IntradayState] = None,
     state_path: Optional[Path] = None,
-    pre_enriched: Optional[dict[str, Any]] = None,
-    pre_evaluation: Optional[dict[str, Any]] = None,
-    source: Optional[str] = None,
 ) -> dict[str, Any]:
     """Record one intraday data collection (S_n) after experts + evaluate."""
-    if pre_enriched is not None and pre_evaluation is not None:
-        return record_scan_from_evaluation(
-            pre_enriched,
-            pre_evaluation,
-            settings=settings,
-            state=state,
-            state_path=state_path,
-            source=source,
-        )
-
     cfg = settings or load_settings()
     st = state or load_state(state_path)
 
     if len(st.scans) >= MAX_SCANS:
         raise RuntimeError(f"今日扫描已达上限 {MAX_SCANS} 次（S1-S{MAX_SCANS}）")
 
-    enriched = run_experts(dict(snapshot), cfg, names=plugin_names)
+    enriched = dict(snapshot)
     enriched.setdefault("report_type", "intraday")
     enriched.setdefault("as_of", datetime.now(timezone.utc).isoformat())
 
+    from agent_reach.daily_run.team import experts_enabled
+
+    if experts_enabled(cfg, workflow="intraday"):
+        enriched = run_experts(dict(snapshot), cfg, names=plugin_names)
+        enriched.setdefault("report_type", "intraday")
+        enriched.setdefault("as_of", datetime.now(timezone.utc).isoformat())
+
     evaluation = evaluate_snapshot(enriched, cfg, doctor_channels=doctor_channels)
-    return record_scan_from_evaluation(
-        enriched,
-        evaluation,
-        settings=cfg,
-        state=st,
-        state_path=state_path,
-        source=source,
-    )
+    report = evaluation["report"]
+    scan_id = f"S{len(st.scans) + 1}"
+
+    entry = {
+        "scan_id": scan_id,
+        "as_of": report.get("as_of"),
+        "code": report.get("code"),
+        "name": report.get("name"),
+        "mss_final": report.get("mss_final"),
+        "mss_breakdown": report.get("mss_breakdown"),
+        "verdict": report.get("verdict"),
+        "confidence": report.get("confidence"),
+        "price": enriched.get("price"),
+        "audit_passed": evaluation["audit"].passed,
+    }
+    st.scans.append(entry)
+    save_state(st, state_path)
+
+    lookback_mss, lookback_detail = compute_lookback_mss(st.scans, cfg)
+    trend = detect_mss_trend(st.scans)
+
+    return {
+        "scan": entry,
+        "enriched": enriched,
+        "state": st.to_dict(),
+        "evaluation": evaluation,
+        "lookback_mss": lookback_mss,
+        "lookback_detail": lookback_detail,
+        "trend": trend,
+        "markdown": render_intraday_scan_markdown(
+            entry, lookback_mss, lookback_detail, trend, report, scan_count=len(st.scans)
+        ),
+    }
 
 
 def record_scan_from_evaluation(
@@ -156,7 +180,7 @@ def record_scan_from_evaluation(
     state_path: Optional[Path] = None,
     source: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Append S_n from an existing evaluation (e.g. morning full analysis at 8:00)."""
+    """Append S_n from an existing evaluation (legacy morning S2 backfill)."""
     cfg = settings or load_settings()
     st = state or load_state(state_path)
 
@@ -188,13 +212,13 @@ def record_scan_from_evaluation(
 
     return {
         "scan": entry,
-        "enriched": enriched,
         "state": st.to_dict(),
-        "evaluation": evaluation,
         "lookback_mss": lookback_mss,
         "lookback_detail": lookback_detail,
         "trend": trend,
-        "markdown": render_intraday_scan_markdown(entry, lookback_mss, lookback_detail, trend, report),
+        "markdown": render_intraday_scan_markdown(
+            entry, lookback_mss, lookback_detail, trend, report, scan_count=len(st.scans)
+        ),
     }
 
 
@@ -203,7 +227,6 @@ def should_evaluate_trade(
     settings: Optional[dict[str, Any]] = None,
     *,
     state_path: Optional[Path] = None,
-    trend_hint: Optional[str] = None,
 ) -> bool:
     """Heuristic: trade after ≥3 scans, <5 trades, on trend shift or every 2nd scan."""
     cfg = settings or load_settings()
@@ -217,7 +240,7 @@ def should_evaluate_trade(
     if len(st.trades) >= MAX_TRADES:
         return False
 
-    trend = trend_hint or detect_mss_trend(st.scans)
+    trend = detect_mss_trend(st.scans)
     if trend in ("turning_up", "turning_down", "rising", "falling"):
         return True
     return len(st.scans) % int(sched.get("trade_every_n_scans", 2)) == 0
@@ -234,9 +257,6 @@ def evaluate_trade(
     expected_return_pct: Optional[float] = None,
     pre_enriched: Optional[dict[str, Any]] = None,
     pre_evaluation: Optional[dict[str, Any]] = None,
-    pre_lookback_mss: Optional[float] = None,
-    pre_lookback_detail: Optional[list[dict[str, Any]]] = None,
-    pre_trend: Optional[str] = None,
 ) -> dict[str, Any]:
     """Evaluate T_n trade opportunity using lookback MSS over recent scans."""
     cfg = settings or load_settings()
@@ -251,26 +271,20 @@ def evaluate_trade(
         enriched = pre_enriched
         evaluation = pre_evaluation
     else:
-        enriched = run_experts(dict(snapshot), cfg, names=plugin_names)
+        from agent_reach.daily_run.team import experts_enabled
+
+        if experts_enabled(cfg, workflow="intraday"):
+            enriched = run_experts(dict(snapshot), cfg, names=plugin_names)
+        else:
+            enriched = dict(snapshot)
         enriched.setdefault("report_type", "intraday")
         evaluation = evaluate_snapshot(enriched, cfg, doctor_channels=doctor_channels)
 
     report = evaluation["report"]
     verdict = evaluation["verdict"]
 
-    if pre_lookback_mss is not None and pre_trend is not None:
-        lookback_mss = float(pre_lookback_mss)
-        lookback_detail = list(pre_lookback_detail or [])
-        trend = pre_trend
-    else:
-        lookback_mss, lookback_detail = compute_lookback_mss(st.scans, cfg)
-        trend = detect_mss_trend(st.scans)
-        if pre_lookback_mss is not None:
-            lookback_mss = float(pre_lookback_mss)
-        if pre_lookback_detail is not None:
-            lookback_detail = pre_lookback_detail
-        if pre_trend is not None:
-            trend = pre_trend
+    lookback_mss, lookback_detail = compute_lookback_mss(st.scans, cfg)
+    trend = detect_mss_trend(st.scans)
     decision = _decide_trade(
         lookback_mss=lookback_mss,
         trend=trend,
@@ -280,7 +294,6 @@ def evaluate_trade(
         settings=cfg,
         trade_index=len(st.trades) + 1,
         expected_return_pct=expected_return_pct,
-        lookback_detail=lookback_detail,
     )
 
     trade_record = {
@@ -291,50 +304,15 @@ def evaluate_trade(
         "code": report.get("code"),
         "name": report.get("name"),
     }
-    portfolio_apply = None
-    if decision.action in ("buy", "sell"):
-        from agent_reach.daily_run.portfolio_manager import (
-            append_trade_ledger,
-            apply_auto_adjust,
-            is_auto_adjust_enabled,
-            render_apply_markdown,
-        )
-        from agent_reach.daily_run.symbols import portfolio_from_snapshot
-
-        if is_auto_adjust_enabled(cfg):
-            pf = portfolio_from_snapshot(enriched)
-            if pf.get("cash") is None:
-                from agent_reach.daily_run.snapshot_builder import load_portfolio
-
-                pf = load_portfolio()
-            portfolio_apply = apply_auto_adjust(
-                pf, decision, enriched, cfg, allow_watchlist_changes=False
-            )
-            if portfolio_apply.applied:
-                from agent_reach.daily_run.snapshot_builder import save_portfolio
-
-                save_portfolio(portfolio_apply.portfolio)
-                append_trade_ledger(
-                    portfolio_apply.actions,
-                    trade_id=decision.trade_id,
-                    decision_action=decision.action,
-                )
-            trade_record["portfolio_apply"] = portfolio_apply.to_dict()
-
     st.trades.append(trade_record)
     save_state(st, state_path)
-
-    md = render_intraday_trade_markdown(decision, lookback_detail, report, st.scans)
-    if portfolio_apply is not None:
-        md += "\n\n---\n\n" + render_apply_markdown(portfolio_apply)
 
     return {
         "decision": decision.to_dict(),
         "trade": trade_record,
-        "portfolio_apply": portfolio_apply.to_dict() if portfolio_apply else None,
         "state": st.to_dict(),
         "evaluation": evaluation,
-        "markdown": md,
+        "markdown": render_intraday_trade_markdown(decision, lookback_detail, report, st.scans),
     }
 
 
@@ -364,13 +342,9 @@ def run_intraday(
     )
     steps.append("scan")
 
-    st_after_scan = IntradayState.from_dict(scan_result["state"])
     trade_result = None
     do_trade = trade or should_evaluate_trade(
-        st_after_scan,
-        cfg,
-        state_path=state_path,
-        trend_hint=scan_result.get("trend"),
+        IntradayState.from_dict(scan_result["state"]), cfg, state_path=state_path
     )
     if do_trade and not trade:
         steps.append("trade_auto")
@@ -381,52 +355,53 @@ def run_intraday(
             settings=cfg,
             doctor_channels=doctor_channels,
             plugin_names=plugin_names,
-            state=st_after_scan,
+            state=IntradayState.from_dict(scan_result["state"]),
             state_path=state_path,
             expected_return_pct=expected_return_pct,
             pre_enriched=scan_result.get("enriched"),
             pre_evaluation=scan_result.get("evaluation"),
-            pre_lookback_mss=scan_result.get("lookback_mss"),
-            pre_lookback_detail=scan_result.get("lookback_detail"),
-            pre_trend=scan_result.get("trend"),
         )
         steps.append("trade")
 
     feishu_result = None
+    push_error: Optional[str] = None
     if push:
-        from agent_reach.daily_run.intraday_push import should_push_intraday
+        from agent_reach.config import Config
+        from agent_reach.integrations.feishu import FeishuError, send_card
 
+        cfg_obj = config or Config()
+        tpl = cfg.get("report", {}).get("feishu_template_intraday", "blue")
         scan_id = scan_result["scan"]["scan_id"]
-        scan_count = len(IntradayState.from_dict(scan_result["state"]).scans)
-        trade_happened = trade_result is not None
-        if should_push_intraday(
-            scan_id,
-            settings=cfg,
-            trade_happened=trade_happened,
-            scan_count=scan_count,
-        ):
-            from agent_reach.config import Config
-            from agent_reach.integrations.feishu import send_card
+        name = scan_result["scan"].get("name") or scan_result["scan"].get("code") or "大盘"
+        card_title = title or f"📊 盘中 {scan_id} · {name}"
 
-            cfg_obj = config or Config()
-            tpl = cfg.get("report", {}).get("feishu_template_intraday", "blue")
-            name = scan_result["scan"].get("name") or scan_result["scan"].get("code") or "大盘"
-            card_title = title or f"📊 盘中 {scan_id} · {name}"
-
-            md_parts = [scan_result["markdown"]]
-            if trade_result:
-                md_parts.append("\n---\n\n" + trade_result["markdown"])
+        md_parts = [scan_result["markdown"]]
+        audit = (scan_result.get("evaluation") or {}).get("audit")
+        if audit and (audit.warnings or not audit.passed):
+            warn_lines = ["**⚠️ 数据审计提示**"]
+            if not audit.passed:
+                warn_lines.append("；".join(audit.issues))
+            for w in audit.warnings:
+                warn_lines.append(f"- {w}")
+            md_parts.insert(0, "\n".join(warn_lines) + "\n\n---\n\n")
+        if trade_result:
+            md_parts.append("\n---\n\n" + trade_result["markdown"])
+        try:
             feishu_result = send_card(cfg_obj, card_title, "\n".join(md_parts), template=tpl)
             steps.append("push")
-        else:
-            steps.append("push_skipped")
+        except FeishuError as exc:
+            push_error = str(exc)
 
-    return {
+    out: dict[str, Any] = {
         "steps": steps,
         "scan": scan_result,
         "trade": trade_result,
         "feishu": feishu_result,
+        "scan_count": len(scan_result.get("state", {}).get("scans") or []),
     }
+    if push_error:
+        out["push_error"] = push_error
+    return out
 
 
 def render_intraday_scan_markdown(
@@ -435,6 +410,8 @@ def render_intraday_scan_markdown(
     lookback_detail: list[dict[str, Any]],
     trend: str,
     report: dict[str, Any],
+    *,
+    scan_count: Optional[int] = None,
 ) -> str:
     trend_map = {
         "rising": "上升",
@@ -451,6 +428,9 @@ def render_intraday_scan_markdown(
         f"**即时 MSS：** {scan.get('mss_final')} 分 · **标签：** {scan.get('verdict')}",
         f"**Lookback MSS：** {lookback_mss} 分 · **趋势：** {trend_map.get(trend, trend)}",
     ]
+    total = scan_count if scan_count is not None else len(lookback_detail)
+    if total > 1:
+        lines.append(f"**今日累计扫描：** {total} 次")
     if lookback_detail:
         lines.extend(["", "**Lookback 加权拆解：**"])
         for item in lookback_detail:
@@ -507,9 +487,7 @@ def _decide_trade(
     settings: dict[str, Any],
     trade_index: int,
     expected_return_pct: Optional[float],
-    lookback_detail: Optional[list[dict[str, Any]]] = None,
 ) -> TradeDecision:
-    detail = lookback_detail or []
     thresholds = settings.get("thresholds", {})
     trading = settings.get("trading", {})
     macro_veto = float(thresholds.get("macro_veto", 40))
@@ -532,7 +510,7 @@ def _decide_trade(
             action="sell" if not _holding_locked(snapshot, settings) else "hold",
             trade_id=trade_id,
             lookback_mss=lookback_mss,
-            lookback_detail=detail,
+            lookback_detail=[],
             trend=trend,
             reasoning=f"Lookback MSS {lookback_mss:.0f} 低于否决线 {macro_veto:.0f}，宏观避险",
             blocked=False,
@@ -545,7 +523,7 @@ def _decide_trade(
             action="hold",
             trade_id=trade_id,
             lookback_mss=lookback_mss,
-            lookback_detail=detail,
+            lookback_detail=[],
             trend=trend,
             reasoning=f"标签 {verdict.verdict} 阻断买入（即时 MSS {verdict.mss_final:.0f}）",
             blocked=True,
@@ -559,7 +537,7 @@ def _decide_trade(
                 action="hold",
                 trade_id=trade_id,
                 lookback_mss=lookback_mss,
-                lookback_detail=detail,
+                lookback_detail=[],
                 trend=trend,
                 reasoning=f"现金比例 {cash_ratio:.0%} 低于最低 {min_cash:.0%}，暂不加仓",
                 blocked=True,
@@ -571,7 +549,7 @@ def _decide_trade(
                 action="hold",
                 trade_id=trade_id,
                 lookback_mss=lookback_mss,
-                lookback_detail=detail,
+                lookback_detail=[],
                 trend=trend,
                 reasoning=f"MSS 达 {lookback_mss:.0f} 但预期收益 {exp_ret:.2%} 不足以覆盖摩擦成本",
                 blocked=False,
@@ -582,7 +560,7 @@ def _decide_trade(
             action="buy",
             trade_id=trade_id,
             lookback_mss=lookback_mss,
-            lookback_detail=detail,
+            lookback_detail=[],
             trend=trend,
             reasoning=f"Lookback MSS {lookback_mss:.0f} ≥ {aggressive:.0f} 且趋势 {trend}，条件性建仓",
             blocked=False,

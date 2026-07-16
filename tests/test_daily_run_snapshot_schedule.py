@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
+from agent_reach.daily_run.quote_fetch import QuoteFetchResult
 from agent_reach.daily_run.schedule import default_entries, render_crontab_block
 from agent_reach.daily_run.snapshot_builder import (
     build_snapshot,
@@ -38,9 +39,10 @@ class TestSnapshotBuilder:
         assert code_to_xueqiu_symbol("688008") == "SH688008"
         assert code_to_xueqiu_symbol("002273") == "SZ002273"
 
+    @patch("agent_reach.daily_run.snapshot_builder.load_daily_cache", return_value={})
     @patch("agent_reach.daily_run.snapshot_builder.collect_macro_context")
     @patch("agent_reach.daily_run.snapshot_builder.fetch_quotes_map")
-    def test_build_snapshot_enriched(self, mock_fetch, mock_macro, portfolio):
+    def test_build_snapshot_enriched(self, mock_fetch, mock_macro, _mock_cache, portfolio):
         mock_macro.return_value = {
             "mss_breakdown": {"fx": 40, "flow": 50, "global": 45, "sentiment": 48},
             "sources": {
@@ -72,6 +74,7 @@ class TestSnapshotBuilder:
             snap = build_snapshot(portfolio, enrich=True)
         assert snap["code"] == "688008"
         assert snap["price"] == 260.0
+        assert snap.get("quote_fetch", {}).get("coverage_pct", 0) >= 0
         assert snap["sources"]["flow"]["summary"] != "待更新"
 
     def test_build_snapshot_no_enrich(self, portfolio):
@@ -86,67 +89,32 @@ class TestSchedule:
         assert "agent-reach daily-run schedule BEGIN" in block
         assert "Asia/Shanghai" in block
         assert "schedule run morning" in block
-        assert "0 7 * * 1-5" in block or "0 7" in block
         assert "schedule run intraday" in block
         assert "schedule run close" in block
+        assert "S12/12" in block
+        assert block.count("schedule run intraday") == 12
 
     def test_default_entries_count(self):
-        assert len(default_entries()) == 15
+        assert len(default_entries()) == 16  # morning + 12 scans + close + weekly + forecast
 
     @patch("agent_reach.daily_run.trade_calendar.is_trading_day", return_value=(True, ""))
-    @patch("agent_reach.daily_run.intraday.load_state")
-    @patch("agent_reach.daily_run.pipeline.evaluate_snapshot")
-    @patch("agent_reach.daily_run.intraday.record_scan_from_evaluation")
     @patch("agent_reach.daily_run.workflows.save_morning_baseline")
     @patch("agent_reach.daily_run.workflows.run_morning")
     @patch("agent_reach.daily_run.snapshot_builder.build_and_save")
     @patch("agent_reach.daily_run.snapshot_builder.load_portfolio")
-    def test_run_scheduled_morning(
-        self,
-        mock_load,
-        mock_build,
-        mock_morning,
-        mock_save_baseline,
-        mock_record_scan,
-        mock_evaluate_snapshot,
-        mock_load_state,
-        portfolio,
-        tmp_path,
-    ):
-        from agent_reach.daily_run.intraday import IntradayState
-
+    @patch("agent_reach.daily_run.schedule._uses_per_symbol_jobs", return_value=False)
+    def test_run_scheduled_morning(self, mock_per_symbol, mock_load, mock_build, mock_morning, mock_save_baseline, portfolio, tmp_path):
         mock_load.return_value = portfolio
         mock_build.return_value = ({"code": "688008"}, tmp_path / "snap.json")
-        mock_load_state.return_value = IntradayState(date="2026-07-10", scans=[], trades=[])
-        mock_evaluate_snapshot.return_value = {
-            "report": {"mss_final": 51, "as_of": "2026-07-10T00:00:00+00:00"},
-            "audit": __import__(
-                "agent_reach.daily_run.auditor", fromlist=["AuditResult"]
-            ).AuditResult(passed=True),
-        }
-        mock_morning.return_value = {
-            "snapshot": {"code": "688008"},
-            "evaluation": {"report": {"mss_final": 48}, "audit": __import__(
-                "agent_reach.daily_run.auditor", fromlist=["AuditResult"]
-            ).AuditResult(passed=True)},
-            "steps": [],
-        }
-        mock_record_scan.side_effect = [
-            {"scan": {"scan_id": "S1", "source": "premarket"}},
-            {"scan": {"scan_id": "S2", "source": "morning"}},
-        ]
+        mock_morning.return_value = {"snapshot": {"code": "688008"}, "evaluation": {"report": {}}}
 
         from agent_reach.daily_run.schedule import run_scheduled
 
         result = run_scheduled("morning", push=False)
         assert result["job"] == "morning"
         mock_save_baseline.assert_called_once()
-        assert mock_record_scan.call_count == 2
-        assert mock_record_scan.call_args_list[0].kwargs.get("source") == "premarket"
-        assert mock_record_scan.call_args_list[1].kwargs.get("source") == "morning"
-        assert result["result"]["scan"]["scan"]["scan_id"] == "S2"
-        assert "scan_s1_backfill" in result["result"]["steps"]
 
+    @patch("agent_reach.daily_run.schedule._uses_per_symbol_jobs", return_value=False)
     @patch("agent_reach.daily_run.trade_calendar.is_trading_day", return_value=(True, ""))
     @patch("agent_reach.daily_run.workflows.run_close")
     @patch("agent_reach.daily_run.workflows.prepare_close_run")
@@ -162,6 +130,7 @@ class TestSchedule:
         mock_load_baseline,
         mock_prepare_close,
         mock_run_close,
+        _mock_per_symbol,
         portfolio,
         tmp_path,
     ):

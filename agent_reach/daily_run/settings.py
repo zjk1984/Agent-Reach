@@ -17,7 +17,9 @@ _settings_cache: dict[str, Any] = {"path": None, "mtime": None, "data": None}
 def load_settings(path: Path | None = None) -> dict[str, Any]:
     """Load settings; user override at ~/.agent-reach/daily_run_settings.json wins."""
     if path is not None:
-        return _read_json(path)
+        data = _read_json(path)
+        validate_settings(data)
+        return data
 
     active = _USER_PATH if _USER_PATH.exists() else _DEFAULT_PATH
     if not active.exists():
@@ -34,6 +36,7 @@ def load_settings(path: Path | None = None) -> dict[str, Any]:
         return deepcopy(_settings_cache["data"])
 
     data = _read_json(active)
+    validate_settings(data)
     _settings_cache["path"] = active
     _settings_cache["mtime"] = mtime
     _settings_cache["data"] = data
@@ -45,6 +48,30 @@ def clear_settings_cache() -> None:
     _settings_cache["path"] = None
     _settings_cache["mtime"] = None
     _settings_cache["data"] = None
+
+
+def validate_settings(data: dict[str, Any]) -> None:
+    """Lightweight schema checks for daily_run_settings.json."""
+    if not isinstance(data.get("mss_weights"), dict):
+        raise ValueError("settings.mss_weights must be an object")
+    thresholds = data.get("thresholds")
+    if not isinstance(thresholds, dict):
+        raise ValueError("settings.thresholds must be an object")
+    for key in ("macro_veto", "aggressive_entry", "max_snapshot_age_hours"):
+        if key not in thresholds:
+            raise ValueError(f"settings.thresholds missing {key}")
+
+    audit = data.get("data_audit")
+    if audit is not None and not isinstance(audit, dict):
+        raise ValueError("settings.data_audit must be an object")
+
+    report = data.get("report")
+    if report is not None:
+        if not isinstance(report, dict):
+            raise ValueError("settings.report must be an object")
+        interval = report.get("split_push_interval_seconds")
+        if interval is not None and float(interval) < 0:
+            raise ValueError("settings.report.split_push_interval_seconds must be >= 0")
 
 
 def _read_json(path: Path) -> dict[str, Any]:

@@ -56,3 +56,58 @@ def sync_snapshot_portfolio(snapshot: dict[str, Any], portfolio: dict[str, Any])
         if key in portfolio:
             block[key] = portfolio[key]
     snapshot["portfolio"] = block
+
+
+def list_target_symbols(
+    portfolio: dict[str, Any],
+    *,
+    mode: str = "all",
+) -> list[str]:
+    """Return ordered unique symbol codes from portfolio.
+
+    mode:
+      - all: holdings then watchlist (deduped)
+      - holdings: holdings only
+      - watchlist: watchlist only
+    """
+    codes: list[str] = []
+    seen: set[str] = set()
+
+    def _add(items: list[dict[str, Any]]) -> None:
+        for row in items:
+            code = _normalize_code(str(row.get("code", "")))
+            if code and code not in seen:
+                seen.add(code)
+                codes.append(code)
+
+    if mode in ("all", "holdings"):
+        _add(list(portfolio.get("holdings") or []))
+    if mode in ("all", "watchlist"):
+        _add(list(portfolio.get("watchlist") or []))
+    return codes
+
+
+def resolve_target_symbols(
+    portfolio: dict[str, Any],
+    settings: dict[str, Any],
+) -> list[str]:
+    """Resolve which symbols to run for morning/close/intraday jobs."""
+    sched = settings.get("schedule") or {}
+    mode = str(sched.get("symbols_mode", "primary")).lower()
+    if mode == "primary":
+        code = portfolio.get("primary_code")
+        if not code and portfolio.get("holdings"):
+            code = portfolio["holdings"][0]["code"]
+        if code:
+            return [_normalize_code(str(code))]
+        return ["MARKET"]
+    return list_target_symbols(portfolio, mode=mode)
+
+
+def symbol_display_name(portfolio: dict[str, Any], code: str) -> str:
+    """Best-effort name lookup from portfolio rows."""
+    norm = _normalize_code(code)
+    for row in list(portfolio.get("holdings") or []) + list(portfolio.get("watchlist") or []):
+        if _normalize_code(str(row.get("code", ""))) == norm:
+            return str(row.get("name") or norm)
+    return norm
