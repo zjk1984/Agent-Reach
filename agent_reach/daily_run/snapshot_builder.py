@@ -378,6 +378,7 @@ def build_and_save(
     portfolio: Optional[dict[str, Any]] = None,
     settings: Optional[dict[str, Any]] = None,
     enrich_level: EnrichLevel = "full",
+    primary_code: Optional[str] = None,
 ) -> tuple[dict[str, Any], Path]:
     snap = build_snapshot(
         portfolio=portfolio,
@@ -385,6 +386,7 @@ def build_and_save(
         config=config,
         settings=settings,
         enrich_level=enrich_level,
+        primary_code=primary_code,
     )
     out = output or (Path.home() / ".agent-reach" / "daily_run" / "last_snapshot.json")
     out.parent.mkdir(parents=True, exist_ok=True)
