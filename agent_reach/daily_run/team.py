@@ -21,6 +21,37 @@ EXPERT_LABELS: dict[str, str] = {
 }
 
 
+def experts_enabled(settings: dict[str, Any], *, workflow: str = "morning") -> bool:
+    """Whether to run expert plugins for a workflow (default off when team.enabled is false)."""
+    team = settings.get("team") or {}
+    if team.get("enabled", False) is not True:
+        return False
+    wf_keys = {
+        "morning": "morning_team_first",
+        "close": "close_team_first",
+        "intraday": "intraday_experts",
+    }
+    key = wf_keys.get(workflow)
+    if key and key in team:
+        return bool(team[key])
+    return True
+
+
+def team_first_enabled(settings: dict[str, Any], *, workflow: str = "morning") -> bool:
+    """Whether to use Team-First supervisor path (requires experts_enabled)."""
+    if not experts_enabled(settings, workflow=workflow):
+        return False
+    team = settings.get("team") or {}
+    wf_keys = {
+        "morning": "morning_team_first",
+        "close": "close_team_first",
+    }
+    key = wf_keys.get(workflow)
+    if key and key in team:
+        return bool(team[key])
+    return bool(team.get("supervisor", True))
+
+
 @dataclass
 class TeamReview:
     mode: str
@@ -178,3 +209,91 @@ def render_team_markdown(snapshot: dict[str, Any]) -> str:
         lines.extend(["", f"⚠️ **鉴别阻断：** {review.get('block_reason', '')}"])
 
     return "\n".join(lines)
+
+
+def render_merged_experts_markdown(
+    entries: list[tuple[str, str, dict[str, Any]]],
+) -> str:
+    """Render one unified expert-consensus card for multiple symbols."""
+    if not entries:
+        return ""
+    if len(entries) == 1:
+        return render_team_markdown(entries[0][2])
+
+    lines = [
+        f"**👥 专家共识 · {len(entries)} 只标的 · Team-First 8 专家并行**",
+        "",
+        "**组合共识概览**",
+        "",
+        "| 标的 | 代码 | 共识分 | 标签 |",
+        "|------|------|--------|------|",
+    ]
+    for name, code, snap in entries:
+        review = snap.get("team_review") or {}
+        score = review.get("consensus_score", snap.get("team_consensus_score", "—"))
+        label = review.get("consensus_label", snap.get("team_consensus_label", "观察"))
+        lines.append(f"| {name} | {code} | {score} | {label} |")
+
+    expert_order: list[str] = []
+    seen_experts: set[str] = set()
+    for _, _, snap in entries:
+        for r in snap.get("expert_results") or []:
+            key = str(r.get("name", ""))
+            if key and key not in seen_experts:
+                seen_experts.add(key)
+                expert_order.append(key)
+    for fallback in TEAM_EXPERT_NAMES:
+        if fallback not in seen_experts:
+            expert_order.append(fallback)
+
+    lines.extend(["", "**各专家评分矩阵**", ""])
+    header = "| 专家 | " + " | ".join(n for n, _, _ in entries) + " |"
+    sep = "|------|" + "------|" * len(entries)
+    lines.extend([header, sep])
+
+    for en in expert_order:
+        if not any(
+            en in {str(r.get("name", "")) for r in (snap.get("expert_results") or [])}
+            for _, _, snap in entries
+        ):
+            continue
+        label = EXPERT_LABELS.get(en, en)
+        cells: list[str] = []
+        for _, _, snap in entries:
+            by_name = {str(r.get("name", "")): r for r in (snap.get("expert_results") or [])}
+            row = by_name.get(en, {})
+            score = row.get("score", "—")
+            flag = "⚠" if row and not row.get("success", True) else ""
+            cells.append(f"{score}{flag}" if flag else str(score))
+        lines.append(f"| {label} | " + " | ".join(cells) + " |")
+
+    lines.extend(["", "**专家摘要**", ""])
+    for en in expert_order:
+        if not any(
+            en in {str(r.get("name", "")) for r in (snap.get("expert_results") or [])}
+            for _, _, snap in entries
+        ):
+            continue
+        label = EXPERT_LABELS.get(en, en)
+        lines.append(f"**{label}**")
+        for sym_name, _, snap in entries:
+            by_name = {str(r.get("name", "")): r for r in (snap.get("expert_results") or [])}
+            row = by_name.get(en)
+            if not row:
+                continue
+            summary = str(row.get("summary", ""))[:80]
+            lines.append(f"- {sym_name}：{summary}")
+        lines.append("")
+
+    conflicts: list[str] = []
+    for sym_name, _, snap in entries:
+        review = snap.get("team_review") or {}
+        for c in review.get("conflicts") or []:
+            conflicts.append(f"{sym_name} — {c}")
+        if review.get("blocked"):
+            conflicts.append(f"{sym_name} — 鉴别阻断：{review.get('block_reason', '')}")
+    if conflicts:
+        lines.extend(["**Supervisor 冲突仲裁**", ""])
+        lines.extend(f"- {c}" for c in conflicts)
+
+    return "\n".join(lines).strip()

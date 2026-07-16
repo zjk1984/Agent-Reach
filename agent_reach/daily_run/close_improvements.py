@@ -51,11 +51,9 @@ class CloseImprovements:
 
 
 def expected_scan_slots() -> list[dict[str, str]]:
-    """S1–S12 expected Beijing times (S2 from morning job)."""
-    slots: list[dict[str, str]] = []
-    slots.append({"scan_id": "S1", "time": "07:00", "label": "盘前"})
-    slots.append({"scan_id": "S2", "time": "08:00", "label": "早盘全量"})
-    for i, (minute, hour) in enumerate(INTRADAY_SCAN_TIMES[1:], start=3):
+    """Morning + S1–S12 intraday expected Beijing times."""
+    slots: list[dict[str, str]] = [{"scan_id": "Morning", "time": "08:00", "label": "早报"}]
+    for i, (minute, hour) in enumerate(INTRADAY_SCAN_TIMES, start=1):
         slots.append(
             {
                 "scan_id": f"S{i}",

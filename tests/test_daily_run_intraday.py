@@ -121,3 +121,23 @@ class TestIntradayWorkflow:
         assert "scan" in result["steps"]
         assert "trade" in result["steps"]
         assert "push" not in result["steps"]
+
+    @patch("agent_reach.integrations.feishu.send_card")
+    def test_run_intraday_survives_feishu_error(self, mock_card, intraday_snapshot, tmp_path):
+        from agent_reach.integrations.feishu import FeishuError
+
+        mock_card.side_effect = FeishuError("飞书未配置")
+        state_path = tmp_path / "intraday.json"
+        reset_state(state_path)
+        result = run_intraday(
+            intraday_snapshot,
+            settings=load_settings(),
+            push=True,
+            trade=False,
+            state_path=state_path,
+        )
+        assert result["scan_count"] == 1
+        assert result.get("push_error")
+        assert "push" not in result["steps"]
+        state = IntradayState.from_dict(result["scan"]["state"])
+        assert len(state.scans) == 1

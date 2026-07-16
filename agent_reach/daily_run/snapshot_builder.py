@@ -134,8 +134,10 @@ def enrich_holding(
     out = dict(holding)
     quote = quote_map.get(code)
     if quote:
-        out["price"] = quote["price"]
-        out["change_pct"] = quote.get("change_pct")
+        if quote.get("price") is not None:
+            out["price"] = quote["price"]
+        if quote.get("change_pct") is not None:
+            out["change_pct"] = quote.get("change_pct")
         out["name"] = quote.get("name") or out.get("name")
         out["quote_source"] = quote.get("source")
         if with_technicals:
@@ -277,13 +279,23 @@ def build_snapshot(
     from agent_reach.daily_run.trade_calendar import today_shanghai
 
     today = today_shanghai().isoformat()
+    if report_type == "premarket" and primary_code:
+        for row in holdings + watchlist:
+            if _normalize_code(str(row.get("code", ""))) == code_norm:
+                primary_name = str(row.get("name") or primary_name)
+                break
+        snapshot_name = primary_name
+    elif report_type == "premarket":
+        snapshot_name = f"{today} 早盘"
+    else:
+        snapshot_name = primary_name
 
     snapshot: dict[str, Any] = {
         "as_of": datetime.now(timezone.utc).isoformat(),
         "report_type": report_type,
         "enrich_level": enrich_level,
         "code": code_norm,
-        "name": primary_name if report_type != "premarket" else f"{today} 早盘",
+        "name": snapshot_name,
         "mss_breakdown": mss_breakdown,
         "sources": sources,
         "structured_review_complete": primary_ma20 is not None,
