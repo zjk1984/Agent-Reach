@@ -27,6 +27,27 @@ def runs_dir() -> Path:
     return Path.home() / ".agent-reach" / "daily_run" / "runs"
 
 
+def has_job_manifest_today(job: str, *, require_feishu: bool = False) -> bool:
+    """True if job already recorded under today's Shanghai date folder."""
+    out_dir = runs_dir() / today_shanghai().isoformat()
+    if not out_dir.exists():
+        return False
+    for path in sorted(out_dir.glob(f"{job}_*.json")):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        payload = data.get("payload") or {}
+        if payload.get("skipped"):
+            continue
+        if require_feishu:
+            feishu = data.get("feishu")
+            if not feishu:
+                continue
+        return True
+    return False
+
+
 def _json_safe(value: Any) -> Any:
     """Recursively convert dataclasses / nested results into JSON-serializable data."""
     if isinstance(value, dict):

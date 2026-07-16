@@ -1,38 +1,63 @@
-# Daily-run snapshot + MSS schedule via GitHub Actions (Asia/Shanghai trading hours).
+# Daily-run snapshot + MSS schedule via GitHub Actions (北京时间 / Asia/Shanghai).
 #
 # Required repository secrets:
 #   AGENT_REACH_CONFIG_YAML  — full ~/.agent-reach/config.yaml contents
 # Optional:
-#   AGENT_REACH_PORTFOLIO_JSON — portfolio.json (defaults to repo example)
+#   AGENT_REACH_PORTFOLIO_JSON — one-time seed if no cache / no config/daily_run_portfolio.json
+#
+# Initial holdings without secrets: commit config/daily_run_portfolio.json to the repo.
+# Reset without secrets: Actions → Run workflow → reset_portfolio=true (uses repo file).
 #
 # Manual run: Actions → daily-run schedule → Run workflow
-# Cron uses UTC; times below = Asia/Shanghai (UTC+8).
 
 name: daily-run schedule
 
 on:
   schedule:
-    # 08:00 CST — morning + MSS forecast + Feishu
-    - cron: "0 0 * * 1-5"
-    # 09:30–15:00 CST — intraday S1–S12 + Lookback MSS (~every 24 min)
-    - cron: "30 1 * * 1-5"
-    - cron: "54 1 * * 1-5"
-    - cron: "18 2 * * 1-5"
-    - cron: "42 2 * * 1-5"
-    - cron: "6 3 * * 1-5"
-    - cron: "30 3 * * 1-5"
-    - cron: "0 5 * * 1-5"
-    - cron: "24 5 * * 1-5"
-    - cron: "48 5 * * 1-5"
-    - cron: "12 6 * * 1-5"
-    - cron: "36 6 * * 1-5"
-    - cron: "0 7 * * 1-5"
-    # 15:30 CST — close + MSS curve + verify
-    - cron: "30 7 * * 1-5"
+    # 08:00 北京时间 — 早盘 + MSS 决策 + 飞书
+    - cron: "0 8 * * 1-5"
+      timezone: Asia/Shanghai
+    # 09:30–15:00 北京时间 — 盘中 S1–S12 + Lookback MSS (~every 24 min)
+    - cron: "30 9 * * 1-5"
+      timezone: Asia/Shanghai
+    - cron: "54 9 * * 1-5"
+      timezone: Asia/Shanghai
+    - cron: "18 10 * * 1-5"
+      timezone: Asia/Shanghai
+    - cron: "42 10 * * 1-5"
+      timezone: Asia/Shanghai
+    - cron: "6 11 * * 1-5"
+      timezone: Asia/Shanghai
+    - cron: "30 11 * * 1-5"
+      timezone: Asia/Shanghai
+    - cron: "0 13 * * 1-5"
+      timezone: Asia/Shanghai
+    - cron: "24 13 * * 1-5"
+      timezone: Asia/Shanghai
+    - cron: "48 13 * * 1-5"
+      timezone: Asia/Shanghai
+    - cron: "12 14 * * 1-5"
+      timezone: Asia/Shanghai
+    - cron: "36 14 * * 1-5"
+      timezone: Asia/Shanghai
+    - cron: "0 15 * * 1-5"
+      timezone: Asia/Shanghai
+    # 15:30 北京时间 — 收盘复盘 + MSS 曲线 + 验证
+    - cron: "30 15 * * 1-5"
+      timezone: Asia/Shanghai
+    # 09:00 北京时间 周六 — 周报总结（盈亏、持股、观察池、板块）
+    - cron: "0 9 * * 6"
+      timezone: Asia/Shanghai
+    # 10:00 北京时间 周六 — 周报备用（合并/deploy 晚于 9:00 时补发；manifest 去重）
+    - cron: "0 10 * * 6"
+      timezone: Asia/Shanghai
+    # 09:00 北京时间 周日 — 下周预测（持股/观察池日走势、热点、MSS）
+    - cron: "0 9 * * 0"
+      timezone: Asia/Shanghai
   workflow_dispatch:
     inputs:
       job:
-        description: "morning | intraday | close"
+        description: "morning | intraday | close | weekly | forecast"
         required: true
         default: intraday
         type: choice
@@ -40,8 +65,15 @@ on:
           - morning
           - intraday
           - close
+          - weekly
+          - forecast
       dry_run:
         description: "Skip Feishu push"
+        required: false
+        default: false
+        type: boolean
+      reset_portfolio:
+        description: "Re-seed portfolio.json from repo config (ignore cache)"
         required: false
         default: false
         type: boolean
@@ -54,13 +86,29 @@ jobs:
   run:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
     env:
+      TZ: Asia/Shanghai
       INPUT_JOB: ${{ github.event.inputs.job }}
+      GITHUB_EVENT_SCHEDULE: ${{ github.event.schedule }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Resolve job (Asia/Shanghai)
+      - name: Fork schedule notice
+        run: |
+          set -euo pipefail
+          is_fork=$(gh api "repos/${{ github.repository }}" --jq '.isFork' 2>/dev/null || echo "unknown")
+          if [ "$is_fork" = "true" ]; then
+            echo "::warning::Fork 仓库的 cron 默认不会自动触发。请到 Actions 页点击「Enable scheduled workflows」，或使用 scripts/dispatch-daily-run-local-cron.sh 本地定时触发。"
+          fi
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            echo "Scheduled run fired: schedule=${{ github.event.schedule }}"
+          fi
+
+      - name: Resolve job (北京时间)
         id: resolve
         run: |
           set -euo pipefail
@@ -72,18 +120,22 @@ jobs:
           echo "Outside morning/intraday/close window — skipping."
           exit 0
 
-      - name: Trading date (Asia/Shanghai)
+      - name: Trading date (北京时间)
         if: steps.resolve.outputs.skip != 'true'
         id: tz
-        run: echo "date=$(TZ=Asia/Shanghai date +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+        run: echo "date=$(date +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
 
+      # Split restore/save: actions/cache@v4 skips upload on primary-key hit, so
+      # intraday_state.json never accumulated S3+ across scheduled runs.
       - name: Restore daily-run state cache
         if: steps.resolve.outputs.skip != 'true'
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
+        id: daily-run-cache
         with:
           path: ~/.agent-reach/daily_run
           key: daily-run-state-${{ steps.tz.outputs.date }}
           restore-keys: |
+            daily-run-state-${{ steps.tz.outputs.date }}
             daily-run-state-
 
       - name: Setup Python
@@ -110,10 +162,13 @@ jobs:
         env:
           AGENT_REACH_CONFIG_YAML: ${{ secrets.AGENT_REACH_CONFIG_YAML }}
           AGENT_REACH_PORTFOLIO_JSON: ${{ secrets.AGENT_REACH_PORTFOLIO_JSON }}
+          RESET_PORTFOLIO: ${{ github.event_name == 'workflow_dispatch' && inputs.reset_portfolio && 'true' || 'false' }}
         run: bash scripts/gha-daily-run-setup.sh
 
       - name: Run scheduled job
         if: steps.resolve.outputs.skip != 'true'
+        env:
+          MCPORTER_CONFIG: ${{ github.workspace }}/config/mcporter.json
         run: |
           set -euo pipefail
           job="${{ steps.resolve.outputs.job }}"
@@ -122,6 +177,13 @@ jobs:
             extra="--dry-run"
           fi
           agent-reach daily-run schedule run "$job" $extra
+
+      - name: Save daily-run state cache
+        if: steps.resolve.outputs.skip != 'true' && always()
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.agent-reach/daily_run
+          key: daily-run-state-${{ steps.tz.outputs.date }}
 
       - name: Upload run manifest
         if: steps.resolve.outputs.skip != 'true' && always()

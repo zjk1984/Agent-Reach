@@ -9,7 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from agent_reach.daily_run.close_research import build_research_queries, render_research_markdown
-from agent_reach.daily_run.exa_client import _parse_mcporter_output, summarize_hits
+from agent_reach.daily_run.exa_client import ExaError, _parse_mcporter_output, format_exa_error, summarize_hits
 from agent_reach.daily_run.experience import append_experience_entry, load_recent_experience
 from agent_reach.daily_run.settings import load_settings
 from agent_reach.daily_run.trade_calendar import is_trading_day, is_weekend
@@ -25,6 +25,31 @@ class TestExaClient:
     def test_summarize_hits(self):
         s = summarize_hits([{"title": "A"}, {"title": "B"}])
         assert "A" in s and "B" in s
+
+    def test_format_exa_error_strips_stack(self):
+        raw = "[mcporter] Ad-hoc servers require either --http-url or --stdio.\nError: ..."
+        msg = format_exa_error(raw)
+        assert "file://" not in msg
+        assert "Exa 未配置" in msg or "Ad-hoc" not in msg
+
+    @patch("agent_reach.daily_run.exa_client.subprocess.run")
+    @patch("agent_reach.daily_run.exa_client.shutil.which", return_value="/usr/bin/mcporter")
+    @patch("agent_reach.daily_run.exa_client.mcporter_cli_prefix")
+    def test_web_search_uses_config_flag(self, mock_prefix, mock_which, mock_run, tmp_path):
+        cfg = tmp_path / "mcporter.json"
+        mock_prefix.return_value = ["mcporter", "--config", str(cfg)]
+        mock_run.return_value = type(
+            "R", (), {"returncode": 0, "stdout": '[{"title":"Hit","url":"https://x.com"}]', "stderr": ""}
+        )()
+
+        from agent_reach.daily_run.exa_client import web_search_exa
+
+        hits = web_search_exa("test query", num_results=1, timeout=5)
+        assert hits[0]["title"] == "Hit"
+        cmd = mock_run.call_args[0][0]
+        assert "--config" in cmd
+        assert str(cfg) in cmd
+        assert "--env" not in cmd
 
 
 class TestTradeCalendar:

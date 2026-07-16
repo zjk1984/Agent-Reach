@@ -171,6 +171,19 @@ def run_scheduled(
             save_run_manifest(job, result, duration_ms=0)
             return result
 
+    if job in ("weekly", "forecast"):
+        from agent_reach.daily_run.run_manifest import has_job_manifest_today
+
+        label = "周报" if job == "weekly" else "预测"
+        if has_job_manifest_today(job, require_feishu=True):
+            result = {
+                "job": job,
+                "skipped": True,
+                "reason": f"今日{label}已发送（manifest 去重）",
+            }
+            save_run_manifest(job, result, duration_ms=0)
+            return result
+
     from agent_reach.daily_run.job_health import (
         maybe_alert_consecutive_failures,
         record_job_outcome,
@@ -330,7 +343,13 @@ def _run_job_body(
 
         with StepTimer("schedule.weekly"):
             pf = load_portfolio()
-            snap, path = build_and_save(report_type="close", config=config)
+            snap, path = build_and_save(
+                report_type="close",
+                config=config,
+                settings=settings,
+                portfolio=pf,
+                enrich_level="lite",
+            )
             run_result = run_weekly(
                 snap,
                 settings=settings,
@@ -346,7 +365,13 @@ def _run_job_body(
 
         with StepTimer("schedule.forecast"):
             pf = load_portfolio()
-            snap, path = build_and_save(report_type="close", config=config)
+            snap, path = build_and_save(
+                report_type="close",
+                config=config,
+                settings=settings,
+                portfolio=pf,
+                enrich_level="lite",
+            )
             run_result = run_forecast(
                 snap,
                 settings=settings,
@@ -354,7 +379,12 @@ def _run_job_body(
                 config=config,
                 portfolio=pf,
             )
-            result = {"job": job, "snapshot_path": str(path), "result": run_result}
+            result = {
+                "job": job,
+                "snapshot_path": str(path),
+                "forecast_path": run_result.get("forecast_path"),
+                "result": run_result,
+            }
             feishu = run_result.get("feishu")
 
     elif job == "close":
@@ -437,6 +467,7 @@ def _run_job_body(
 
             result = {"job": job, "snapshot_path": str(path), "result": run_result}
             feishu = run_result.get("feishu")
+
     else:
         raise ValueError(f"未知定时任务：{job}，可选 morning | intraday | close | weekly | forecast")
 

@@ -29,14 +29,20 @@ if [ -n "${GITHUB_EVENT_SCHEDULE:-}" ]; then
       echo "skip=false"
       exit 0
       ;;
+    "0 10 * * 6")
+      echo "job=weekly"
+      echo "skip=false"
+      exit 0
+      ;;
     "0 9 * * 0")
       echo "job=forecast"
       echo "skip=false"
       exit 0
       ;;
-    "0 7 * * 1-5"|\
-    "30 9 * * 1-5"|"0 10 * * 1-5"|"30 10 * * 1-5"|"0 11 * * 1-5"|"30 11 * * 1-5"|\
-    "0 13 * * 1-5"|"30 13 * * 1-5"|"0 14 * * 1-5"|"30 14 * * 1-5"|"0 15 * * 1-5")
+    "30 9 * * 1-5"|"54 9 * * 1-5"|\
+    "18 10 * * 1-5"|"42 10 * * 1-5"|"6 11 * * 1-5"|"30 11 * * 1-5"|\
+    "0 13 * * 1-5"|"24 13 * * 1-5"|"48 13 * * 1-5"|\
+    "12 14 * * 1-5"|"36 14 * * 1-5"|"0 15 * * 1-5")
       echo "job=intraday"
       echo "skip=false"
       exit 0
@@ -74,13 +80,6 @@ fi
 # Next-week forecast ~09:00 北京时间 Sunday.
 if [ "$(date +%u)" = "7" ] && [ "$minutes" -ge 520 ] && [ "$minutes" -le 570 ]; then
   echo "job=forecast"
-  echo "skip=false"
-  exit 0
-fi
-
-# Premarket intraday scan ~07:00 北京时间.
-if [ "$minutes" -ge 410 ] && [ "$minutes" -le 435 ]; then
-  echo "job=intraday"
   echo "skip=false"
   exit 0
 fi

@@ -66,7 +66,15 @@ PY
 )"
 
 if command -v mcporter >/dev/null 2>&1; then
+  MCPORTER_USER_DIR="${HOME}/.mcporter"
+  mkdir -p "$MCPORTER_USER_DIR"
+  if [ -f config/mcporter.json ]; then
+    cp config/mcporter.json "${MCPORTER_USER_DIR}/mcporter.json"
+    echo "Synced config/mcporter.json → ${MCPORTER_USER_DIR}/mcporter.json"
+  fi
   mcporter config add exa https://mcp.exa.ai/mcp >/dev/null 2>&1 || true
 fi
+
+export MCPORTER_CONFIG="${MCPORTER_CONFIG:-${GITHUB_WORKSPACE:-$(pwd)}/config/mcporter.json}"
 
 echo "Agent Reach GHA setup OK: config + portfolio ready under ${AGENT_REACH_DIR}"
