@@ -5,9 +5,15 @@ from __future__ import annotations
 
 import json
 import time
+from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
+
+from agent_reach.daily_run.trade_calendar import today_shanghai
+
+_SH_TZ = ZoneInfo("Asia/Shanghai")
 
 try:
     from loguru import logger
@@ -22,18 +28,21 @@ def runs_dir() -> Path:
 
 
 def _json_safe(value: Any) -> Any:
-    """Coerce manifest payload to JSON-serializable structures."""
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
+    """Recursively convert dataclasses / nested results into JSON-serializable data."""
     if isinstance(value, dict):
-        return {str(k): _json_safe(v) for k, v in value.items()}
+        return {k: _json_safe(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [_json_safe(v) for v in value]
-    if hasattr(value, "to_dict") and callable(value.to_dict):
-        return _json_safe(value.to_dict())
-    if hasattr(value, "__dict__"):
-        return _json_safe(vars(value))
-    return str(value)
+    to_dict = getattr(value, "to_dict", None)
+    if callable(to_dict):
+        return _json_safe(to_dict())
+    if is_dataclass(value) and not isinstance(value, type):
+        return _json_safe(asdict(value))
+    return value
+
+
+def _manifest_shanghai_now() -> datetime:
+    return datetime.now(_SH_TZ)
 
 
 def save_run_manifest(
@@ -43,11 +52,12 @@ def save_run_manifest(
     feishu: Optional[dict[str, Any]] = None,
     duration_ms: Optional[float] = None,
 ) -> Path:
-    """Write structured run record under runs/YYYY-MM-DD/."""
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    """Write structured run record under runs/YYYY-MM-DD/ (Asia/Shanghai trading date)."""
+    sh_now = _manifest_shanghai_now()
+    today = today_shanghai().isoformat()
     out_dir = runs_dir() / today
     out_dir.mkdir(parents=True, exist_ok=True)
-    ts = datetime.now(timezone.utc).strftime("%H%M%S")
+    ts = sh_now.strftime("%H%M%S")
     path = out_dir / f"{job}_{ts}.json"
     record = {
         "job": job,

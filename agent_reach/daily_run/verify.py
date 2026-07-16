@@ -52,6 +52,32 @@ class VerifyResult:
         }
 
 
+def verify_from_dict(data: dict[str, Any]) -> VerifyResult:
+    """Rebuild VerifyResult from verify_snapshots().to_dict() output."""
+    rng = data.get("mss_range_baseline")
+    mss_range: Optional[tuple[float, float]] = None
+    if isinstance(rng, (list, tuple)) and len(rng) == 2:
+        mss_range = (float(rng[0]), float(rng[1]))
+    return VerifyResult(
+        code=data.get("code"),
+        name=data.get("name"),
+        price_baseline=data.get("price_baseline"),
+        price_current=data.get("price_current"),
+        price_delta_pct=data.get("price_delta_pct"),
+        mss_baseline=data.get("mss_baseline"),
+        mss_current=data.get("mss_current"),
+        mss_delta=data.get("mss_delta"),
+        verdict_baseline=data.get("verdict_baseline"),
+        verdict_current=data.get("verdict_current"),
+        verdict_changed=bool(data.get("verdict_changed")),
+        mss_range_baseline=mss_range,
+        mss_within_prediction=data.get("mss_within_prediction"),
+        summary=str(data.get("summary") or ""),
+        recommendations=list(data.get("recommendations") or []),
+        deviations=list(data.get("deviations") or []),
+    )
+
+
 def verify_snapshots(
     baseline: dict[str, Any],
     current: dict[str, Any],

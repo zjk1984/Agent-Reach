@@ -171,6 +171,57 @@ def record_scan(
     }
 
 
+def record_scan_from_evaluation(
+    enriched: dict[str, Any],
+    evaluation: dict[str, Any],
+    *,
+    settings: Optional[dict[str, Any]] = None,
+    state: Optional[IntradayState] = None,
+    state_path: Optional[Path] = None,
+    source: Optional[str] = None,
+) -> dict[str, Any]:
+    """Append S_n from an existing evaluation (legacy morning S2 backfill)."""
+    cfg = settings or load_settings()
+    st = state or load_state(state_path)
+
+    if len(st.scans) >= MAX_SCANS:
+        raise RuntimeError(f"今日扫描已达上限 {MAX_SCANS} 次（S1-S{MAX_SCANS}）")
+
+    report = evaluation["report"]
+    scan_id = f"S{len(st.scans) + 1}"
+
+    entry = {
+        "scan_id": scan_id,
+        "as_of": report.get("as_of"),
+        "code": report.get("code"),
+        "name": report.get("name"),
+        "mss_final": report.get("mss_final"),
+        "mss_breakdown": report.get("mss_breakdown"),
+        "verdict": report.get("verdict"),
+        "confidence": report.get("confidence"),
+        "price": enriched.get("price"),
+        "audit_passed": evaluation["audit"].passed,
+    }
+    if source:
+        entry["source"] = source
+    st.scans.append(entry)
+    save_state(st, state_path)
+
+    lookback_mss, lookback_detail = compute_lookback_mss(st.scans, cfg)
+    trend = detect_mss_trend(st.scans)
+
+    return {
+        "scan": entry,
+        "state": st.to_dict(),
+        "lookback_mss": lookback_mss,
+        "lookback_detail": lookback_detail,
+        "trend": trend,
+        "markdown": render_intraday_scan_markdown(
+            entry, lookback_mss, lookback_detail, trend, report, scan_count=len(st.scans)
+        ),
+    }
+
+
 def should_evaluate_trade(
     state: Optional[IntradayState] = None,
     settings: Optional[dict[str, Any]] = None,

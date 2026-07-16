@@ -1,99 +1,203 @@
-# -*- coding: utf-8 -*-
-"""Phase-2 tests: verify, backtest, akshare adapter (mocked)."""
+# -*- coding: utf-8
+"""Tests for Phase-2/3 daily-run optimizations."""
 
 import json
-from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch
+from datetime import date
+from pathlib import Path
+from unittest.mock import patch
 
-import pandas as pd
 import pytest
 
-from agent_reach.daily_run.akshare_adapter import enrich_snapshot, normalize_symbol
-from agent_reach.daily_run.backtest import run_mss_backtest
-from agent_reach.daily_run.verify import render_verify_markdown, verify_snapshots
+from agent_reach.daily_run.baseline_fallback import load_close_baseline
+from agent_reach.daily_run.close_improvements import generate_close_improvements
+from agent_reach.daily_run.exa_cache import cached_web_search_exa, put_cached_search
+from agent_reach.daily_run.experience import append_experience_entry
+from agent_reach.daily_run.intraday_push import should_push_intraday
+from agent_reach.daily_run.snapshot_cache import load_daily_cache, save_daily_cache
+from agent_reach.daily_run.weekly_digest import load_weekly_digest, save_weekly_digest
+from agent_reach.daily_run.week_forecast import (
+    _events_from_weekly_digest,
+    _historical_vol_scale,
+    generate_week_forecast,
+)
 
 
-class TestNormalizeSymbol:
-    def test_sh_code(self):
-        assert normalize_symbol("688008") == ("688008", "sh")
+class TestIntradayPush:
+    def test_smart_mode_pushes_milestones(self):
+        settings = {"schedule": {"intraday_push_mode": "smart"}}
+        assert should_push_intraday("S1", settings=settings) is True
+        assert should_push_intraday("S5", settings=settings, trade_happened=False) is False
 
-    def test_sz_code(self):
-        assert normalize_symbol("002273") == ("002273", "sz")
-
-
-class TestVerify:
-    @pytest.fixture
-    def baseline(self):
-        return {
-            "code": "688008",
-            "name": "澜起科技",
-            "price": 253.20,
-            "mss_final": 65,
-            "verdict": "可做",
-            "mss_range": [45, 58],
-            "macro_summary": "预测 MSS [45, 58]",
-        }
-
-    @pytest.fixture
-    def current(self):
-        return {
-            "code": "688008",
-            "name": "澜起科技",
-            "price": 255.87,
-            "mss_breakdown": {"fx": 35, "flow": 48, "global": 38, "sentiment": 50},
-        }
-
-    def test_verify_mss_prediction_miss(self, baseline, current):
-        result = verify_snapshots(baseline, current)
-        assert result.mss_within_prediction is False
-        assert result.mss_current == 42.5
-        assert any("低于预测" in d for d in result.deviations)
-
-    def test_verify_markdown(self, baseline, current):
-        result = verify_snapshots(baseline, current)
-        md = render_verify_markdown(result)
-        assert "验证摘要" in md
-        assert "688008" in md or "澜起" in md
+    def test_trade_only(self):
+        settings = {"schedule": {"intraday_push_mode": "trade_only"}}
+        assert should_push_intraday("S1", settings=settings, trade_happened=False) is False
+        assert should_push_intraday("S3", settings=settings, trade_happened=True) is True
 
 
-class TestBacktest:
-    def test_run_mss_backtest(self):
-        history = [
-            {"date": "2026-07-01", "mss": 55, "price": 100, "return": 0.01},
-            {"date": "2026-07-02", "mss": 52, "price": 101, "return": 0.005},
-            {"date": "2026-07-03", "mss": 48, "price": 100.5, "return": -0.005},
-            {"date": "2026-07-04", "mss": 38, "price": 98, "return": -0.02},
-        ]
-        result = run_mss_backtest(history)
-        assert result.metrics.trade_count >= 1
-        assert len(result.equity_curve) > 1
-
-    def test_example_history_file(self):
-        from pathlib import Path
-
-        history = json.loads(
-            Path("config/daily_run_history.example.json").read_text(encoding="utf-8")
+class TestWeeklyDigest:
+    def test_save_and_load(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "agent_reach.daily_run.weekly_digest.digest_path",
+            lambda: tmp_path / "weekly_digest.json",
         )
-        result = run_mss_backtest(history)
-        assert "策略收益" in result.summary()
-
-
-class TestAKShareAdapter:
-    @patch("agent_reach.daily_run.akshare_adapter._import_akshare")
-    def test_enrich_snapshot(self, mock_import):
-        ak = MagicMock()
-        mock_import.return_value = ak
-        ak.stock_zh_a_spot_em.return_value = pd.DataFrame(
-            [{"代码": "688008", "名称": "澜起科技", "最新价": 255.87, "涨跌幅": 1.05, "量比": 1.1, "成交额": 1e9}]
+        monkeypatch.setattr(
+            "agent_reach.daily_run.weekly_digest.today_shanghai",
+            lambda: date(2026, 7, 11),
         )
-        ak.stock_zh_a_hist.return_value = pd.DataFrame(
+        report = {
+            "week_end": "2026-07-10",
+            "hot_sectors": [{"sector": "半导体", "avg_change_pct": 2.1}],
+            "sector_research": [{"label": "AI", "summary": "test"}],
+        }
+        save_weekly_digest(report)
+        loaded = load_weekly_digest()
+        assert loaded is not None
+        assert loaded["hot_sectors"][0]["sector"] == "半导体"
+
+    def test_events_from_digest(self):
+        events = _events_from_weekly_digest(
             {
-                "收盘": [240 + i for i in range(25)],
-                "成交量": [1000 + i * 10 for i in range(25)],
+                "hot_sectors": [{"sector": "新能源", "avg_change_pct": 1.5}],
+                "sector_research": [{"label": "锂电", "summary": "景气"}],
             }
         )
-        merged = enrich_snapshot({}, "688008")
-        assert merged["code"] == "688008"
-        assert merged["price"] == 255.87
-        assert merged["structured_review_complete"] is True
-        assert "quote" in merged["sources"]
+        assert len(events) >= 2
+        assert events[0]["source"] == "weekly_digest"
+
+
+class TestBaselineFallback:
+    def test_fallback_from_scan(self, tmp_path, monkeypatch):
+        baseline_path = tmp_path / "last_morning.json"
+        monkeypatch.setattr(
+            "agent_reach.daily_run.baseline_fallback.default_baseline_path",
+            lambda: baseline_path,
+        )
+        monkeypatch.setattr(
+            "agent_reach.daily_run.baseline_fallback.load_last_snapshot",
+            lambda: None,
+        )
+        scans = [{"code": "688008", "name": "测试", "mss_final": 45.0, "as_of": "2026-07-10T01:00:00Z"}]
+        snap, source = load_close_baseline(scans=scans)
+        assert source == "intraday_first_scan"
+        assert snap["mss_final"] == 45.0
+
+
+class TestExaCache:
+    def test_cached_search(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "agent_reach.daily_run.exa_cache.exa_cache_dir",
+            lambda: tmp_path,
+        )
+        put_cached_search("test query", [{"title": "hit"}])
+        hits, cached = cached_web_search_exa(
+            "test query",
+            settings={"exa_cache": {"enabled": True, "ttl_seconds": 3600}},
+        )
+        assert cached is True
+        assert hits[0]["title"] == "hit"
+
+
+class TestSnapshotCache:
+    def test_daily_cache_roundtrip(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "agent_reach.daily_run.snapshot_cache.cache_dir",
+            lambda: tmp_path,
+        )
+        monkeypatch.setattr(
+            "agent_reach.daily_run.snapshot_cache.today_shanghai",
+            lambda: date(2026, 7, 10),
+        )
+        save_daily_cache({"macro_ctx": {"macro_summary": "ok"}})
+        data = load_daily_cache()
+        assert data["macro_ctx"]["macro_summary"] == "ok"
+
+
+class TestExperienceForecast:
+    def test_append_with_forecast_review(self, tmp_path, monkeypatch):
+        exp_dir = tmp_path / "experience"
+        monkeypatch.setattr(
+            "agent_reach.daily_run.experience.experience_dir",
+            lambda: exp_dir,
+        )
+        append_experience_entry(
+            {"code": "688008", "name": "测试"},
+            {"verdict_current": "观察", "mss_current": 50},
+            settings={"experience": {"enabled": True}},
+            forecast_review={
+                "date": "2026-07-10",
+                "accuracy": 0.3,
+                "symbol_hits": 1,
+                "symbol_total": 3,
+                "mss_hit": False,
+            },
+        )
+        line = (exp_dir / "experience.jsonl").read_text(encoding="utf-8").strip()
+        entry = json.loads(line)
+        assert entry["forecast_review"]["accuracy"] == 0.3
+        assert any("命中率" in r for r in entry["rules"])
+
+
+class TestCloseImprovementsForecast:
+    def test_low_accuracy_suggestion(self):
+        result = generate_close_improvements(
+            baseline={},
+            current={"portfolio": {"holdings": [], "cash_ratio": 0.5}, "watchlist": []},
+            verify={"verdict_current": "观察"},
+            settings={"close_improvements": {"enabled": True}, "week_forecast": {"enabled": True}},
+            forecast_review={
+                "accuracy": 0.25,
+                "symbol_hits": 1,
+                "symbol_total": 4,
+                "mss_hit": False,
+                "mss_predicted": [40, 50],
+                "mss_actual": 35,
+            },
+        )
+        titles = [i.title for i in result.items]
+        assert any("命中率" in t for t in titles)
+
+
+class TestWeekForecastEnhancements:
+    def test_historical_vol_scale(self, tmp_path, monkeypatch):
+        fc_dir = tmp_path / "forecasts"
+        fc_dir.mkdir()
+        fc_path = fc_dir / "2026-07-07.json"
+        fc_path.write_text(
+            json.dumps(
+                {
+                    "reviews": [
+                        {
+                            "symbol_evals": [
+                                {"error_pct": 3.5},
+                                {"error_pct": -4.0},
+                            ]
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr("agent_reach.daily_run.week_forecast.forecasts_dir", lambda: fc_dir)
+        scale = _historical_vol_scale({"vol_scale": 1.0})
+        assert scale > 1.0
+
+    @patch("agent_reach.daily_run.week_forecast.run_news_research", return_value=[])
+    @patch("agent_reach.daily_run.weekly_digest.load_weekly_digest")
+    @patch("agent_reach.daily_run.week_forecast.today_shanghai")
+    def test_generate_uses_digest(self, mock_today, mock_digest, mock_news):
+        mock_today.return_value = date(2026, 7, 12)
+        mock_digest.return_value = {
+            "week_end": "2026-07-10",
+            "hot_sectors": [{"sector": "芯片", "avg_change_pct": 2.0}],
+            "sector_research": [{"label": "半导体", "summary": "强势"}],
+        }
+        snapshot = {
+            "portfolio": {"holdings": [], "watchlist": []},
+            "macro_summary": "test",
+        }
+        forecast = generate_week_forecast(
+            snapshot,
+            {"week_forecast": {"enabled": True, "exa_news_research": False, "reuse_weekly_digest_exa": True}},
+        )
+        assert any("digest" in n for n in forecast.notes)
+        assert any(e.get("source") == "weekly_digest" for e in forecast.news_events)

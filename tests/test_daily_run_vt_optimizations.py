@@ -43,7 +43,14 @@ class TestQuoteFetch:
 
 class TestAuditorCoverage:
     def test_low_quote_coverage_blocks(self):
-        settings = load_settings()
+        settings = {
+            **load_settings(),
+            "data_audit": {
+                **load_settings().get("data_audit", {}),
+                "quote_coverage_mode": "block",
+                "min_quote_coverage_pct": 0.8,
+            },
+        }
         snap = {
             "as_of": datetime.now(timezone.utc).isoformat(),
             "code": "688008",

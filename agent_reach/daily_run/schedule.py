@@ -140,10 +140,12 @@ def install_crontab(entries: Optional[list[CronEntry]] = None, *, dry_run: bool 
     return new_crontab
 
 
-def _doctor_channels(config) -> dict:
-    from agent_reach.doctor import check_all
+def _doctor_for_job(config, settings: dict, job: str) -> dict:
+    if job in ("weekly", "forecast"):
+        return {}
+    from agent_reach.daily_run.doctor_cache import doctor_channels_cached
 
-    return check_all(config)
+    return doctor_channels_cached(config, settings)
 
 
 def run_scheduled(
@@ -162,18 +164,19 @@ def run_scheduled(
 
     from agent_reach.daily_run.trade_calendar import is_trading_day
 
-    trading_ok, trading_reason = is_trading_day(settings=settings)
-    if not trading_ok:
-        result = {"job": job, "skipped": True, "reason": trading_reason}
-        save_run_manifest(job, result, duration_ms=0)
-        return result
+    if job not in ("weekly", "forecast"):
+        trading_ok, trading_reason = is_trading_day(settings=settings)
+        if not trading_ok:
+            result = {"job": job, "skipped": True, "reason": trading_reason}
+            save_run_manifest(job, result, duration_ms=0)
+            return result
 
     from agent_reach.daily_run.job_health import (
         maybe_alert_consecutive_failures,
         record_job_outcome,
     )
 
-    doctor = _doctor_channels(cfg_obj)
+    doctor = _doctor_for_job(cfg_obj, settings, job)
 
     try:
         result, feishu = _run_job_body(
@@ -358,25 +361,58 @@ def _run_job_body(
         from agent_reach.daily_run.intraday import load_state
 
         with StepTimer("schedule.close"):
-            snap, path = build_and_save(report_type="close", config=config)
+            pf = load_portfolio()
+            snap, path = build_and_save(report_type="close", config=config, portfolio=pf)
             state = load_state()
             if state.scans:
                 snap["intraday_scans"] = state.scans
                 snap["mss_intraday_actual"] = [s.get("mss_final") for s in state.scans]
 
+            from agent_reach.daily_run.baseline_fallback import load_close_baseline
+
+            baseline_source = "last_morning.json"
+            baseline_note = None
             try:
                 baseline = load_morning_baseline()
             except FileNotFoundError as exc:
-                if push:
-                    from agent_reach.integrations.feishu import send_card
+                try:
+                    baseline, baseline_source = load_close_baseline(scans=state.scans)
+                    baseline_note = f"降级基线：{baseline_source}（原错误：{exc}）"
+                    if push:
+                        from agent_reach.integrations.feishu import send_card
 
-                    send_card(
-                        config,
-                        "⚠️ 收盘复盘缺少早盘基线",
-                        f"未找到 `last_morning.json`：{exc}\n\n请先运行 `daily-run morning --save-baseline`",
-                        template="red",
-                    )
-                raise
+                        send_card(
+                            config,
+                            "⚠️ 收盘复盘使用降级基线",
+                            f"{baseline_note}\n\n建议补跑 `daily-run schedule run morning`",
+                            template="orange",
+                        )
+                except FileNotFoundError:
+                    if push:
+                        from agent_reach.integrations.feishu import send_card
+
+                        send_card(
+                            config,
+                            "⚠️ 收盘复盘缺少早盘基线",
+                            f"未找到 `last_morning.json`：{exc}\n\n请先运行 `daily-run morning --save-baseline`",
+                            template="red",
+                        )
+                    raise
+
+            from agent_reach.daily_run.workflows import prepare_close_run
+
+            prepared = prepare_close_run(
+                snap,
+                baseline,
+                pf,
+                settings=settings,
+                scans=state.scans,
+                trades=state.trades,
+                attach_intraday=False,
+            )
+            snap = prepared["snapshot"]
+            wl_result_dict = prepared.get("watchlist_adjust")
+            code_review_dict = prepared.get("code_review")
 
             run_result = run_close(
                 snap,
@@ -384,7 +420,21 @@ def _run_job_body(
                 settings=settings,
                 push=push,
                 config=config,
+                intraday_scans=state.scans,
+                intraday_trades=state.trades,
+                watchlist_adjust=wl_result_dict,
+                code_review=code_review_dict,
+                verify_dict=prepared.get("verify"),
             )
+            run_result["baseline_source"] = baseline_source
+            if baseline_note:
+                run_result["baseline_note"] = baseline_note
+            if code_review_dict is not None:
+                run_result["code_review"] = code_review_dict
+            run_result["prepare_steps"] = prepared.get("steps") or []
+            if wl_result_dict is not None:
+                run_result["watchlist_adjust"] = wl_result_dict
+
             result = {"job": job, "snapshot_path": str(path), "result": run_result}
             feishu = run_result.get("feishu")
     else:

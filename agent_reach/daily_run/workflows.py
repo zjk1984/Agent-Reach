@@ -15,6 +15,7 @@ from agent_reach.daily_run.report_push import (
     split_push_enabled,
 )
 from agent_reach.daily_run.settings import load_settings
+from agent_reach.daily_run.close_code_review import render_code_review_markdown
 from agent_reach.daily_run.close_research import render_research_markdown, run_exa_research
 from agent_reach.daily_run.curve_analysis import analyze_intraday_curve, render_curve_markdown
 from agent_reach.daily_run.experience import append_experience_entry, render_experience_markdown
@@ -145,6 +146,11 @@ def run_close(
     push: bool = True,
     title: Optional[str] = None,
     config=None,
+    intraday_scans: Optional[list[dict[str, Any]]] = None,
+    intraday_trades: Optional[list[dict[str, Any]]] = None,
+    watchlist_adjust: Optional[dict[str, Any]] = None,
+    code_review: Optional[dict[str, Any]] = None,
+    verify_dict: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Close workflow: Team-First experts → verify baseline vs current → Feishu push."""
     cfg = settings or load_settings()
@@ -161,7 +167,12 @@ def run_close(
         enriched = run_team_first(current, cfg, names=plugin_names)
         team_md = render_team_markdown(enriched)
 
-    verify = verify_snapshots(baseline, enriched, cfg)
+    if verify_dict is not None:
+        from agent_reach.daily_run.verify import verify_from_dict
+
+        verify = verify_from_dict(verify_dict)
+    else:
+        verify = verify_snapshots(baseline, enriched, cfg)
     verify_dict = verify.to_dict()
 
     curve = None
@@ -180,6 +191,39 @@ def run_close(
 
     research_results = run_exa_research(enriched, cfg)
     research_md = render_research_markdown(enriched, research_results=research_results, settings=cfg) or ""
+
+    extra_parts: list[str] = []
+    if watchlist_adjust is not None:
+        from agent_reach.daily_run.watchlist_manager import (
+            WatchlistAdjustResult,
+            WatchlistChange,
+            render_watchlist_adjust_markdown,
+        )
+
+        wl_md = render_watchlist_adjust_markdown(
+            WatchlistAdjustResult(
+                applied=bool(watchlist_adjust.get("applied")),
+                portfolio={},
+                changes=[
+                    WatchlistChange(**c) for c in (watchlist_adjust.get("changes") or [])
+                ],
+                message=str(watchlist_adjust.get("message") or ""),
+            )
+        )
+        if wl_md:
+            extra_parts.append(wl_md)
+
+    if code_review is not None:
+        from agent_reach.daily_run.close_code_review import CodeReviewResult
+
+        cr_obj = (
+            code_review
+            if isinstance(code_review, CodeReviewResult)
+            else CodeReviewResult(**code_review)
+        )
+        cr_md = render_code_review_markdown(cr_obj)
+        if cr_md:
+            extra_parts.append(cr_md)
 
     exp_path = append_experience_entry(
         enriched, verify_dict, curve=curve, research=research_results, settings=cfg
@@ -202,7 +246,7 @@ def run_close(
         verify_md = audit_block + ("\n\n---\n\n" + verify_md if verify_md else "")
 
     md = "\n\n---\n\n".join(
-        p for p in [team_md, curve_md, research_md, exp_md, verify_md] if p
+        p for p in [team_md, curve_md, research_md, *extra_parts, exp_md, verify_md] if p
     )
 
     feishu_result = None
@@ -249,6 +293,93 @@ def run_close(
             "issues": audit.issues,
             "warnings": audit.warnings,
         },
+    }
+
+
+def prepare_close_run(
+    snapshot: dict[str, Any],
+    baseline: dict[str, Any],
+    portfolio: dict[str, Any],
+    *,
+    settings: Optional[dict[str, Any]] = None,
+    scans: Optional[list[dict[str, Any]]] = None,
+    trades: Optional[list[dict[str, Any]]] = None,
+    attach_intraday: bool = True,
+) -> dict[str, Any]:
+    """Shared pre-close pipeline for schedule cron and CLI."""
+    cfg = settings or load_settings()
+    steps: list[str] = []
+    snap = dict(snapshot)
+    pf_work = portfolio
+    scan_list = list(scans or [])
+    trade_list = list(trades or [])
+
+    if attach_intraday and scan_list:
+        snap.setdefault("intraday_scans", scan_list)
+        if not snap.get("mss_intraday_actual"):
+            snap["mss_intraday_actual"] = [
+                s.get("mss_final") for s in scan_list if s.get("mss_final") is not None
+            ]
+
+    from agent_reach.daily_run.close_code_review import run_close_code_review
+    from agent_reach.daily_run.snapshot_builder import save_portfolio
+    from agent_reach.daily_run.symbols import sync_snapshot_portfolio
+    from agent_reach.daily_run.watchlist_manager import (
+        adjust_watchlist,
+        collect_intraday_sold_codes,
+        is_watchlist_adjust_enabled,
+    )
+
+    close_team = (cfg.get("team") or {}).get("close_team_first", True) is not False
+    if close_team and experts_enabled(cfg, workflow="close"):
+        snap = run_team_first(snap, cfg)
+        steps.append("team_first")
+
+    verify_result = verify_snapshots(baseline, snap, cfg)
+    verify_out = verify_result.to_dict()
+    steps.append("verify")
+
+    wl_result = None
+    portfolio_dirty = False
+    if is_watchlist_adjust_enabled(cfg):
+        wl_result = adjust_watchlist(
+            pf_work,
+            snap,
+            cfg,
+            "close",
+            verify=verify_out,
+            sold_codes=collect_intraday_sold_codes(cfg),
+        )
+        if wl_result.applied:
+            pf_work = wl_result.portfolio
+            portfolio_dirty = True
+            steps.append("watchlist_adjust")
+
+    code_review_result = run_close_code_review(
+        portfolio=pf_work,
+        snapshot=snap,
+        settings=cfg,
+        scans=scan_list,
+        trades=trade_list,
+    )
+    steps.append("code_review")
+    if code_review_result.portfolio_changed and code_review_result.portfolio:
+        pf_work = code_review_result.portfolio
+        portfolio_dirty = True
+
+    if portfolio_dirty:
+        save_portfolio(pf_work)
+        sync_snapshot_portfolio(snap, pf_work)
+        steps.append("portfolio_save")
+
+    return {
+        "snapshot": snap,
+        "portfolio": pf_work,
+        "verify": verify_out,
+        "pre_verify": verify_out,
+        "watchlist_adjust": wl_result.to_dict() if wl_result else None,
+        "code_review": code_review_result.to_dict(),
+        "steps": steps,
     }
 
 

@@ -100,7 +100,12 @@
     "split_push": true,
     "exa_sector_research": true,
     "max_sector_queries": 3,
-    "skill_learning": false
+    "skill_learning": false,
+    "exa_skill_research": true,
+    "max_skill_queries": 2,
+    "max_skill_items": 8,
+    "process_improvements": true,
+    "max_improvement_items": 12
   },
 
   "week_forecast": {
@@ -207,7 +212,54 @@
     "trade_min_scans": 3,
     "trade_every_n_scans": 2,
     "morning_doctor": true,
-    "alert_after_consecutive_failures": 3
+    "alert_after_consecutive_failures": 3,
+    "intraday_push_mode": "smart",
+    "intraday_push_milestones": ["S1", "S2", "S12"],
+    "doctor_cache": true,
+    "doctor_cache_ttl_seconds": 14400
+  },
+
+  "snapshot": {
+    "intraday_enrich_level": "quotes"
+  },
+
+  "exa_cache": {
+    "enabled": true,
+    "ttl_seconds": 86400
+  },
+
+  "portfolio": {
+    "auto_adjust_enabled": true,
+    "max_holdings": 10,
+    "mode": "paper",
+    "min_deploy_cash": 1000,
+    "add_sold_to_watchlist": true
+  },
+
+  "watchlist": {
+    "auto_adjust_enabled": true,
+    "adjust_phases": ["morning", "close"],
+    "candidates": []
+  },
+
+  "close_improvements": {
+    "enabled": true
+  },
+
+  "close_code_review": {
+    "enabled": true,
+    "auto_fix_portfolio": true,
+    "walk_on_close": false,
+    "run_smoke_tests": false,
+    "walk_modules": [
+      "portfolio_manager.py",
+      "watchlist_manager.py",
+      "intraday.py",
+      "schedule.py",
+      "workflows.py",
+      "close_improvements.py",
+      "close_code_review.py"
+    ]
   },
 
   "trade_calendar": {

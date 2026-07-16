@@ -1560,9 +1560,15 @@ def _cmd_daily_run(args):
 
     if args.daily_action == "close":
         from agent_reach.config import Config
+        from agent_reach.daily_run.intraday import load_state
         from agent_reach.daily_run.plugins.loader import run_experts
         from agent_reach.daily_run.settings import load_settings
-        from agent_reach.daily_run.workflows import load_morning_baseline, run_close
+        from agent_reach.daily_run.snapshot_builder import load_portfolio
+        from agent_reach.daily_run.workflows import (
+            load_morning_baseline,
+            prepare_close_run,
+            run_close,
+        )
 
         current = json.loads(Path(args.input).read_text(encoding="utf-8"))
         settings = load_settings()
@@ -1578,15 +1584,36 @@ def _cmd_daily_run(args):
                 print(f"❌ {exc}")
                 sys.exit(1)
 
-        result = run_close(
+        portfolio = load_portfolio()
+        state = load_state()
+        prepared = prepare_close_run(
             current,
+            baseline,
+            portfolio,
+            settings=settings,
+            scans=state.scans,
+            trades=state.trades,
+        )
+
+        result = run_close(
+            prepared["snapshot"],
             baseline,
             settings=settings,
             push=not args.dry_run,
             title=args.title or None,
             config=Config(),
+            intraday_scans=state.scans,
+            intraday_trades=state.trades,
+            watchlist_adjust=prepared["watchlist_adjust"],
+            code_review=prepared["code_review"],
+            verify_dict=prepared.get("verify"),
         )
+        result["code_review"] = prepared["code_review"]
+        result["watchlist_adjust"] = prepared["watchlist_adjust"]
+        result["prepare_steps"] = prepared["steps"]
         print(json.dumps(result["verify"], ensure_ascii=False, indent=2))
+        if prepared["steps"]:
+            print(f"预处理：{' → '.join(prepared['steps'])}")
         print("\n--- Markdown ---\n")
         print(result["markdown"])
         if not args.dry_run:
@@ -1775,41 +1802,16 @@ def _cmd_daily_run(args):
             except Exception as exc:
                 print(f"❌ Schedule run failed: {exc}")
                 sys.exit(1)
-            symbol_results = result.get("symbol_results")
             job_result = result.get("result") or {}
             print(f"✅ Scheduled job '{job}' completed")
-            if symbol_results:
-                print(f"   per-symbol: {len(symbol_results)} 只 · mode={result.get('symbols_mode', 'all')}")
-                for row in symbol_results:
-                    code = row.get("code")
-                    name = row.get("name") or code
-                    if row.get("skipped"):
-                        print(f"   - {code} {name}: skipped ({row.get('reason')})")
-                        continue
-                    inner = row.get("result") or {}
-                    if job == "morning":
-                        report = (inner.get("evaluation") or {}).get("report") or {}
-                        print(f"   - {code} {name}: {report.get('verdict')} MSS={report.get('mss_final')}")
-                    elif job == "intraday":
-                        scan = (inner.get("scan") or {}).get("scan") or {}
-                        print(f"   - {code} {name}: {scan.get('scan_id')} MSS={scan.get('mss_final')}")
-                    elif job == "close":
-                        verify = inner.get("verify") or {}
-                        print(f"   - {code} {name}: {str(verify.get('summary', ''))[:60]}")
-                if result.get("errors"):
-                    print(f"   ⚠️ partial errors: {'; '.join(result['errors'][:3])}")
-            else:
-                print(f"   snapshot: {result.get('snapshot_path')}")
-            if not symbol_results and job == "morning":
+            print(f"   snapshot: {result.get('snapshot_path')}")
+            if job == "morning":
                 report = (job_result.get("evaluation") or {}).get("report") or {}
                 print(f"   verdict={report.get('verdict')} MSS={report.get('mss_final')}")
-            elif not symbol_results and job == "intraday":
+            elif job == "intraday":
                 scan = (job_result.get("scan") or {}).get("scan") or {}
-                scan_count = result.get("scan_count") or scan.get("scan_id")
-                print(f"   {scan.get('scan_id')} MSS={scan.get('mss_final')} · {scan.get('verdict')} · 累计 {scan_count} 次")
-                if result.get("push_error"):
-                    print(f"   ⚠️ 飞书推送失败（扫描已记录）：{result['push_error'][:120]}")
-            elif not symbol_results and job == "close":
+                print(f"   {scan.get('scan_id')} MSS={scan.get('mss_final')} · {scan.get('verdict')}")
+            elif job == "close":
                 verify = job_result.get("verify") or {}
                 print(f"   summary: {verify.get('summary', '')[:80]}")
             elif job == "weekly":
@@ -1818,15 +1820,10 @@ def _cmd_daily_run(args):
                 print(f"   weekly_pnl={pnl} holdings={len(wr.get('holdings') or [])}")
             elif job == "forecast":
                 fc = job_result.get("forecast") or {}
-                print(
-                    f"   week={fc.get('week_start')}–{fc.get('week_end')} "
-                    f"symbols={len(fc.get('symbols') or {})}"
-                )
+                print(f"   forecast {fc.get('week_start')}–{fc.get('week_end')} symbols={len(fc.get('symbols') or {})}")
+                print(f"   path: {result.get('forecast_path') or job_result.get('forecast_path')}")
             if not args.dry_run:
-                if result.get("push_error") or (job_result.get("push_error")):
-                    print("   ⚠️ 扫描/复盘已完成，飞书推送未成功")
-                elif job_result.get("feishu") or result.get("feishu"):
-                    print("   Feishu push sent")
+                print("   Feishu push sent")
             return
 
         print("Usage: agent-reach daily-run schedule {print|install|run} [--job morning|intraday|close|weekly|forecast]")

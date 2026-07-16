@@ -45,7 +45,7 @@ class TestPerSymbolSnapshot:
     def test_build_snapshot_uses_symbol_name_for_premarket(self):
         snap = build_snapshot(PORTFOLIO, report_type="premarket", primary_code="002273", enrich=False)
         assert snap["code"] == "002273"
-        assert snap["name"] == "002273"
+        assert snap["name"] == "水晶光电"
 
 
 class TestMergeSections:
