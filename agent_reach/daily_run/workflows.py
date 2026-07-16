@@ -61,7 +61,7 @@ def run_morning(
 ) -> dict[str, Any]:
     """
     Full morning pipeline:
-    start notify → Team-First 8 experts → audit/verdict/gate → Feishu push
+    snapshot → audit/verdict/gate → Feishu push
     """
     cfg = settings or load_settings()
     steps: list[str] = []

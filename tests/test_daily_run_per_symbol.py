@@ -49,7 +49,8 @@ class TestPerSymbolSnapshot:
 
 
 class TestMergeSections:
-    def test_merge_sections_by_category(self):
+    def test_merge_sections_by_category_experts_off(self):
+        """Experts disabled: per-symbol expert bodies are skipped; decision merges by ## blocks."""
         g1 = [
             ReportSection("experts", "", "expert A"),
             ReportSection("decision", "", "decision A"),
@@ -62,10 +63,35 @@ class TestMergeSections:
             [("澜起科技", g1), ("水晶光电", g2)],
             report_kind="morning",
         )
-        assert len(merged) == 2
-        assert merged[0].category == "experts"
+        assert len(merged) == 1
+        assert merged[0].category == "decision"
         assert "澜起科技" in merged[0].body and "水晶光电" in merged[0].body
         assert "2只" in merged[0].title
+        assert "expert A" not in merged[0].body
+
+    def test_merge_decision_unified_body(self):
+        reports = [
+            ("澜起科技", "688008", {"verdict": "观察", "confidence": "中", "mss_final": 42.5, "reasoning": "a"}),
+            ("水晶光电", "002273", {"verdict": "观察", "confidence": "低", "mss_final": 40.0, "reasoning": "b"}),
+        ]
+        from agent_reach.daily_run.report_push import render_merged_decision_markdown
+
+        md = render_merged_decision_markdown(reports, report_kind="morning")
+        assert "组合" not in md
+        assert "MSS 决策 · 2 只标的" in md
+        assert "| 澜起科技 | 688008 |" in md
+        assert "### 水晶光电" in md
+
+        g1 = [ReportSection("decision", "", "x")]
+        g2 = [ReportSection("decision", "", "y")]
+        merged = merge_sections_by_category(
+            [("澜起科技", g1), ("水晶光电", g2)],
+            report_kind="morning",
+            decision_entries=reports,
+        )
+        assert len(merged) == 1
+        assert merged[0].category == "decision"
+        assert "MSS 决策 · 2 只标的" in merged[0].body
 
     def test_merge_experts_unified_body(self):
         snap_a = {

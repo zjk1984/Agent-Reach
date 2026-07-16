@@ -211,11 +211,64 @@ def merged_category_title(
     return f"{kind_icon} {kind_label} {index}/{total} · {label} · {symbol_count}只"
 
 
+def render_merged_decision_markdown(
+    entries: list[tuple[str, str, dict[str, Any]]],
+    *,
+    report_kind: str = "morning",
+) -> str:
+    """Single unified MSS decision card for multiple symbols."""
+    if not entries:
+        return ""
+    if len(entries) == 1:
+        from agent_reach.daily_run.pipeline import render_markdown
+
+        return render_markdown(entries[0][2])
+
+    kind_label = {"morning": "早盘", "close": "收盘"}.get(report_kind, report_kind)
+    lines = [
+        f"**📊 {kind_label} MSS 决策 · {len(entries)} 只标的**",
+        "",
+        "| 标的 | 代码 | MSS | 结论 | 置信度 |",
+        "|------|------|-----|------|--------|",
+    ]
+    for name, code, report in entries:
+        lines.append(
+            f"| {name} | {code} | {report.get('mss_final', '—')} "
+            f"| {report.get('verdict', '—')} | {report.get('confidence', '—')} |"
+        )
+
+    lines.extend(["", "**逐标的研判**", ""])
+    for name, code, report in entries:
+        lines.append(f"### {name} ({code})")
+        lines.append(
+            f"- **结论：** {report.get('verdict', '—')}（{report.get('confidence', '—')}）"
+            f" · MSS **{report.get('mss_final', '—')}**"
+        )
+        if report.get("reasoning"):
+            lines.append(f"- **推理：** {report['reasoning']}")
+        if report.get("invalidation"):
+            lines.append(f"- **失效条件：** {report['invalidation']}")
+        if report.get("mss_breakdown_text"):
+            lines.append(f"- **MSS 拆解：** {report['mss_breakdown_text']}")
+        if report.get("audit_warnings"):
+            lines.append(
+                "- **审计警告：** " + "；".join(str(w) for w in report["audit_warnings"][:2])
+            )
+        lines.append("")
+
+    macro = next((r.get("macro_summary") for _, _, r in entries if r.get("macro_summary")), None)
+    if macro:
+        lines.extend(["**宏观摘要**", str(macro)])
+
+    return "\n".join(lines).strip()
+
+
 def merge_sections_by_category(
     groups: list[tuple[str, list[ReportSection]]],
     *,
     report_kind: str,
     expert_snapshots: Optional[list[tuple[str, str, dict[str, Any]]]] = None,
+    decision_entries: Optional[list[tuple[str, str, dict[str, Any]]]] = None,
 ) -> list[ReportSection]:
     """Merge per-symbol sections into one card per category (experts, decision, …)."""
     from agent_reach.daily_run.team import render_merged_experts_markdown
@@ -227,34 +280,43 @@ def merge_sections_by_category(
         for sec in sections:
             if not (sec.body or "").strip():
                 continue
+            if sec.category == "experts":
+                continue
             if sec.category not in buckets:
                 order.append(sec.category)
                 buckets[sec.category] = []
             buckets[sec.category].append((symbol_name, sec.body.strip()))
 
+    if expert_snapshots and len(expert_snapshots) > 1 and "experts" not in order:
+        order.insert(0, "experts")
+
     merged: list[ReportSection] = []
-    total = len(order)
-    for i, cat in enumerate(order, start=1):
+    symbol_counts: dict[str, int] = {}
+    for cat in order:
         if cat == "experts" and expert_snapshots and len(expert_snapshots) > 1:
             body = render_merged_experts_markdown(expert_snapshots)
             symbol_count = len(expert_snapshots)
+        elif cat == "decision" and decision_entries and len(decision_entries) > 1:
+            body = render_merged_decision_markdown(decision_entries, report_kind=report_kind)
+            symbol_count = len(decision_entries)
         else:
-            rows = buckets[cat]
+            rows = buckets.get(cat) or []
             body_parts = [f"## {name}\n\n{content}" for name, content in rows]
             body = "\n\n---\n\n".join(body_parts)
             symbol_count = len(rows)
-        merged.append(
-            ReportSection(
-                category=cat,
-                title=merged_category_title(
-                    report_kind=report_kind,
-                    category=cat,
-                    index=i,
-                    total=total,
-                    symbol_count=symbol_count,
-                ),
-                body=body,
-            )
+        if not body.strip():
+            continue
+        symbol_counts[cat] = symbol_count
+        merged.append(ReportSection(category=cat, title="", body=body))
+
+    total = len(merged)
+    for i, sec in enumerate(merged, start=1):
+        sec.title = merged_category_title(
+            report_kind=report_kind,
+            category=sec.category,
+            index=i,
+            total=total,
+            symbol_count=symbol_counts.get(sec.category, 1),
         )
     return merged
 

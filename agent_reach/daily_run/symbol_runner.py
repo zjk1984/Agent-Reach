@@ -56,6 +56,7 @@ def run_morning_for_symbols(
     symbol_results: list[dict[str, Any]] = []
     section_groups: list[tuple[str, list]] = []
     expert_snapshots: list[tuple[str, str, dict[str, Any]]] = []
+    decision_entries: list[tuple[str, str, dict[str, Any]]] = []
     errors: list[str] = []
 
     for i, code in enumerate(targets):
@@ -82,6 +83,8 @@ def run_morning_for_symbols(
             )
             if merge_push:
                 section_groups.append((name, morning_sections_from_run(run_result)))
+                report = (run_result.get("evaluation") or {}).get("report") or {}
+                decision_entries.append((name, code, report))
                 if experts_enabled(cfg, workflow="morning"):
                     expert_snapshots.append((name, code, run_result["snapshot"]))
             symbol_results.append(
@@ -109,7 +112,8 @@ def run_morning_for_symbols(
         merged = merge_sections_by_category(
             section_groups,
             report_kind="morning",
-            expert_snapshots=expert_snapshots,
+            expert_snapshots=expert_snapshots or None,
+            decision_entries=decision_entries or None,
         )
         feishu_result = push_report_sections(
             merged,
@@ -312,7 +316,8 @@ def run_close_for_symbols(
         merged = merge_sections_by_category(
             section_groups,
             report_kind="close",
-            expert_snapshots=expert_snapshots,
+            expert_snapshots=expert_snapshots or None,
+            decision_entries=None,
         )
         feishu_result = push_report_sections(
             merged,
