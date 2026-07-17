@@ -14,10 +14,15 @@ name: daily-run schedule
 
 on:
   schedule:
-    # 08:00 北京时间 — 早盘 + MSS 决策 + 飞书
+    # 08:00 北京时间 — 早盘 S1 + MSS 决策 + 飞书
     - cron: "0 8 * * 1-5"
       timezone: Asia/Shanghai
-    # 09:30–15:00 北京时间 — 盘中 S1–S12 + Lookback MSS (~every 24 min)
+    # 08:30 / 09:00 北京时间 — 盘前 S2 / S3
+    - cron: "30 8 * * 1-5"
+      timezone: Asia/Shanghai
+    - cron: "0 9 * * 1-5"
+      timezone: Asia/Shanghai
+    # 09:30–15:00 北京时间 — 盘中 S4–S15 + Lookback MSS (~every 24 min)
     - cron: "30 9 * * 1-5"
       timezone: Asia/Shanghai
     - cron: "54 9 * * 1-5"

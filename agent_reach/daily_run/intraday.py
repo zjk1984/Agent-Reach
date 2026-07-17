@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Intraday scan (S1-S12) and trade (T1-T5) workflow with lookback MSS."""
+"""Intraday scan (S1-S15) and trade (T1-T5) workflow with lookback MSS."""
 
 from __future__ import annotations
 
@@ -178,6 +178,28 @@ def record_scan(
     }
 
 
+def record_morning_scan(
+    run_result: dict[str, Any],
+    *,
+    settings: Optional[dict[str, Any]] = None,
+    code: Optional[str] = None,
+    state_path: Optional[Path] = None,
+) -> dict[str, Any]:
+    """Record 08:00 morning analysis as S1 in intraday state."""
+    evaluation = run_result.get("evaluation")
+    if not evaluation:
+        raise ValueError("run_result missing evaluation for morning S1 scan")
+    enriched = run_result.get("snapshot") or {}
+    return record_scan_from_evaluation(
+        enriched,
+        evaluation,
+        settings=settings,
+        state_path=state_path,
+        code=code,
+        source="morning",
+    )
+
+
 def record_scan_from_evaluation(
     enriched: dict[str, Any],
     evaluation: dict[str, Any],
@@ -186,10 +208,13 @@ def record_scan_from_evaluation(
     state: Optional[IntradayState] = None,
     state_path: Optional[Path] = None,
     source: Optional[str] = None,
+    code: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Append S_n from an existing evaluation (legacy morning S2 backfill)."""
+    """Append S_n from an existing evaluation (morning S1 backfill)."""
     cfg = settings or load_settings()
-    st = state or load_state(state_path)
+    sym = code or enriched.get("code")
+    resolved_path = state_path or (default_state_path(sym) if sym else default_state_path())
+    st = state or load_state(resolved_path, code=sym)
 
     if len(st.scans) >= MAX_SCANS:
         raise RuntimeError(f"今日扫描已达上限 {MAX_SCANS} 次（S1-S{MAX_SCANS}）")
@@ -212,7 +237,7 @@ def record_scan_from_evaluation(
     if source:
         entry["source"] = source
     st.scans.append(entry)
-    save_state(st, state_path)
+    save_state(st, resolved_path)
 
     lookback_mss, lookback_detail = compute_lookback_mss(st.scans, cfg)
     trend = detect_mss_trend(st.scans)

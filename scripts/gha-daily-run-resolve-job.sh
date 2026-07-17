@@ -39,6 +39,7 @@ if [ -n "${GITHUB_EVENT_SCHEDULE:-}" ]; then
       echo "skip=false"
       exit 0
       ;;
+    "30 8 * * 1-5"|"0 9 * * 1-5"|\
     "30 9 * * 1-5"|"54 9 * * 1-5"|\
     "18 10 * * 1-5"|"42 10 * * 1-5"|"6 11 * * 1-5"|"30 11 * * 1-5"|\
     "0 13 * * 1-5"|"24 13 * * 1-5"|"48 13 * * 1-5"|\
@@ -84,8 +85,8 @@ if [ "$(date +%u)" = "7" ] && [ "$minutes" -ge 520 ] && [ "$minutes" -le 570 ]; 
   exit 0
 fi
 
-# Intraday scans ~09:25–15:05 北京时间.
-if [ "$minutes" -ge 565 ] && [ "$minutes" -le 905 ]; then
+# Intraday scans ~08:25–15:05 北京时间.
+if [ "$minutes" -ge 505 ] && [ "$minutes" -le 905 ]; then
   echo "job=intraday"
   echo "skip=false"
   exit 0

@@ -94,19 +94,31 @@ class TestSchedule:
         assert "schedule run morning" in block
         assert "schedule run intraday" in block
         assert "schedule run close" in block
-        assert "S12/12" in block
-        assert block.count("schedule run intraday") == 12
+        assert "S15/15" in block
+        assert block.count("schedule run intraday") == 14
 
     def test_default_entries_count(self):
-        assert len(default_entries()) == 16  # morning + 12 scans + close + weekly + forecast
+        assert len(default_entries()) == 18  # morning + 14 scans + close + weekly + forecast
 
+    @patch("agent_reach.daily_run.intraday.record_morning_scan", return_value={"scan": {"scan_id": "S1"}})
     @patch("agent_reach.daily_run.trade_calendar.is_trading_day", return_value=(True, ""))
     @patch("agent_reach.daily_run.workflows.save_morning_baseline")
     @patch("agent_reach.daily_run.workflows.run_morning")
     @patch("agent_reach.daily_run.snapshot_builder.build_and_save")
     @patch("agent_reach.daily_run.snapshot_builder.load_portfolio")
     @patch("agent_reach.daily_run.schedule._uses_per_symbol_jobs", return_value=False)
-    def test_run_scheduled_morning(self, mock_per_symbol, mock_load, mock_build, mock_morning, mock_save_baseline, portfolio, tmp_path):
+    def test_run_scheduled_morning(
+        self,
+        mock_per_symbol,
+        mock_load,
+        mock_build,
+        mock_morning,
+        mock_save_baseline,
+        mock_trading_day,
+        mock_morning_scan,
+        portfolio,
+        tmp_path,
+    ):
         mock_load.return_value = portfolio
         mock_build.return_value = ({"code": "688008"}, tmp_path / "snap.json")
         mock_morning.return_value = {"snapshot": {"code": "688008"}, "evaluation": {"report": {}}}
@@ -116,6 +128,7 @@ class TestSchedule:
         result = run_scheduled("morning", push=False)
         assert result["job"] == "morning"
         mock_save_baseline.assert_called_once()
+        mock_morning_scan.assert_called_once()
 
     @patch("agent_reach.daily_run.schedule._uses_per_symbol_jobs", return_value=False)
     @patch("agent_reach.daily_run.trade_calendar.is_trading_day", return_value=(True, ""))

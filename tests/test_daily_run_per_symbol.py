@@ -138,18 +138,19 @@ class TestPerSymbolBaselines:
 
 
 class TestSymbolRunner:
+    @patch("agent_reach.daily_run.intraday.record_morning_scan", return_value={"scan": {"scan_id": "S1"}})
     @patch("agent_reach.daily_run.workflows.run_morning")
     @patch("agent_reach.daily_run.symbol_runner.build_and_save")
     @patch("agent_reach.daily_run.symbol_runner.load_portfolio")
-    def test_run_morning_for_symbols(self, mock_pf, mock_build, mock_run, tmp_path):
+    def test_run_morning_for_symbols(self, mock_pf, mock_build, mock_run, mock_morning_scan, tmp_path):
         mock_pf.return_value = PORTFOLIO
         mock_build.side_effect = [
             ({"code": "688008", "name": "澜起科技"}, tmp_path / "a.json"),
             ({"code": "002273", "name": "水晶光电"}, tmp_path / "b.json"),
         ]
         mock_run.side_effect = [
-            {"snapshot": {"code": "688008"}, "feishu": {"ok": 1}},
-            {"snapshot": {"code": "002273"}, "feishu": {"ok": 2}},
+            {"snapshot": {"code": "688008"}, "evaluation": {"report": {}}, "feishu": {"ok": 1}},
+            {"snapshot": {"code": "002273"}, "evaluation": {"report": {}}, "feishu": {"ok": 2}},
         ]
         cfg = load_settings()
         cfg = {

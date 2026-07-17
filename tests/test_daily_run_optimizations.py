@@ -7,7 +7,7 @@ import pytest
 
 from agent_reach.daily_run.curve_analysis import analyze_intraday_curve, render_curve_markdown
 from agent_reach.daily_run.mss_forecast import forecast_mss_range
-from agent_reach.daily_run.schedule import INTRADAY_SCAN_TIMES, default_entries
+from agent_reach.daily_run.schedule import INTRADAY_MAX_SCANS, INTRADAY_SCAN_TIMES, default_entries
 from agent_reach.daily_run.settings import load_settings
 from agent_reach.daily_run.verdict import compute_verdict, fuse_verdict_with_team
 
@@ -72,11 +72,12 @@ class TestVerdictFusion:
 
 
 class TestScheduleEntries:
-    def test_twelve_intraday_scans(self):
-        assert len(INTRADAY_SCAN_TIMES) == 12
+    def test_fifteen_intraday_scans(self):
+        assert len(INTRADAY_SCAN_TIMES) == 14
+        assert INTRADAY_MAX_SCANS == 15
 
     def test_default_entries_count(self):
-        assert len(default_entries()) == 16  # morning + 12 scans + close + weekly + forecast
+        assert len(default_entries()) == 18  # morning + 14 scans + close + weekly + forecast
 
 
 class TestMacroCollector:

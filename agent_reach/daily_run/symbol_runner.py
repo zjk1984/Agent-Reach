@@ -81,6 +81,9 @@ def run_morning_for_symbols(
                 code=code,
                 primary_code=primary,
             )
+            from agent_reach.daily_run.intraday import record_morning_scan
+
+            record_morning_scan(run_result, settings=cfg, code=code)
             if merge_push:
                 section_groups.append((name, morning_sections_from_run(run_result)))
                 report = (run_result.get("evaluation") or {}).get("report") or {}

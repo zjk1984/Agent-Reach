@@ -226,7 +226,7 @@
     "morning_doctor": true,
     "alert_after_consecutive_failures": 3,
     "intraday_push_mode": "smart",
-    "intraday_push_milestones": ["S1", "S2", "S12"],
+    "intraday_push_milestones": ["S1", "S2", "S3", "S15"],
     "doctor_cache": true,
     "doctor_cache_ttl_seconds": 14400
   },

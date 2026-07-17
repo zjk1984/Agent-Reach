@@ -16,22 +16,25 @@ from agent_reach.daily_run.run_manifest import StepTimer, save_run_manifest
 MARKER_BEGIN = "# agent-reach daily-run schedule BEGIN"
 MARKER_END = "# agent-reach daily-run schedule END"
 
-# 12 intraday scans: 9:30–15:00 (Asia/Shanghai), ~every 24 min (6 per session)
+# 15 scans/day: S1 morning 08:00 + S2 08:30 + S3 09:00 + S4–S15 session 09:30–15:00
 INTRADAY_SCAN_TIMES: list[tuple[str, str]] = [
-    ("30", "9"),   # 09:30 S1
-    ("54", "9"),   # 09:54 S2
-    ("18", "10"),  # 10:18 S3
-    ("42", "10"),  # 10:42 S4
-    ("6", "11"),   # 11:06 S5
-    ("30", "11"),  # 11:30 S6
-    ("0", "13"),   # 13:00 S7
-    ("24", "13"),  # 13:24 S8
-    ("48", "13"),  # 13:48 S9
-    ("12", "14"),  # 14:12 S10
-    ("36", "14"),  # 14:36 S11
-    ("0", "15"),   # 15:00 S12
+    ("30", "8"),   # 08:30 S2
+    ("0", "9"),    # 09:00 S3
+    ("30", "9"),   # 09:30 S4
+    ("54", "9"),   # 09:54 S5
+    ("18", "10"),  # 10:18 S6
+    ("42", "10"),  # 10:42 S7
+    ("6", "11"),   # 11:06 S8
+    ("30", "11"),  # 11:30 S9
+    ("0", "13"),   # 13:00 S10
+    ("24", "13"),  # 13:24 S11
+    ("48", "13"),  # 13:48 S12
+    ("12", "14"),  # 14:12 S13
+    ("36", "14"),  # 14:36 S14
+    ("0", "15"),   # 15:00 S15
 ]
-INTRADAY_MAX_SCANS = len(INTRADAY_SCAN_TIMES)
+# S1 = 08:00 morning job; S2–S15 = intraday cron slots above
+INTRADAY_MAX_SCANS = 1 + len(INTRADAY_SCAN_TIMES)
 
 
 @dataclass
@@ -64,7 +67,7 @@ def default_entries() -> list[CronEntry]:
     entries = [
         CronEntry("0", "8", "1-5", f"{cmd} daily-run schedule run morning", "daily-run 早盘 8:00"),
     ]
-    for i, (minute, hour) in enumerate(INTRADAY_SCAN_TIMES, start=1):
+    for i, (minute, hour) in enumerate(INTRADAY_SCAN_TIMES, start=2):
         entries.append(
             CronEntry(
                 minute,
@@ -300,7 +303,15 @@ def _run_job_body(
             from agent_reach.daily_run.workflows import save_morning_baseline
 
             save_morning_baseline(run_result["snapshot"])
-            result = {"job": job, "snapshot_path": str(path), "result": run_result}
+            from agent_reach.daily_run.intraday import record_morning_scan
+
+            scan_result = record_morning_scan(run_result, settings=settings)
+            result = {
+                "job": job,
+                "snapshot_path": str(path),
+                "result": run_result,
+                "morning_scan": scan_result.get("scan"),
+            }
             feishu = run_result.get("feishu")
 
     elif job == "intraday":

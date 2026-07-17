@@ -51,9 +51,9 @@ class CloseImprovements:
 
 
 def expected_scan_slots() -> list[dict[str, str]]:
-    """Morning + S1–S12 intraday expected Beijing times."""
-    slots: list[dict[str, str]] = [{"scan_id": "Morning", "time": "08:00", "label": "早报"}]
-    for i, (minute, hour) in enumerate(INTRADAY_SCAN_TIMES, start=1):
+    """Morning S1 + S2–S15 intraday expected Beijing times."""
+    slots: list[dict[str, str]] = [{"scan_id": "S1", "time": "08:00", "label": "早报"}]
+    for i, (minute, hour) in enumerate(INTRADAY_SCAN_TIMES, start=2):
         slots.append(
             {
                 "scan_id": f"S{i}",
@@ -362,7 +362,7 @@ def _improve_schedule(
             "schedule",
             "high",
             "今日无 S_n 扫描记录",
-            "检查 GHA cron / 本地 crontab 是否触发；至少应有 S1(07:00) 与 S2(08:00 早盘)",
+            "检查 GHA cron / 本地 crontab 是否触发；至少应有 S1(08:00 早盘) 与 S2(08:30)",
         )
         return
 
@@ -379,7 +379,7 @@ def _improve_schedule(
             "schedule",
             "medium",
             f"今日完成 S1–S{n}，尚有 {missing} 次空档",
-            "可在波动放大日手动补跑 intraday；或确认 09:30–15:00 cron 是否全部触发",
+            "可在波动放大日手动补跑 intraday；或确认 08:30–15:00 cron 是否全部触发",
         )
 
     # Timing drift: compare actual vs expected for completed scans (match by scan_id)
@@ -402,14 +402,14 @@ def _improve_schedule(
             + "。GHA 调度可能有 1–5 分钟延迟，持续偏差可收紧 resolve 窗口",
         )
 
-    # S2 should come from morning
-    s2 = next((s for s in scans if s.get("scan_id") == "S2"), None)
-    if s2 and s2.get("source") != "morning":
+    # S1 should come from morning
+    s1 = next((s for s in scans if s.get("scan_id") == "S1"), None)
+    if s1 and s1.get("source") != "morning":
         out.add(
             "schedule",
             "medium",
-            "S2 未标记为 morning 来源",
-            "8:00 全量早盘应写入 S2；检查 run_scheduled(morning) 是否调用 record_scan_from_evaluation",
+            "S1 未标记为 morning 来源",
+            "8:00 全量早盘应写入 S1；检查 run_scheduled(morning) 是否调用 record_morning_scan",
         )
 
     min_scans = int(schedule_cfg.get("trade_min_scans", 3))

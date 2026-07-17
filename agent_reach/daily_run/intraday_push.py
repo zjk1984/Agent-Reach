@@ -25,7 +25,7 @@ def should_push_intraday(
     """
     cfg = (settings or {}).get("schedule") or {}
     mode = str(cfg.get("intraday_push_mode", "smart")).lower()
-    milestones = cfg.get("intraday_push_milestones") or ["S1", "S2", "S12"]
+    milestones = cfg.get("intraday_push_milestones") or ["S1", "S2", "S3", "S15"]
 
     if mode == "all":
         return True

@@ -364,7 +364,7 @@ def generate_weekly_improvements(
                 "workflow",
                 "high",
                 "本周无盘中 intraday manifest",
-                "S3–S12 扫描未落盘，T_n 调仓与 MSS 曲线无法复盘",
+                "S4–S15 扫描未落盘，T_n 调仓与 MSS 曲线无法复盘",
                 action="排查 09:30–15:00 cron 与 resolve-job.sh 窗口",
             )
         )

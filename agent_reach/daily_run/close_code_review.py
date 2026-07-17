@@ -318,14 +318,14 @@ def _review_intraday_state(
             )
         )
 
-    s2 = next((s for s in scans if s.get("scan_id") == "S2"), None)
-    if s2 and s2.get("source") != "morning":
+    s1 = next((s for s in scans if s.get("scan_id") == "S1"), None)
+    if s1 and s1.get("source") != "morning":
         out.findings.append(
             CodeFinding(
                 "intraday",
                 "medium",
-                "S2 未标记 morning 来源",
-                "08:00 早盘应写入 record_scan_from_evaluation(source=morning)",
+                "S1 未标记 morning 来源",
+                "08:00 早盘应写入 record_morning_scan(source=morning)",
             )
         )
 
