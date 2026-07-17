@@ -129,10 +129,16 @@ def record_scan(
     enriched.setdefault("report_type", "intraday")
     enriched.setdefault("as_of", datetime.now(timezone.utc).isoformat())
 
-    from agent_reach.daily_run.team import experts_enabled
+    from agent_reach.daily_run.team import experts_enabled, mss_experts_enabled
 
     if experts_enabled(cfg, workflow="intraday"):
         enriched = run_experts(dict(snapshot), cfg, names=plugin_names)
+        enriched.setdefault("report_type", "intraday")
+        enriched.setdefault("as_of", datetime.now(timezone.utc).isoformat())
+    elif mss_experts_enabled(cfg, workflow="intraday"):
+        from agent_reach.daily_run.plugins.loader import MSS_EXPERT_NAMES, run_experts
+
+        enriched = run_experts(dict(snapshot), cfg, names=MSS_EXPERT_NAMES)
         enriched.setdefault("report_type", "intraday")
         enriched.setdefault("as_of", datetime.now(timezone.utc).isoformat())
 
@@ -272,10 +278,14 @@ def evaluate_trade(
         enriched = pre_enriched
         evaluation = pre_evaluation
     else:
-        from agent_reach.daily_run.team import experts_enabled
+        from agent_reach.daily_run.team import experts_enabled, mss_experts_enabled
 
         if experts_enabled(cfg, workflow="intraday"):
             enriched = run_experts(dict(snapshot), cfg, names=plugin_names)
+        elif mss_experts_enabled(cfg, workflow="intraday"):
+            from agent_reach.daily_run.plugins.loader import MSS_EXPERT_NAMES, run_experts
+
+            enriched = run_experts(dict(snapshot), cfg, names=MSS_EXPERT_NAMES)
         else:
             enriched = dict(snapshot)
         enriched.setdefault("report_type", "intraday")

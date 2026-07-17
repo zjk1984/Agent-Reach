@@ -22,19 +22,51 @@ EXPERT_LABELS: dict[str, str] = {
 
 
 def experts_enabled(settings: dict[str, Any], *, workflow: str = "morning") -> bool:
-    """Whether to run expert plugins for a workflow (default off when team.enabled is false)."""
+    """Whether to run full 8-expert plugins and show the expert card (requires team.enabled)."""
     team = settings.get("team") or {}
     if team.get("enabled", False) is not True:
         return False
     wf_keys = {
+        "morning": "morning_experts",
+        "close": "close_experts",
+        "intraday": "intraday_experts",
+    }
+    legacy_keys = {
         "morning": "morning_team_first",
         "close": "close_team_first",
-        "intraday": "intraday_experts",
+    }
+    key = wf_keys.get(workflow)
+    if key and key in team:
+        return bool(team[key])
+    legacy = legacy_keys.get(workflow)
+    if legacy and legacy in team:
+        return bool(team[legacy])
+    if workflow == "intraday" and "intraday_experts" in team:
+        return bool(team["intraday_experts"])
+    return True
+
+
+def mss_experts_enabled(settings: dict[str, Any], *, workflow: str = "morning") -> bool:
+    """Run technical/quant/risk MSS scoring without requiring team.enabled."""
+    if experts_enabled(settings, workflow=workflow):
+        return True
+    team = settings.get("team") or {}
+    if team.get("mss_experts", False) is not True:
+        return False
+    wf_keys = {
+        "morning": "morning_mss_experts",
+        "close": "close_mss_experts",
+        "intraday": "intraday_mss_experts",
     }
     key = wf_keys.get(workflow)
     if key and key in team:
         return bool(team[key])
     return True
+
+
+def expert_card_enabled(settings: dict[str, Any], *, workflow: str = "morning") -> bool:
+    """Whether merged Feishu push includes the 8-expert consensus card."""
+    return experts_enabled(settings, workflow=workflow)
 
 
 def team_first_enabled(settings: dict[str, Any], *, workflow: str = "morning") -> bool:

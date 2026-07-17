@@ -45,6 +45,7 @@ class TestVerdictFusion:
             "position_20d": 0.5,
             "volume_ratio": 1.2,
             "mss_breakdown": {"fx": 55, "flow": 55, "global": 55, "sentiment": 55},
+            "mss_final": 55.0,
             "sources": {"quote": {"summary": "q"}, "flow": {"summary": "f"}, "sentiment": {"summary": "s"}},
             "team_consensus_label": "观察",
             "team_review": {"consensus_score": 45, "consensus_label": "观察"},

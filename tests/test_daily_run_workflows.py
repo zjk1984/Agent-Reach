@@ -63,7 +63,7 @@ class TestMorningWorkflow:
         result = run_morning(morning_snapshot, settings=load_settings(), push=False, start_notify=False)
         assert "evaluate" in result["steps"]
         assert "team_first" not in result["steps"]
-        assert "snapshot" in result["steps"]
+        assert result["steps"][0] in ("snapshot", "mss_experts")
         assert result["evaluation"]["report"]["verdict"]
         assert "Team-First" not in result.get("team_markdown", "")
 

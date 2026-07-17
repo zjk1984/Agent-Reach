@@ -28,8 +28,17 @@ class RiskExpert(ExpertPlugin):
 
         portfolio = snap.get("portfolio") or {}
         cash_ratio = _f(portfolio.get("cash_ratio"))
-        price = _f(snap.get("price"))
-        ma20 = _f(snap.get("ma20"))
+        code = str(snap.get("code") or "")
+        holdings = portfolio.get("holdings") or []
+        symbol_weight = None
+        total = _f(portfolio.get("total"))
+        for h in holdings:
+            if str(h.get("code", "")).zfill(6)[-6:] == code.zfill(6)[-6:]:
+                price = _f(h.get("price")) or _f(snap.get("price"))
+                shares = _f(h.get("shares"))
+                if price is not None and shares is not None and total:
+                    symbol_weight = (price * shares) / total
+                break
 
         score = 60.0
         notes: list[str] = []
@@ -49,6 +58,16 @@ class RiskExpert(ExpertPlugin):
                 flags.append("low_cash")
                 notes.append(f"现金 {cash_ratio:.0%} 低于风控线")
 
+        if symbol_weight is not None:
+            if symbol_weight > 0.35:
+                score -= 8
+                notes.append(f"单票仓位 {symbol_weight:.0%} 偏高")
+            elif symbol_weight < 0.1:
+                score += 3
+                notes.append(f"单票仓位 {symbol_weight:.0%} 较轻")
+
+        price = _f(snap.get("price"))
+        ma20 = _f(snap.get("ma20"))
         if price is not None and ma20 is not None:
             stop_pct = float(trading.get("stop_loss_ma20_pct", 0.04))
             stop = min(ma20, price * (1 - stop_pct))

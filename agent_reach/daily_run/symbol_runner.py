@@ -46,7 +46,7 @@ def run_morning_for_symbols(
         split_push_enabled,
     )
     from agent_reach.daily_run.workflows import run_morning, save_morning_baseline
-    from agent_reach.daily_run.team import experts_enabled
+    from agent_reach.daily_run.team import expert_card_enabled
 
     cfg = settings or load_settings()
     pf = load_portfolio()
@@ -85,7 +85,7 @@ def run_morning_for_symbols(
                 section_groups.append((name, morning_sections_from_run(run_result)))
                 report = (run_result.get("evaluation") or {}).get("report") or {}
                 decision_entries.append((name, code, report))
-                if experts_enabled(cfg, workflow="morning"):
+                if expert_card_enabled(cfg, workflow="morning"):
                     expert_snapshots.append((name, code, run_result["snapshot"]))
             symbol_results.append(
                 {
@@ -261,7 +261,7 @@ def run_close_for_symbols(
         split_push_enabled,
     )
     from agent_reach.daily_run.workflows import load_morning_baseline, run_close
-    from agent_reach.daily_run.team import experts_enabled
+    from agent_reach.daily_run.team import expert_card_enabled
 
     cfg = settings or load_settings()
     pf = load_portfolio()
@@ -298,7 +298,7 @@ def run_close_for_symbols(
                 section_groups.append(
                     (name, close_sections_from_run(run_result, verify_name=name))
                 )
-                if experts_enabled(cfg, workflow="close"):
+                if expert_card_enabled(cfg, workflow="close"):
                     expert_snapshots.append((name, code, run_result["snapshot"]))
             symbol_results.append(
                 {

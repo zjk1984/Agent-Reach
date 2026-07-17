@@ -113,6 +113,23 @@ def fetch_quotes_map(codes: list[str], config=None) -> dict[str, dict[str, Any]]
     return result
 
 
+def _primary_row_fields(
+    holdings: list[dict[str, Any]],
+    watchlist: list[dict[str, Any]],
+    code_norm: str,
+) -> dict[str, Any]:
+    """Pull price/technicals from enriched holding or watchlist row for primary symbol."""
+    for row in holdings + watchlist:
+        if _normalize_code(str(row.get("code", ""))) != code_norm:
+            continue
+        fields: dict[str, Any] = {}
+        for key in ("price", "change_pct", "ma20", "ma5", "position_20d", "volume_ratio", "name", "unrealized_pnl"):
+            if row.get(key) is not None:
+                fields[key] = row[key]
+        return fields
+    return {}
+
+
 def _attach_technicals(quote: dict[str, Any], code: str) -> dict[str, Any]:
     out = dict(quote)
     try:
@@ -211,6 +228,7 @@ def build_snapshot(
     primary_ma5 = None
     primary_pos = None
     primary_vol = None
+    primary_change = None
     quote_summary_parts: list[str] = []
     has_cost_fallback = False
     cached_technicals: dict[str, Any] = dict(daily_cache.get("technicals") or {})
@@ -219,26 +237,6 @@ def build_snapshot(
         _normalize_code(str(h.get("code", ""))) for h in holdings
     ] + [_normalize_code(str(w.get("code", ""))) for w in watchlist]
     quote_map = fetch_quotes_map(all_codes, config)
-
-    if enrich_level == "full" and code_norm in quote_map:
-        primary_quote = _attach_technicals(quote_map[code_norm], code_norm)
-        quote_map[code_norm] = primary_quote
-        cached_technicals[code_norm] = {
-            k: primary_quote.get(k)
-            for k in ("ma20", "ma5", "position_20d", "volume_ratio")
-            if primary_quote.get(k) is not None
-        }
-    elif code_norm in quote_map and code_norm in cached_technicals:
-        quote_map[code_norm] = {**quote_map[code_norm], **cached_technicals[code_norm]}
-
-    if code_norm in quote_map:
-        primary_quote = quote_map[code_norm]
-        primary_name = primary_quote.get("name", code_norm)
-        primary_price = primary_quote.get("price")
-        primary_ma20 = primary_quote.get("ma20")
-        primary_ma5 = primary_quote.get("ma5")
-        primary_pos = primary_quote.get("position_20d")
-        primary_vol = primary_quote.get("volume_ratio")
 
     def _enrich_row(row: dict[str, Any], *, with_technicals: bool) -> dict[str, Any]:
         c = _normalize_code(str(row.get("code", "")))
@@ -252,6 +250,51 @@ def build_snapshot(
         for h in holdings
     ]
     watchlist = [_enrich_row(w, with_technicals=False) for w in watchlist]
+
+    if enrich_level == "full" and code_norm in quote_map:
+        primary_quote = _attach_technicals(quote_map[code_norm], code_norm)
+        quote_map[code_norm] = primary_quote
+        cached_technicals[code_norm] = {
+            k: primary_quote.get(k)
+            for k in ("ma20", "ma5", "position_20d", "volume_ratio")
+            if primary_quote.get(k) is not None
+        }
+    elif code_norm in quote_map and code_norm in cached_technicals:
+        quote_map[code_norm] = {**quote_map[code_norm], **cached_technicals[code_norm]}
+
+    # When live quotes fail, seed primary symbol from cost/holding row and retry technicals.
+    if code_norm not in quote_map:
+        for row in holdings + watchlist:
+            if _normalize_code(str(row.get("code", ""))) == code_norm and row.get("price") is not None:
+                stub = {
+                    "code": code_norm,
+                    "name": row.get("name", code_norm),
+                    "price": row["price"],
+                    "change_pct": row.get("change_pct"),
+                    "source": row.get("quote_source") or "cost_fallback",
+                }
+                if enrich_level == "full":
+                    quote_map[code_norm] = _attach_technicals(stub, code_norm)
+                else:
+                    quote_map[code_norm] = stub
+                break
+
+    row_fields = _primary_row_fields(holdings, watchlist, code_norm)
+    if code_norm in quote_map:
+        primary_quote = {**quote_map[code_norm], **row_fields}
+        primary_name = primary_quote.get("name", code_norm)
+        primary_price = primary_quote.get("price")
+        primary_ma20 = primary_quote.get("ma20")
+        primary_ma5 = primary_quote.get("ma5")
+        primary_pos = primary_quote.get("position_20d")
+        primary_vol = primary_quote.get("volume_ratio")
+        primary_change = primary_quote.get("change_pct")
+    else:
+        primary_change = row_fields.get("change_pct")
+        if row_fields.get("price") is not None:
+            primary_price = row_fields["price"]
+        if row_fields.get("name"):
+            primary_name = str(row_fields["name"])
 
     for eh in holdings + watchlist:
         if eh.get("quote_source") == "cost_fallback":
@@ -317,6 +360,10 @@ def build_snapshot(
         snapshot["position_20d"] = primary_pos
     if primary_vol is not None:
         snapshot["volume_ratio"] = primary_vol
+    if primary_change is not None:
+        snapshot["change_pct"] = primary_change
+    if row_fields.get("unrealized_pnl") is not None:
+        snapshot["unrealized_pnl"] = row_fields["unrealized_pnl"]
 
     if report_type == "premarket" and enrich_level == "full":
         mss_range, forecast_meta = forecast_mss_range(snapshot, cfg)

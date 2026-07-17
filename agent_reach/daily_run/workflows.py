@@ -20,7 +20,9 @@ from agent_reach.daily_run.close_research import render_research_markdown, run_e
 from agent_reach.daily_run.curve_analysis import analyze_intraday_curve, render_curve_markdown
 from agent_reach.daily_run.experience import append_experience_entry, render_experience_markdown
 from agent_reach.daily_run.team import (
+    expert_card_enabled,
     experts_enabled,
+    mss_experts_enabled,
     render_team_markdown,
     run_team_first,
     team_first_enabled,
@@ -88,6 +90,11 @@ def run_morning(
 
         enriched = run_experts(snapshot, cfg, names=plugin_names)
         steps.append("experts")
+    elif mss_experts_enabled(cfg, workflow="morning"):
+        from agent_reach.daily_run.plugins.loader import MSS_EXPERT_NAMES, run_experts
+
+        enriched = run_experts(snapshot, cfg, names=MSS_EXPERT_NAMES)
+        steps.append("mss_experts")
     else:
         enriched = dict(snapshot)
         steps.append("snapshot")
@@ -104,7 +111,7 @@ def run_morning(
     if not gate.passed:
         raise RuntimeError(f"质量门禁未通过：{gate.summary()}")
 
-    team_md = render_team_markdown(enriched) if experts_enabled(cfg, workflow="morning") else ""
+    team_md = render_team_markdown(enriched) if expert_card_enabled(cfg, workflow="morning") else ""
     report_md = render_markdown(report)
     feishu_result = None
     if push:

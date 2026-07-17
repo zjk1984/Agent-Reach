@@ -29,6 +29,13 @@ TEAM_EXPERT_NAMES: list[str] = [
     "identifier",
 ]
 
+MSS_EXPERT_NAMES: list[str] = [
+    "technical",
+    "quant",
+    "risk",
+    "fundamental",
+]
+
 _BUILTIN: list[ExpertPlugin] = [
     FundamentalExpert(),
     TechnicalExpert(),

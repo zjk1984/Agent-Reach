@@ -72,22 +72,40 @@ class TestAuditor:
 
 class TestVerdict:
     def test_compute_mss(self, settings):
-        score = compute_mss({"fx": 40, "flow": 40, "global": 40, "sentiment": 40}, settings)
+        macro_weights = {"fx": 0.25, "flow": 0.25, "global": 0.25, "sentiment": 0.25}
+        cfg = {**settings, "mss_weights": macro_weights}
+        score = compute_mss({"fx": 40, "flow": 40, "global": 40, "sentiment": 40}, cfg)
         assert score == 40.0
+
+    def test_compute_mss_with_expert_dims(self, settings):
+        breakdown = {
+            "fx": 35,
+            "flow": 48,
+            "global": 38,
+            "sentiment": 50,
+            "technical": 52,
+            "quant": 49,
+            "risk": 55,
+        }
+        score = compute_mss(breakdown, settings)
+        assert score != 42.5
 
     def test_macro_veto_avoid(self, settings, base_snapshot):
         base_snapshot["mss_breakdown"] = {"fx": 30, "flow": 30, "global": 30, "sentiment": 30}
+        base_snapshot["mss_final"] = 30.0
         v = compute_verdict(base_snapshot, settings)
         assert v.verdict == "回避"
         assert v.blocked is True
 
     def test_aggressive_buy(self, settings, base_snapshot):
         base_snapshot["mss_breakdown"] = {"fx": 55, "flow": 55, "global": 55, "sentiment": 55}
+        base_snapshot["mss_final"] = 55.0
         v = compute_verdict(base_snapshot, settings)
         assert v.verdict == "可做"
 
     def test_missing_technical_watch(self, settings, base_snapshot):
         base_snapshot["mss_breakdown"] = {"fx": 55, "flow": 55, "global": 55, "sentiment": 55}
+        base_snapshot["mss_final"] = 55.0
         base_snapshot.pop("ma20")
         v = compute_verdict(base_snapshot, settings)
         assert v.verdict == "观察"

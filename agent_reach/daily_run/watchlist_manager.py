@@ -230,12 +230,14 @@ def _trim_by_score(
 
 
 def _snapshot_base_mss(snapshot: dict[str, Any], settings: dict[str, Any]) -> float:
+    if snapshot.get("mss_final") is not None:
+        return float(snapshot["mss_final"])
     breakdown = snapshot.get("mss_breakdown") or {}
     if breakdown:
         from agent_reach.daily_run.verdict import compute_mss
 
         return float(compute_mss(breakdown, settings))
-    return float(snapshot.get("mss_final") or 50)
+    return 50.0
 
 
 def _symbol_score(row: dict[str, Any], *, base_mss: Optional[float] = None) -> float:

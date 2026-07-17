@@ -3,10 +3,13 @@
   "description": "股票大师 daily_run_skill 外置配置",
 
   "mss_weights": {
-    "fx": 0.3,
-    "flow": 0.3,
-    "global": 0.2,
-    "sentiment": 0.2
+    "fx": 0.2,
+    "flow": 0.2,
+    "global": 0.15,
+    "sentiment": 0.15,
+    "technical": 0.15,
+    "quant": 0.1,
+    "risk": 0.05
   },
 
   "lookback_weights": [0.5, 0.3, 0.2],
@@ -61,7 +64,7 @@
   },
 
   "quote_fetch": {
-    "sources": ["xueqiu", "akshare"],
+    "sources": ["akshare", "xueqiu"],
     "max_retries": 2
   },
 
@@ -175,6 +178,10 @@
 
   "team": {
     "enabled": false,
+    "mss_experts": true,
+    "morning_mss_experts": true,
+    "intraday_mss_experts": true,
+    "close_mss_experts": true,
     "mode": "full_parallel",
     "experts": [
       "fundamental",
