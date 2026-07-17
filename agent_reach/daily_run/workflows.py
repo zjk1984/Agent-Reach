@@ -283,6 +283,10 @@ def run_close(
             split=split_push_enabled(cfg, report_kind="close"),
         )
 
+    from agent_reach.daily_run.prior_close import save_close_baseline
+
+    close_baseline_path = save_close_baseline(snapshot=enriched, verify=verify_dict)
+
     return {
         "verify": verify_dict,
         "snapshot": enriched,
@@ -295,6 +299,7 @@ def run_close(
         "research": research_results,
         "experience_path": str(exp_path),
         "feishu": feishu_result,
+        "close_baseline_path": str(close_baseline_path) if close_baseline_path else None,
         "audit": {
             "passed": audit.passed,
             "issues": audit.issues,
@@ -341,6 +346,11 @@ def prepare_close_run(
     if close_team and experts_enabled(cfg, workflow="close"):
         snap = run_team_first(snap, cfg)
         steps.append("team_first")
+    elif mss_experts_enabled(cfg, workflow="close"):
+        from agent_reach.daily_run.plugins.loader import MSS_EXPERT_NAMES, run_experts
+
+        snap = run_experts(snap, cfg, names=MSS_EXPERT_NAMES)
+        steps.append("mss_experts")
 
     verify_result = verify_snapshots(baseline, snap, cfg)
     verify_out = verify_result.to_dict()

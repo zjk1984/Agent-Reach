@@ -386,6 +386,11 @@ def build_snapshot(
             }
         )
 
+    if report_type == "premarket":
+        from agent_reach.daily_run.prior_close import attach_prior_close_reference
+
+        snapshot = attach_prior_close_reference(snapshot, cfg)
+
     return snapshot
 
 

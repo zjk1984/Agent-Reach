@@ -70,6 +70,11 @@ def build_report(
         f"- {k}: {v}" for k, v in breakdown.items()
     ]
 
+    prior_close_mss = snapshot.get("prior_close_mss")
+    prior_close_delta = None
+    if prior_close_mss is not None:
+        prior_close_delta = round(float(verdict.mss_final) - float(prior_close_mss), 2)
+
     return {
         "as_of": snapshot.get("as_of") or datetime.now(timezone.utc).isoformat(),
         "code": snapshot.get("code"),
@@ -78,6 +83,11 @@ def build_report(
         "confidence": verdict.confidence,
         "mss_final": verdict.mss_final,
         "mss_breakdown": breakdown,
+        "prior_close_mss": prior_close_mss,
+        "prior_close_delta": prior_close_delta,
+        "prior_close_date": snapshot.get("prior_close_date"),
+        "prior_close_verdict": snapshot.get("prior_close_verdict"),
+        "prior_close_source": snapshot.get("prior_close_source"),
         "entry_price": verdict.entry_price,
         "stop_loss_price": verdict.stop_loss_price,
         "invalidation": verdict.invalidation,
@@ -98,11 +108,16 @@ def build_report(
 
 def render_markdown(report: dict[str, Any]) -> str:
     """Render Feishu lark_md body from structured report."""
+    from agent_reach.daily_run.prior_close import format_prior_close_line
+
     lines = [
         f"**结论：{report.get('verdict')}**（置信度：{report.get('confidence')}）",
         "",
         f"**MSS：** {report.get('mss_final')} 分",
     ]
+    prior_line = format_prior_close_line(report)
+    if prior_line:
+        lines.extend(["", prior_line])
     if report.get("mss_breakdown_text"):
         lines.extend(["", "**MSS 拆解：**", report["mss_breakdown_text"]])
 

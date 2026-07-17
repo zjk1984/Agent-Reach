@@ -225,17 +225,39 @@ def render_merged_decision_markdown(
         return render_markdown(entries[0][2])
 
     kind_label = {"morning": "早盘", "close": "收盘"}.get(report_kind, report_kind)
+    has_prior = any(r.get("prior_close_mss") is not None for _, _, r in entries)
     lines = [
         f"**📊 {kind_label} MSS 决策 · {len(entries)} 只标的**",
         "",
-        "| 标的 | 代码 | MSS | 结论 | 置信度 |",
-        "|------|------|-----|------|--------|",
     ]
-    for name, code, report in entries:
-        lines.append(
-            f"| {name} | {code} | {report.get('mss_final', '—')} "
-            f"| {report.get('verdict', '—')} | {report.get('confidence', '—')} |"
+    if has_prior and report_kind == "morning":
+        lines.extend(
+            [
+                "| 标的 | 代码 | 昨收MSS | 今晨MSS | Δ | 结论 |",
+                "|------|------|---------|---------|---|------|",
+            ]
         )
+        for name, code, report in entries:
+            prior = report.get("prior_close_mss", "—")
+            current = report.get("mss_final", "—")
+            delta = report.get("prior_close_delta")
+            delta_s = f"{delta:+.1f}" if delta is not None else "—"
+            lines.append(
+                f"| {name} | {code} | {prior} | {current} | {delta_s} "
+                f"| {report.get('verdict', '—')} |"
+            )
+    else:
+        lines.extend(
+            [
+                "| 标的 | 代码 | MSS | 结论 | 置信度 |",
+                "|------|------|-----|------|--------|",
+            ]
+        )
+        for name, code, report in entries:
+            lines.append(
+                f"| {name} | {code} | {report.get('mss_final', '—')} "
+                f"| {report.get('verdict', '—')} | {report.get('confidence', '—')} |"
+            )
 
     lines.extend(["", "**逐标的研判**", ""])
     for name, code, report in entries:
@@ -244,6 +266,11 @@ def render_merged_decision_markdown(
             f"- **结论：** {report.get('verdict', '—')}（{report.get('confidence', '—')}）"
             f" · MSS **{report.get('mss_final', '—')}**"
         )
+        from agent_reach.daily_run.prior_close import format_prior_close_line
+
+        prior_line = format_prior_close_line(report)
+        if prior_line:
+            lines.append(f"- {prior_line}")
         if report.get("reasoning"):
             lines.append(f"- **推理：** {report['reasoning']}")
         if report.get("invalidation"):
