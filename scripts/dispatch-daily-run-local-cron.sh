@@ -1,32 +1,14 @@
 #!/usr/bin/env bash
-# 本地 crontab 触发 daily-run（fork 仓库 GHA schedule 默认不跑时使用）
+# 本地 crontab 触发 daily-run（直接跑 CLI，不经过 GitHub Actions）
 #
-# 安装示例（北京时间，工作日）：
-#   crontab -e
-#   0 7 * * 1-5  /path/to/dispatch-daily-run-local-cron.sh intraday >>/tmp/daily-run-cron.log 2>&1
-#   0 8 * * 1-5  /path/to/dispatch-daily-run-local-cron.sh morning >>/tmp/daily-run-cron.log 2>&1
-#   0 9 * * 6   /path/to/dispatch-daily-run-local-cron.sh weekly >>/tmp/daily-run-cron.log 2>&1
-#   0 9 * * 0   /path/to/dispatch-daily-run-local-cron.sh forecast >>/tmp/daily-run-cron.log 2>&1
+# 推荐安装方式（一次性）：
+#   bash scripts/daily-run-local-setup.sh
+#   python3 -m agent_reach.cli daily-run schedule install
 #
-# 需要：gh auth login 且对 zjk1984/Agent-Reach 有 workflow 权限
+# 手动单 job：
+#   ./scripts/daily-run-local-cron.sh morning
 
 set -euo pipefail
 
-JOB="${1:-intraday}"
-REPO="${DAILY_RUN_REPO:-zjk1984/Agent-Reach}"
-WORKFLOW="${DAILY_RUN_WORKFLOW:-daily-run-schedule.yml}"
-
-export TZ=Asia/Shanghai
-
-if ! command -v gh >/dev/null 2>&1; then
-  echo "需要 GitHub CLI: https://cli.github.com/" >&2
-  exit 1
-fi
-
-echo "[$(date -Iseconds)] dispatch job=${JOB} repo=${REPO}"
-gh workflow run "$WORKFLOW" \
-  --repo "$REPO" \
-  -f "job=${JOB}" \
-  -f "dry_run=false"
-
-echo "已触发 workflow_dispatch；在 Actions 页查看运行状态。"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec "${SCRIPT_DIR}/daily-run-local-cron.sh" "${1:-intraday}"

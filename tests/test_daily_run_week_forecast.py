@@ -246,5 +246,5 @@ class TestScheduleForecast:
         from agent_reach.daily_run.schedule import render_crontab_block
 
         block = render_crontab_block()
-        assert "schedule run forecast" in block
+        assert "daily-run-local-cron.sh forecast" in block
         assert "0 9 * * 0" in block

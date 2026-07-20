@@ -217,6 +217,7 @@
   },
 
   "schedule": {
+    "executor": "local_cron",
     "symbols_mode": "all",
     "symbol_push_mode": "merge_by_category",
     "symbol_push_interval_seconds": 0.5,

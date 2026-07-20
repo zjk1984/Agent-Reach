@@ -29,3 +29,6 @@ Non-obvious environment notes:
 - Many channels (Twitter, Reddit, XHS, Exa search, transcription, Feishu) need API keys /
   cookies (see `.env.example`) and outbound network; they will show as unavailable in doctor
   without configuration and are optional for local development.
+- **Daily-run scheduling** uses **local Linux cron** (not GitHub Actions schedule). One-time setup:
+  `bash scripts/daily-run-local-setup.sh` then `python3 -m agent_reach.cli daily-run schedule install`.
+  Logs: `~/.agent-reach/daily_run/logs/cron-YYYY-MM-DD.log`. GHA workflow is manual-only (`workflow_dispatch`).

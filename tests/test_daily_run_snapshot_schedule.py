@@ -91,11 +91,12 @@ class TestSchedule:
         block = render_crontab_block()
         assert "agent-reach daily-run schedule BEGIN" in block
         assert "Asia/Shanghai" in block
-        assert "schedule run morning" in block
-        assert "schedule run intraday" in block
-        assert "schedule run close" in block
+        assert "daily-run-local-cron.sh" in block
+        assert "SHELL=/bin/bash" in block
+        assert "daily-run-local-cron.sh morning" in block
+        assert "daily-run-local-cron.sh close" in block
         assert "S15/15" in block
-        assert block.count("schedule run intraday") == 14
+        assert block.count("daily-run-local-cron.sh intraday") == 14
 
     def test_default_entries_count(self):
         assert len(default_entries()) == 18  # morning + 14 scans + close + weekly + forecast
