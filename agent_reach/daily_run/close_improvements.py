@@ -362,7 +362,7 @@ def _improve_schedule(
             "schedule",
             "high",
             "今日无 S_n 扫描记录",
-            "检查 GHA cron / 本地 crontab 是否触发；至少应有 S1(08:00 早盘) 与 S2(08:30)",
+            "检查本地 crontab / daily-run schedule install 是否生效；至少应有 S1(08:00 早盘) 与 S2(08:30)",
         )
         return
 
