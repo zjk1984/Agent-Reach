@@ -41,8 +41,8 @@ class TestSnapshotBuilder:
 
     @patch("agent_reach.daily_run.snapshot_builder.load_daily_cache", return_value={})
     @patch("agent_reach.daily_run.snapshot_builder.collect_macro_context")
-    @patch("agent_reach.daily_run.snapshot_builder.fetch_quotes_map")
-    def test_build_snapshot_enriched(self, mock_fetch, mock_macro, _mock_cache, portfolio):
+    @patch("agent_reach.daily_run.snapshot_builder.fetch_quotes_result")
+    def test_build_snapshot_enriched(self, mock_fetch_result, mock_macro, _mock_cache, portfolio):
         mock_macro.return_value = {
             "mss_breakdown": {"fx": 40, "flow": 50, "global": 45, "sentiment": 48},
             "sources": {
@@ -51,15 +51,19 @@ class TestSnapshotBuilder:
             },
             "macro_summary": "live macro",
         }
-        mock_fetch.return_value = {
-            "688008": {
-                "code": "688008",
-                "name": "澜起科技",
-                "price": 260.0,
-                "change_pct": 1.5,
-                "source": "xueqiu",
-            }
-        }
+        result = QuoteFetchResult(
+            quotes={
+                "688008": {
+                    "code": "688008",
+                    "name": "澜起科技",
+                    "price": 260.0,
+                    "change_pct": 1.5,
+                    "source": "xueqiu",
+                }
+            },
+            sources_used=["xueqiu"],
+        )
+        mock_fetch_result.return_value = result
         with patch("agent_reach.daily_run.snapshot_builder._attach_technicals") as mock_tech:
             mock_tech.return_value = {
                 "code": "688008",
@@ -76,6 +80,17 @@ class TestSnapshotBuilder:
         assert snap["price"] == 260.0
         assert snap.get("quote_fetch", {}).get("coverage_pct", 0) >= 0
         assert snap["sources"]["flow"]["summary"] != "待更新"
+
+    def test_load_portfolio_empty_falls_back_to_repo(self, tmp_path):
+        from agent_reach.daily_run.snapshot_builder import repo_portfolio_path
+
+        empty = tmp_path / "portfolio.json"
+        empty.write_text(json.dumps({"holdings": [], "watchlist": []}), encoding="utf-8")
+        data = load_portfolio(empty)
+        if repo_portfolio_path().exists():
+            assert data.get("holdings")
+        else:
+            assert data.get("holdings") or data.get("watchlist")
 
     @patch("agent_reach.daily_run.snapshot_builder.load_last_snapshot", return_value=None)
     @patch("agent_reach.daily_run.snapshot_builder.fetch_quotes_map", return_value={})
