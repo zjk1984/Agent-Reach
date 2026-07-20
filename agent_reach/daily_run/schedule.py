@@ -61,11 +61,23 @@ def shutil_which(name: str) -> Optional[str]:
     return which(name)
 
 
+def local_cron_script() -> Path:
+    """Absolute path to scripts/daily-run-local-cron.sh (repo root)."""
+    return Path(__file__).resolve().parents[2] / "scripts" / "daily-run-local-cron.sh"
+
+
+def _cron_run_cmd(job: str) -> str:
+    """Cron-safe command: prefer local wrapper script over bare CLI name."""
+    script = local_cron_script()
+    if script.is_file():
+        return f"{script} {job}"
+    return f"{_agent_reach_cmd()} daily-run schedule run {job}"
+
+
 def default_entries() -> list[CronEntry]:
     """Default Asia/Shanghai trading schedule (CRON_TZ=Asia/Shanghai)."""
-    cmd = _agent_reach_cmd()
     entries = [
-        CronEntry("0", "8", "1-5", f"{cmd} daily-run schedule run morning", "daily-run 早盘 8:00"),
+        CronEntry("0", "8", "1-5", _cron_run_cmd("morning"), "daily-run 早盘 8:00"),
     ]
     for i, (minute, hour) in enumerate(INTRADAY_SCAN_TIMES, start=2):
         entries.append(
@@ -73,25 +85,33 @@ def default_entries() -> list[CronEntry]:
                 minute,
                 hour,
                 "1-5",
-                f"{cmd} daily-run schedule run intraday",
+                _cron_run_cmd("intraday"),
                 f"daily-run 盘中 S{i}/{INTRADAY_MAX_SCANS}",
             )
         )
     entries.append(
-        CronEntry("30", "15", "1-5", f"{cmd} daily-run schedule run close", "daily-run 收盘 15:30")
+        CronEntry("30", "15", "1-5", _cron_run_cmd("close"), "daily-run 收盘 15:30")
     )
     entries.append(
-        CronEntry("0", "9", "6", f"{cmd} daily-run schedule run weekly", "daily-run 周报 周六 9:00")
+        CronEntry("0", "9", "6", _cron_run_cmd("weekly"), "daily-run 周报 周六 9:00")
     )
     entries.append(
-        CronEntry("0", "9", "0", f"{cmd} daily-run schedule run forecast", "daily-run 下周预测 周日 9:00")
+        CronEntry("0", "9", "0", _cron_run_cmd("forecast"), "daily-run 下周预测 周日 9:00")
     )
     return entries
 
 
 def render_crontab_block(entries: Optional[list[CronEntry]] = None) -> str:
     entries = entries or default_entries()
-    lines = [MARKER_BEGIN, "CRON_TZ=Asia/Shanghai"]
+    script = local_cron_script()
+    lines = [
+        MARKER_BEGIN,
+        "SHELL=/bin/bash",
+        "CRON_TZ=Asia/Shanghai",
+        "# logs: ~/.agent-reach/daily_run/logs/cron-YYYY-MM-DD.log",
+    ]
+    if script.is_file():
+        lines.append(f"# wrapper: {script}")
     for e in entries:
         lines.append(e.line())
     lines.append(MARKER_END)
@@ -102,6 +122,10 @@ def install_crontab(entries: Optional[list[CronEntry]] = None, *, dry_run: bool 
     block = render_crontab_block(entries)
     if dry_run:
         return block
+
+    script = local_cron_script()
+    if script.is_file():
+        script.chmod(script.stat().st_mode | 0o111)
 
     crontab_bin = shutil_which("crontab")
     if not crontab_bin:
