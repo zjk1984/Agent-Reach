@@ -133,6 +133,34 @@ def render_code_review_markdown(result: CodeReviewResult, *, enabled: bool = Tru
     return "\n".join(lines).strip()
 
 
+def _live_price_for_code(snapshot: dict[str, Any], code: str) -> Optional[float]:
+    """Best-effort live price from close snapshot holdings/watchlist rows."""
+    norm = _normalize_code(code)
+    for block in (
+        (snapshot.get("portfolio") or {}).get("holdings") or [],
+        snapshot.get("watchlist") or [],
+    ):
+        for row in block:
+            if _normalize_code(str(row.get("code", ""))) != norm:
+                continue
+            if row.get("quote_source") == "cost_fallback":
+                continue
+            price = row.get("price")
+            if price is not None:
+                try:
+                    return float(price)
+                except (TypeError, ValueError):
+                    return None
+    if _normalize_code(str(snapshot.get("code", ""))) == norm:
+        price = snapshot.get("price")
+        if price is not None:
+            try:
+                return float(price)
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
 def _review_portfolio(
     out: CodeReviewResult,
     snapshot: dict[str, Any],
@@ -230,6 +258,31 @@ def _review_portfolio(
                     "high",
                     f"持仓 {code} 股数无效",
                     f"shares={h.get('shares')}；需人工核对 portfolio.json",
+                )
+            )
+        cost = h.get("cost")
+        live_price = _live_price_for_code(snapshot, code)
+        if (
+            auto_fix
+            and cost is not None
+            and live_price is not None
+            and float(cost) > float(live_price) * 2.5
+        ):
+            old_cost = float(cost)
+            h["cost"] = round(float(live_price), 4)
+            pf["holdings"] = holdings
+            out.portfolio = pf
+            out.portfolio_changed = True
+            msg = f"持仓 {code} cost {old_cost} → {live_price}（与市价偏差过大，已按 snapshot 修正）"
+            out.fixes_applied.append(msg)
+            out.findings.append(
+                CodeFinding(
+                    "portfolio",
+                    "high",
+                    f"持仓 {code} 成本价异常",
+                    f"cost={old_cost} vs 市价 {live_price}",
+                    fixed=True,
+                    fix_note=msg,
                 )
             )
         if h.get("days_held") is None:

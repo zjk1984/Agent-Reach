@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import json
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -24,16 +23,35 @@ def example_portfolio_path() -> Path:
     return Path(__file__).resolve().parents[2] / "config" / "daily_run_portfolio.example.json"
 
 
+def repo_portfolio_path() -> Path:
+    return Path(__file__).resolve().parents[2] / "config" / "daily_run_portfolio.json"
+
+
+def _portfolio_is_empty(data: dict[str, Any]) -> bool:
+    holdings = data.get("holdings") or []
+    watchlist = data.get("watchlist") or []
+    return not holdings and not watchlist
+
+
 def load_portfolio(path: Optional[Path] = None) -> dict[str, Any]:
     p = path or default_portfolio_path()
-    if not p.exists():
-        example = example_portfolio_path()
-        if example.exists():
-            return json.loads(example.read_text(encoding="utf-8"))
-        raise FileNotFoundError(
-            f"未找到持仓配置：{p}。可复制 config/daily_run_portfolio.example.json 到该路径"
-        )
-    return json.loads(p.read_text(encoding="utf-8"))
+    if p.exists():
+        data = json.loads(p.read_text(encoding="utf-8"))
+        if not _portfolio_is_empty(data):
+            return data
+
+    for fallback in (repo_portfolio_path(), example_portfolio_path()):
+        if fallback.exists():
+            data = json.loads(fallback.read_text(encoding="utf-8"))
+            if not _portfolio_is_empty(data):
+                return data
+
+    if p.exists():
+        return json.loads(p.read_text(encoding="utf-8"))
+
+    raise FileNotFoundError(
+        f"未找到持仓配置：{p}。可复制 config/daily_run_portfolio.json 到该路径"
+    )
 
 
 def save_portfolio(portfolio: dict[str, Any], path: Optional[Path] = None) -> Path:
@@ -60,57 +78,38 @@ def _normalize_code(code: str) -> str:
     return code.zfill(6)[-6:] if str(code).isdigit() else str(code)
 
 
-def fetch_quotes_map(codes: list[str], config=None) -> dict[str, dict[str, Any]]:
-    """Batch fetch quotes for multiple codes (parallel xueqiu + AKShare batch fallback)."""
+def fetch_quotes_map(
+    codes: list[str],
+    config=None,
+    *,
+    settings: Optional[dict[str, Any]] = None,
+) -> dict[str, dict[str, Any]]:
+    """Batch fetch quotes using configured source priority (akshare → xueqiu by default)."""
+    from agent_reach.daily_run.quote_fetch import fetch_quotes_map as fetch_multi
+    from agent_reach.daily_run.settings import load_settings
+
     unique = list(dict.fromkeys(_normalize_code(c) for c in codes if c))
-    result: dict[str, dict[str, Any]] = {}
     if not unique:
-        return result
+        return {}
 
-    def _fetch_xueqiu(code: str) -> Optional[tuple[str, dict[str, Any]]]:
-        try:
-            from agent_reach.channels import xueqiu as xq_mod
+    cfg = settings or load_settings()
+    result = fetch_multi(unique, config, settings=cfg)
+    return dict(result.quotes)
 
-            xq_mod._ensure_cookies()
-            channel = xq_mod.XueqiuChannel()
-            q = channel.get_stock_quote(code_to_xueqiu_symbol(code))
-            price = q.get("current")
-            if price is None:
-                return None
-            return code, {
-                "code": code,
-                "name": q.get("name", code),
-                "price": float(price),
-                "change_pct": float(q.get("percent") or 0),
-                "reference_price": float(q.get("last_close") or price),
-                "source": "xueqiu",
-            }
-        except Exception:
-            return None
 
-    workers = min(8, max(1, len(unique)))
-    try:
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            for item in pool.map(_fetch_xueqiu, unique):
-                if item:
-                    code, quote = item
-                    result[code] = quote
-    except Exception:
-        pass
+def fetch_quotes_result(
+    codes: list[str],
+    config=None,
+    *,
+    settings: Optional[dict[str, Any]] = None,
+):
+    """Like fetch_quotes_map but returns QuoteFetchResult for coverage metadata."""
+    from agent_reach.daily_run.quote_fetch import fetch_quotes_map as fetch_multi
+    from agent_reach.daily_run.settings import load_settings
 
-    missing = [c for c in unique if c not in result]
-    if missing:
-        try:
-            from agent_reach.daily_run.akshare_adapter import fetch_quotes_batch
-
-            batch = fetch_quotes_batch(missing)
-            for code in missing:
-                if code in batch:
-                    result[code] = batch[code]
-        except Exception:
-            pass
-
-    return result
+    unique = list(dict.fromkeys(_normalize_code(c) for c in codes if c))
+    cfg = settings or load_settings()
+    return fetch_multi(unique, config, settings=cfg)
 
 
 def _primary_row_fields(
@@ -141,6 +140,15 @@ def _attach_technicals(quote: dict[str, Any], code: str) -> dict[str, Any]:
     return out
 
 
+def _try_akshare_quote(code: str) -> Optional[dict[str, Any]]:
+    try:
+        from agent_reach.daily_run.akshare_adapter import fetch_quote
+
+        return fetch_quote(code)
+    except Exception:
+        return None
+
+
 def enrich_holding(
     holding: dict[str, Any],
     quote_map: dict[str, dict[str, Any]],
@@ -163,8 +171,22 @@ def enrich_holding(
                 if enriched.get(k) is not None:
                     out[k] = enriched[k]
     elif out.get("cost") is not None:
-        out["price"] = out["cost"]
-        out["quote_source"] = "cost_fallback"
+        fallback = _try_akshare_quote(code)
+        if fallback and fallback.get("price") is not None:
+            out["price"] = fallback["price"]
+            out["change_pct"] = fallback.get("change_pct")
+            out["name"] = fallback.get("name") or out.get("name")
+            out["quote_source"] = fallback.get("source", "akshare_spot_em")
+            if fallback.get("volume_ratio") is not None:
+                out["volume_ratio"] = fallback["volume_ratio"]
+            if with_technicals:
+                enriched = _attach_technicals(fallback, code)
+                for k in ("ma20", "ma5", "position_20d", "volume_ratio"):
+                    if enriched.get(k) is not None:
+                        out[k] = enriched[k]
+        else:
+            out["price"] = out["cost"]
+            out["quote_source"] = "cost_fallback"
     return out
 
 
@@ -236,29 +258,41 @@ def build_snapshot(
     all_codes = [code_norm] + [
         _normalize_code(str(h.get("code", ""))) for h in holdings
     ] + [_normalize_code(str(w.get("code", ""))) for w in watchlist]
-    quote_map = fetch_quotes_map(all_codes, config)
+    quote_result = fetch_quotes_result(all_codes, config, settings=cfg)
+    quote_map = dict(quote_result.quotes)
+    quote_meta = {
+        "sources_used": list(quote_result.sources_used),
+        "coverage_pct": round(quote_result.coverage_for(all_codes) * 100, 1),
+        "errors": dict(quote_result.errors),
+    }
 
     def _enrich_row(row: dict[str, Any], *, with_technicals: bool) -> dict[str, Any]:
         c = _normalize_code(str(row.get("code", "")))
         merged_map = dict(quote_map)
         if c in cached_technicals:
             merged_map[c] = {**merged_map.get(c, {}), **cached_technicals[c]}
-        return enrich_holding(row, merged_map, with_technicals=with_technicals and enrich_level == "full")
+        return enrich_holding(row, merged_map, with_technicals=with_technicals)
 
     holdings = [
-        _enrich_row(h, with_technicals=_normalize_code(str(h.get("code", ""))) == code_norm)
+        _enrich_row(h, with_technicals=enrich_level == "full")
         for h in holdings
     ]
-    watchlist = [_enrich_row(w, with_technicals=False) for w in watchlist]
+    watchlist = [
+        _enrich_row(w, with_technicals=enrich_level == "full")
+        for w in watchlist
+    ]
 
-    if enrich_level == "full" and code_norm in quote_map:
-        primary_quote = _attach_technicals(quote_map[code_norm], code_norm)
-        quote_map[code_norm] = primary_quote
-        cached_technicals[code_norm] = {
-            k: primary_quote.get(k)
-            for k in ("ma20", "ma5", "position_20d", "volume_ratio")
-            if primary_quote.get(k) is not None
-        }
+    if enrich_level == "full":
+        for c in dict.fromkeys(all_codes):
+            if c not in quote_map:
+                continue
+            enriched = _attach_technicals(quote_map[c], c)
+            quote_map[c] = enriched
+            cached_technicals[c] = {
+                k: enriched.get(k)
+                for k in ("ma20", "ma5", "position_20d", "volume_ratio")
+                if enriched.get(k) is not None
+            }
     elif code_norm in quote_map and code_norm in cached_technicals:
         quote_map[code_norm] = {**quote_map[code_norm], **cached_technicals[code_norm]}
 
@@ -347,6 +381,7 @@ def build_snapshot(
         "portfolio": portfolio_block,
         "watchlist": watchlist,
         "has_cost_fallback": has_cost_fallback,
+        "quote_fetch": quote_meta,
     }
 
     if primary_price is not None:

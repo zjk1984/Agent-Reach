@@ -17,7 +17,7 @@ if [ ! -f "${AGENT_REACH_DIR}/config.yaml" ]; then
   exit 1
 fi
 
-if [ ! -f "$PORTFOLIO_PATH" ]; then
+if [ ! -f "$PORTFOLIO_PATH" ] || [ "${RESET_PORTFOLIO:-false}" = "true" ]; then
   if [ -f "${REPO_ROOT}/config/daily_run_portfolio.json" ]; then
     cp "${REPO_ROOT}/config/daily_run_portfolio.json" "$PORTFOLIO_PATH"
     echo "✅ 已从 config/daily_run_portfolio.json 初始化 portfolio"
@@ -26,6 +26,23 @@ if [ ! -f "$PORTFOLIO_PATH" ]; then
     echo "✅ 已从 example 初始化 portfolio"
   else
     echo "⚠️ 未找到 portfolio 模板，请手动创建 ${PORTFOLIO_PATH}"
+  fi
+elif python3 - <<'PY'
+import json, sys
+from pathlib import Path
+p = Path(sys.argv[1])
+data = json.loads(p.read_text(encoding="utf-8"))
+holdings = data.get("holdings") or []
+watchlist = data.get("watchlist") or []
+sys.exit(0 if (holdings or watchlist) else 1)
+PY
+"$PORTFOLIO_PATH"; then
+  :
+else
+  echo "⚠️ portfolio.json 持仓为空，尝试从 repo 重新 seed"
+  if [ -f "${REPO_ROOT}/config/daily_run_portfolio.json" ]; then
+    cp "${REPO_ROOT}/config/daily_run_portfolio.json" "$PORTFOLIO_PATH"
+    echo "✅ 已从 config/daily_run_portfolio.json 恢复 portfolio"
   fi
 fi
 

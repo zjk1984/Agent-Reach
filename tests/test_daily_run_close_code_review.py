@@ -87,3 +87,26 @@ def test_code_review_disabled_skips_findings():
     result = run_close_code_review(portfolio=portfolio, snapshot={}, settings=settings)
     assert result.findings == []
     assert result.portfolio_changed is False
+
+
+def test_auto_fix_abnormal_cost():
+    settings = load_settings()
+    portfolio = {
+        "total": 100000,
+        "cash": 50000,
+        "cash_ratio": 0.5,
+        "holdings": [{"code": "002583", "name": "海能达", "shares": 1000, "cost": 28.4}],
+        "watchlist": [],
+    }
+    snapshot = {
+        "code": "002583",
+        "portfolio": {
+            "holdings": [
+                {"code": "002583", "price": 7.98, "quote_source": "xueqiu"},
+            ]
+        },
+    }
+    result = run_close_code_review(portfolio=portfolio, snapshot=snapshot, settings=settings)
+    assert result.portfolio_changed is True
+    assert result.portfolio["holdings"][0]["cost"] == 7.98
+    assert any("cost" in f.lower() or "成本" in f for f in result.fixes_applied)
