@@ -405,5 +405,5 @@ class TestScheduleWeekly:
         from agent_reach.daily_run.schedule import render_crontab_block
 
         block = render_crontab_block()
-        assert "schedule run weekly" in block
+        assert "daily-run-local-cron.sh weekly" in block
         assert "0 9 * * 6" in block
