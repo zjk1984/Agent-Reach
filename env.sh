@@ -1,7 +1,7 @@
 # Agent Reach 环境配置 - 使用前 source 此文件
-# source /home/zjk/公共/cursor/env.sh
+# source /home/zjk/cursor/env.sh
 
-export AGENT_REACH_HOME="/home/zjk/公共/cursor"
+export AGENT_REACH_HOME="/home/zjk/cursor"
 
 # Node.js (包含 npm/npx)
 export PATH="$AGENT_REACH_HOME/tools/node-v22.14.0-linux-x64/bin:$PATH"
