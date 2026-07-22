@@ -230,17 +230,28 @@ def main():
                             help="Print crontab block without installing (install action)")
     p_dr_hot = p_daily_sub.add_parser("hot-news", help="Self-hosted 60s API for hot news")
     p_dr_hot_sub = p_dr_hot.add_subparsers(dest="hot_news_action", required=True)
-    p_dr_hot_install = p_dr_hot_sub.add_parser("install", help="Deploy local 60s via Docker")
+    p_dr_hot_install = p_dr_hot_sub.add_parser("install", help="Deploy local 60s (native Node by default)")
+    p_dr_hot_install.add_argument(
+        "--mode",
+        default="native",
+        choices=["native", "docker", "auto"],
+        help="Deploy mode: native Node.js (default), docker, or auto",
+    )
     p_dr_hot_install.add_argument("--force", action="store_true",
-                                  help="Recreate Docker container")
+                                  help="Recreate process/container")
+    p_dr_hot_install.add_argument("--skip-deploy", action="store_true",
+                                  help="Only merge settings; do not start 60s")
     p_dr_hot_install.add_argument("--skip-docker", action="store_true",
-                                  help="Only merge settings; do not start Docker")
+                                  help=argparse.SUPPRESS)  # backward compat → skip-deploy
     p_dr_hot_install.add_argument("--no-pull", action="store_true",
-                                  help="Skip docker pull before run")
+                                  help="Skip git pull / docker pull before run")
     p_dr_hot_sub.add_parser("status", help="Show 60s deploy / reachability status")
-    p_dr_hot_stop = p_dr_hot_sub.add_parser("stop", help="Stop local 60s container")
+    p_dr_hot_stop = p_dr_hot_sub.add_parser("stop", help="Stop local 60s (native and/or docker)")
     p_dr_hot_stop.add_argument("--remove", action="store_true",
-                               help="Remove container after stop")
+                               help="Remove vendor dir (native) or container (docker)")
+    p_dr_hot_stop.add_argument("--mode", default="",
+                               choices=["", "native", "docker", "auto"],
+                               help="Stop only selected deploy mode")
     p_daily_sub.add_parser("sample", help="Print example snapshot JSON to stdout")
 
     # ── doctor ──
@@ -1846,14 +1857,16 @@ def _cmd_daily_run(args):
     if args.daily_action == "hot-news":
         import json as _json
 
-        from agent_reach.daily_run.hot_news_deploy import install_60s_local, status_60s, stop_container
+        from agent_reach.daily_run.hot_news_deploy import install_60s_local, status_60s, stop_60s
 
         action = args.hot_news_action
         if action == "install":
+            skip_deploy = args.skip_deploy or getattr(args, "skip_docker", False)
             result = install_60s_local(
+                mode=args.mode,
                 pull=not args.no_pull,
                 force=args.force,
-                skip_docker=args.skip_docker,
+                skip_deploy=skip_deploy,
             )
             print(_json.dumps(result, ensure_ascii=False, indent=2))
             if result.get("ok"):
@@ -1870,7 +1883,8 @@ def _cmd_daily_run(args):
             return
 
         if action == "stop":
-            ok, msg = stop_container(remove=args.remove)
+            mode = args.mode or None
+            ok, msg = stop_60s(remove=args.remove, mode=mode or None)
             if ok:
                 print(f"✅ {msg}")
             else:

@@ -307,12 +307,14 @@ agent-reach daily-run build-snapshot --save
 
 数据源优先级：**雪球 Cookie** → AKShare 兜底。
 
-### 60s 热点新闻（自建 API）
+### 60s 热点新闻（自建 API，无需 Docker）
 
 daily-run 会从 [60s API](https://github.com/vikiboss/60s) 拉取微博/知乎/IT 新闻等平台热搜，以及「每天 60 秒读懂世界」要闻，并匹配持仓关键词写入宏观摘要。
 
+**依赖：** Node.js 22.6+、git、npm
+
 ```bash
-# 一键部署 Docker 版 60s（宿主机 8787 → 容器 4399）
+# 一键部署（Node.js 本机进程，默认端口 8787）
 bash scripts/60s-local-setup.sh
 # 或
 agent-reach daily-run hot-news install
@@ -322,7 +324,9 @@ agent-reach daily-run hot-news status
 agent-reach daily-run hot-news stop
 ```
 
-`daily-run-local-setup.sh` 已包含 60s 部署步骤。无 Docker 时自动 fallback 到 `https://60s.viki.moe`。
+可选 Docker：`agent-reach daily-run hot-news install --mode docker`
+
+`daily-run-local-setup.sh` 已包含 60s native 部署。无 Node.js 时自动 fallback 到 `https://60s.viki.moe`。
 
 配置：`config/daily_run_settings.json` → `hot_news`（用户覆盖：`~/.agent-reach/daily_run_settings.json`）。Skill 参考：[references/daily_run_hot_news.md](references/daily_run_hot_news.md)。
 

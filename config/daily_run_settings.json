@@ -219,7 +219,12 @@
     "limit_per_platform": 20,
     "match_portfolio_keywords": true,
     "extra_keywords": ["存储", "芯片", "DDR", "北向", "半导体", "AI", "光通信"],
-    "sentiment_boost_per_hit": 2
+    "sentiment_boost_per_hit": 2,
+    "deploy": {
+      "mode": "native",
+      "host_port": 8787,
+      "repo_url": "https://github.com/vikiboss/60s.git"
+    }
   },
 
   "mss_forecast": {

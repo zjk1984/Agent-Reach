@@ -20,7 +20,7 @@ except ImportError:  # pragma: no cover
 
     logger = logging.getLogger("agent_reach.daily_run")
 
-# 60s v2 routes — see https://github.com/zjk1984/60s
+# 60s v2 routes — see https://github.com/vikiboss/60s
 PLATFORM_SPECS: dict[str, dict[str, Any]] = {
     "60s": {"path": "/v2/60s", "kind": "daily"},
     "weibo": {"path": "/v2/weibo", "kind": "list"},

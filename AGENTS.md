@@ -33,7 +33,7 @@ Non-obvious environment notes:
   `bash scripts/daily-run-local-setup.sh` then `python3 -m agent_reach.cli daily-run schedule install`.
   Logs: `~/.agent-reach/daily_run/logs/cron-YYYY-MM-DD.log`. GHA workflow is manual-only (`workflow_dispatch`).
 - **Hot news (60s API)**: daily-run macro collection pulls multi-platform hot topics via
-  [60s](https://github.com/vikiboss/60s). Auto-deploy: `python3 -m agent_reach.cli daily-run hot-news install`
-  or `bash scripts/60s-local-setup.sh` (Docker `vikiboss/60s`, host port **8787**).
-  Configure `hot_news.base_urls` in `config/daily_run_settings.json` — defaults try
-  `http://127.0.0.1:8787` then `https://60s.viki.moe`.
+  [60s](https://github.com/vikiboss/60s). Auto-deploy (native, no Docker):
+  `python3 -m agent_reach.cli daily-run hot-news install` — requires Node.js 22.6+, git, npm.
+  Optional Docker: `--mode docker`. Configure `hot_news.base_urls` in settings (default
+  `http://127.0.0.1:8787` then `https://60s.viki.moe`).
