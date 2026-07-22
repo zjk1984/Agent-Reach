@@ -1788,7 +1788,8 @@ def _cmd_daily_run(args):
             if args.dry_run:
                 print(block)
             else:
-                print("✅ Crontab installed (Asia/Shanghai)")
+                print("✅ Crontab installed (Asia/Shanghai, local wrapper)")
+                print(f"   logs: ~/.agent-reach/daily_run/logs/cron-*.log")
                 print(render_crontab_block())
             return
 
