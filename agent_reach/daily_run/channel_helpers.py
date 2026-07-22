@@ -37,6 +37,16 @@ def fetch_xueqiu_hot_summary(limit: int = 3) -> Optional[str]:
         return None
 
 
+def hot_news_summary_from_snapshot(snapshot: dict[str, Any]) -> Optional[str]:
+    """Return pre-collected hot news text from snapshot sources (no network)."""
+    sources = snapshot.get("sources") or {}
+    hot = sources.get("hot_news")
+    if not isinstance(hot, dict):
+        return None
+    text = hot.get("text_feed") or hot.get("summary") or hot.get("detail")
+    return str(text).strip() or None
+
+
 def score_from_text(text: str, base: float = 50.0) -> float:
     """Heuristic sentiment score from text keywords."""
     if not text:

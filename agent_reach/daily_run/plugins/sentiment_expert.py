@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from agent_reach.daily_run.channel_helpers import (
     fetch_xueqiu_hot_summary,
+    hot_news_summary_from_snapshot,
     score_from_text,
     search_exa_snippet,
 )
@@ -33,7 +34,11 @@ class SentimentExpert(ExpertPlugin):
                 parts.append(str(item))
 
         channel_note = ""
-        if settings.get("plugins", {}).get("channel_enrich", True):
+        hot = hot_news_summary_from_snapshot(snap)
+        if hot:
+            channel_note = hot.split("\n")[0][:120]
+            score = round((score + score_from_text(hot, score)) / 2, 1)
+        elif settings.get("plugins", {}).get("channel_enrich", True):
             xq = fetch_xueqiu_hot_summary(limit=3)
             if xq:
                 channel_note = xq

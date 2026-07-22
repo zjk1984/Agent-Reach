@@ -55,5 +55,14 @@ if command -v mcporter >/dev/null 2>&1 && [ -f "${REPO_ROOT}/config/mcporter.jso
 fi
 
 chmod +x "${REPO_ROOT}/scripts/daily-run-local-cron.sh"
+chmod +x "${REPO_ROOT}/scripts/60s-local-setup.sh"
+
+echo "⏳ 部署本地 60s 热点 API（Node.js 本机，无需 Docker）..."
+if python3 -m agent_reach.cli daily-run hot-news install --mode native 2>/dev/null; then
+  echo "✅ 60s hot-news 已就绪"
+else
+  echo "⚠️ 60s 自建跳过（将使用公共 API https://60s.viki.moe，或手动安装 Node.js 22.6+ 后重试）"
+fi
+
 echo "✅ 本地 daily-run 环境就绪"
 echo "   下一步: python3 -m agent_reach.cli daily-run schedule install"

@@ -131,6 +131,7 @@ agent-reach doctor --json
 - [开发工具](references/dev.md) — GitHub CLI
 - [网页阅读](references/web.md) — Jina Reader, RSS
 - [视频播客](references/video.md) — YouTube, B站, 小宇宙
+- [Daily-run 热点新闻](references/daily_run_hot_news.md) — 60s API 自建与 daily-run 热搜采集
 
 ## 配置渠道
 

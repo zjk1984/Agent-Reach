@@ -28,6 +28,9 @@ def collect_macro_context(
         "index_change_pct": None,
         "northbound_flow_yi": None,
         "sentiment_posts": [],
+        "hot_topics": [],
+        "hot_topics_matched": [],
+        "hot_topic_hits": 0,
     }
     sources: dict[str, Any] = {}
 
@@ -61,6 +64,30 @@ def collect_macro_context(
             "backend": "xueqiu",
         }
 
+    # --- Multi-platform hot news (60s API) ---
+    hot_summary = ""
+    hot_headline = ""
+    try:
+        from agent_reach.daily_run.hot_news_collector import collect_hot_news
+
+        hot = collect_hot_news(portfolio, settings=cfg)
+        if hot.items:
+            signals["hot_topics"] = hot.items
+            signals["hot_topics_matched"] = hot.matched
+            signals["hot_topic_hits"] = len(hot.matched)
+            hot_summary = hot.summary
+            hot_headline = hot.headline_summary
+            sources["hot_news"] = {
+                "summary": hot.summary or hot.headline_summary,
+                "backend": "60s_api",
+                "platforms": hot.platforms_ok,
+                "text_feed": hot.text_feed,
+            }
+            if hot.text_feed:
+                sources["hot_news"]["detail"] = hot.text_feed[:2000]
+    except Exception:
+        pass
+
     # Merge portfolio overrides (non-placeholder only)
     for cat, detail in overrides.items():
         if isinstance(detail, dict) and not _is_placeholder(detail.get("summary", "")):
@@ -69,12 +96,20 @@ def collect_macro_context(
     breakdown = _derive_mss_breakdown(base_breakdown, signals, cfg)
 
     macro_parts = []
+    if hot_headline:
+        macro_parts.append(hot_headline[:60])
+    elif hot_summary:
+        macro_parts.append(hot_summary[:60])
     if index_change is not None:
         macro_parts.append(f"大盘 {index_change:+.2f}%")
     if flow_yi is not None:
         macro_parts.append(f"北向 {flow_yi:+.2f}亿")
     if sentiment_summary:
         macro_parts.append(sentiment_summary[:40])
+    elif hot_summary and not hot_headline:
+        pass
+    elif hot_summary:
+        macro_parts.append(hot_summary[:40])
 
     macro_summary = portfolio.get("macro_summary")
     if macro_parts:
@@ -116,6 +151,12 @@ def _derive_mss_breakdown(
     posts = signals.get("sentiment_posts") or []
     if posts:
         sentiment = _clamp(50 + len(posts) * 3)
+
+    hot_cfg = settings.get("hot_news") or {}
+    hot_hits = int(signals.get("hot_topic_hits") or 0)
+    if hot_hits:
+        boost = float(hot_cfg.get("sentiment_boost_per_hit", 2))
+        sentiment = _clamp(sentiment + hot_hits * boost)
 
     return {
         "fx": round(fx, 1),
@@ -173,7 +214,7 @@ def _fetch_xueqiu_sentiment(
         xq_mod._ensure_cookies()
         ch = xq_mod.XueqiuChannel()
         posts = ch.get_hot_posts(limit=limit)
-        keywords = _portfolio_keywords(portfolio)
+        keywords = _portfolio_keywords(portfolio, settings=None)
         hits = []
         for p in posts:
             text = f"{p.get('title', '')} {p.get('text', '')}"
@@ -188,16 +229,10 @@ def _fetch_xueqiu_sentiment(
         return "", []
 
 
-def _portfolio_keywords(portfolio: dict[str, Any]) -> list[str]:
-    keys: list[str] = []
-    for h in portfolio.get("holdings") or []:
-        if h.get("name"):
-            keys.append(str(h["name"])[:4])
-    for w in portfolio.get("watchlist") or []:
-        if w.get("name"):
-            keys.append(str(w["name"])[:4])
-    keys.extend(["存储", "芯片", "DDR", "北向", "半导体"])
-    return keys
+def _portfolio_keywords(portfolio: dict[str, Any], settings: Optional[dict[str, Any]] = None) -> list[str]:
+    from agent_reach.daily_run.hot_news_collector import portfolio_keywords
+
+    return portfolio_keywords(portfolio, settings)
 
 
 def _is_placeholder(text: str) -> bool:

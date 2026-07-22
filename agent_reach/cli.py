@@ -228,6 +228,30 @@ def main():
     )
     p_dr_sched.add_argument("--dry-run", action="store_true",
                             help="Print crontab block without installing (install action)")
+    p_dr_hot = p_daily_sub.add_parser("hot-news", help="Self-hosted 60s API for hot news")
+    p_dr_hot_sub = p_dr_hot.add_subparsers(dest="hot_news_action", required=True)
+    p_dr_hot_install = p_dr_hot_sub.add_parser("install", help="Deploy local 60s (native Node by default)")
+    p_dr_hot_install.add_argument(
+        "--mode",
+        default="native",
+        choices=["native", "docker", "auto"],
+        help="Deploy mode: native Node.js (default), docker, or auto",
+    )
+    p_dr_hot_install.add_argument("--force", action="store_true",
+                                  help="Recreate process/container")
+    p_dr_hot_install.add_argument("--skip-deploy", action="store_true",
+                                  help="Only merge settings; do not start 60s")
+    p_dr_hot_install.add_argument("--skip-docker", action="store_true",
+                                  help=argparse.SUPPRESS)  # backward compat → skip-deploy
+    p_dr_hot_install.add_argument("--no-pull", action="store_true",
+                                  help="Skip git pull / docker pull before run")
+    p_dr_hot_sub.add_parser("status", help="Show 60s deploy / reachability status")
+    p_dr_hot_stop = p_dr_hot_sub.add_parser("stop", help="Stop local 60s (native and/or docker)")
+    p_dr_hot_stop.add_argument("--remove", action="store_true",
+                               help="Remove vendor dir (native) or container (docker)")
+    p_dr_hot_stop.add_argument("--mode", default="",
+                               choices=["", "native", "docker", "auto"],
+                               help="Stop only selected deploy mode")
     p_daily_sub.add_parser("sample", help="Print example snapshot JSON to stdout")
 
     # ── doctor ──
@@ -1830,8 +1854,49 @@ def _cmd_daily_run(args):
         print("Usage: agent-reach daily-run schedule {print|install|run} [--job morning|intraday|close|weekly|forecast]")
         sys.exit(1)
 
+    if args.daily_action == "hot-news":
+        import json as _json
+
+        from agent_reach.daily_run.hot_news_deploy import install_60s_local, status_60s, stop_60s
+
+        action = args.hot_news_action
+        if action == "install":
+            skip_deploy = args.skip_deploy or getattr(args, "skip_docker", False)
+            result = install_60s_local(
+                mode=args.mode,
+                pull=not args.no_pull,
+                force=args.force,
+                skip_deploy=skip_deploy,
+            )
+            print(_json.dumps(result, ensure_ascii=False, indent=2))
+            if result.get("ok"):
+                print(f"\n✅ 60s hot-news ready ({result.get('active_base_url') or result.get('local_base_url')})")
+                if result.get("settings_path"):
+                    print(f"   settings: {result['settings_path']}")
+            else:
+                print(f"\n⚠️ {result.get('message', '60s install incomplete')}")
+                sys.exit(1 if not result.get("active_base_url") else 0)
+            return
+
+        if action == "status":
+            print(_json.dumps(status_60s(), ensure_ascii=False, indent=2))
+            return
+
+        if action == "stop":
+            mode = args.mode or None
+            ok, msg = stop_60s(remove=args.remove, mode=mode or None)
+            if ok:
+                print(f"✅ {msg}")
+            else:
+                print(f"❌ {msg}")
+                sys.exit(1)
+            return
+
+        print("Usage: agent-reach daily-run hot-news {install|status|stop}")
+        sys.exit(1)
+
     if args.daily_action not in ("evaluate", "push"):
-        print("Usage: agent-reach daily-run {morning|close|intraday|build-snapshot|schedule|evaluate|push|fetch|verify|backtest|optimize|plugins|sample} ...")
+        print("Usage: agent-reach daily-run {morning|close|intraday|build-snapshot|schedule|hot-news|evaluate|push|fetch|verify|backtest|optimize|plugins|sample} ...")
         sys.exit(1)
 
     path = Path(args.input)
