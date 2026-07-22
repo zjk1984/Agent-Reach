@@ -32,3 +32,7 @@ Non-obvious environment notes:
 - **Daily-run scheduling** uses **local Linux cron** (not GitHub Actions schedule). One-time setup:
   `bash scripts/daily-run-local-setup.sh` then `python3 -m agent_reach.cli daily-run schedule install`.
   Logs: `~/.agent-reach/daily_run/logs/cron-YYYY-MM-DD.log`. GHA workflow is manual-only (`workflow_dispatch`).
+- **Hot news (60s API)**: daily-run macro collection pulls multi-platform hot topics via
+  [60s](https://github.com/zjk1984/60s). Configure `hot_news.base_urls` in
+  `config/daily_run_settings.json` — defaults try `http://127.0.0.1:8787` then
+  `https://60s.viki.moe`. Self-host: clone 60s and run locally on port 8787.

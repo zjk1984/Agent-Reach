@@ -210,6 +210,18 @@
     "sentiment_post_limit": 5
   },
 
+  "hot_news": {
+    "enabled": true,
+    "platforms": ["60s", "weibo", "zhihu", "it-news"],
+    "base_urls": ["http://127.0.0.1:8787", "https://60s.viki.moe"],
+    "cache_ttl_seconds": 600,
+    "timeout_seconds": 12,
+    "limit_per_platform": 20,
+    "match_portfolio_keywords": true,
+    "extra_keywords": ["存储", "芯片", "DDR", "北向", "半导体", "AI", "光通信"],
+    "sentiment_boost_per_hit": 2
+  },
+
   "mss_forecast": {
     "simulations": 200,
     "base_spread": 8,

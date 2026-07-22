@@ -81,12 +81,15 @@ class TestScheduleEntries:
 
 
 class TestMacroCollector:
+    @patch("agent_reach.daily_run.hot_news_collector.collect_hot_news")
     @patch("agent_reach.daily_run.macro_collector._fetch_index_change", return_value=0.5)
     @patch("agent_reach.daily_run.macro_collector._fetch_northbound_flow", return_value=12.0)
     @patch("agent_reach.daily_run.macro_collector._fetch_xueqiu_sentiment", return_value=("雪球热点：存储", []))
-    def test_collect_macro_context(self, *_mocks):
+    def test_collect_macro_context(self, mock_xq, mock_nb, mock_idx, mock_hot):
+        from agent_reach.daily_run.hot_news_collector import HotNewsResult
         from agent_reach.daily_run.macro_collector import collect_macro_context
 
+        mock_hot.return_value = HotNewsResult()
         pf = {"mss_breakdown": {"fx": 50, "flow": 50, "global": 50, "sentiment": 50}}
         ctx = collect_macro_context(pf, settings=load_settings())
         assert "flow" in ctx["sources"]
