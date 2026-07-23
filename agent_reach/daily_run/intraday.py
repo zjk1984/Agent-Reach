@@ -278,6 +278,58 @@ def should_evaluate_trade(
     return len(st.scans) % int(sched.get("trade_every_n_scans", 2)) == 0
 
 
+def apply_paper_trade(
+    decision: TradeDecision,
+    snapshot: dict[str, Any],
+    *,
+    settings: Optional[dict[str, Any]] = None,
+) -> "ApplyResult":
+    """Apply paper buy/sell to portfolio.json when auto_adjust is enabled."""
+    from agent_reach.daily_run.portfolio_manager import (
+        ApplyResult,
+        append_trade_ledger,
+        apply_auto_adjust,
+        is_auto_adjust_enabled,
+    )
+    from agent_reach.daily_run.snapshot_builder import load_portfolio, save_portfolio
+    from agent_reach.daily_run.symbols import sync_snapshot_portfolio
+
+    cfg = settings or load_settings()
+    pf = load_portfolio()
+    if not is_auto_adjust_enabled(cfg):
+        return ApplyResult(applied=False, portfolio=pf, message="auto_adjust 未启用")
+
+    from agent_reach.daily_run.snapshot_builder import _normalize_code
+    from agent_reach.daily_run.symbols import build_enriched_symbols
+
+    quote_map = build_enriched_symbols(snapshot)
+    snap = dict(snapshot)
+    sync_snapshot_portfolio(snap, pf)
+    for row in (snap.get("portfolio") or {}).get("holdings") or []:
+        code = _normalize_code(str(row.get("code", "")))
+        if code in quote_map:
+            row.update({k: quote_map[code][k] for k in ("price", "change_pct", "name", "ma20") if quote_map[code].get(k) is not None})
+    merged_watchlist = []
+    for row in snap.get("watchlist") or []:
+        item = dict(row)
+        code = _normalize_code(str(item.get("code", "")))
+        if code in quote_map:
+            item.update({k: quote_map[code][k] for k in ("price", "change_pct", "name", "ma20") if quote_map[code].get(k) is not None})
+        merged_watchlist.append(item)
+    snap["watchlist"] = merged_watchlist
+
+    result = apply_auto_adjust(pf, decision, snap, cfg, allow_watchlist_changes=False)
+    if result.applied:
+        save_portfolio(result.portfolio)
+        sync_snapshot_portfolio(snap, result.portfolio)
+        append_trade_ledger(
+            result.actions,
+            trade_id=decision.trade_id,
+            decision_action=decision.action,
+        )
+    return result
+
+
 def evaluate_trade(
     snapshot: dict[str, Any],
     *,
@@ -340,15 +392,26 @@ def evaluate_trade(
         "code": report.get("code"),
         "name": report.get("name"),
     }
+    apply_result = apply_paper_trade(decision, enriched, settings=cfg)
+    trade_record["portfolio_applied"] = apply_result.applied
+    trade_record["portfolio_message"] = apply_result.message
+    if apply_result.applied:
+        trade_record["portfolio_actions"] = [a.to_dict() for a in apply_result.actions]
     st.trades.append(trade_record)
     save_state(st, state_path)
+
+    from agent_reach.daily_run.portfolio_manager import render_apply_markdown
+
+    markdown = render_intraday_trade_markdown(decision, lookback_detail, report, st.scans)
+    markdown = markdown + "\n\n---\n\n" + render_apply_markdown(apply_result)
 
     return {
         "decision": decision.to_dict(),
         "trade": trade_record,
         "state": st.to_dict(),
         "evaluation": evaluation,
-        "markdown": render_intraday_trade_markdown(decision, lookback_detail, report, st.scans),
+        "portfolio_apply": apply_result.to_dict(),
+        "markdown": markdown,
     }
 
 
@@ -398,6 +461,8 @@ def run_intraday(
             pre_evaluation=scan_result.get("evaluation"),
         )
         steps.append("trade")
+        if trade_result.get("portfolio_apply", {}).get("applied"):
+            steps.append("portfolio_apply")
 
     feishu_result = None
     push_error: Optional[str] = None
