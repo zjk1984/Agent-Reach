@@ -13,7 +13,7 @@ from agent_reach.daily_run.close_improvements import generate_close_improvements
 from agent_reach.daily_run.exa_cache import cached_web_search_exa, put_cached_search
 from agent_reach.daily_run.experience import append_experience_entry
 from agent_reach.daily_run.intraday_push import should_push_intraday
-from agent_reach.daily_run.snapshot_cache import load_daily_cache, save_daily_cache
+from agent_reach.daily_run.snapshot_cache import load_daily_cache, merge_technicals, save_daily_cache
 from agent_reach.daily_run.weekly_digest import load_weekly_digest, save_weekly_digest
 from agent_reach.daily_run.week_forecast import (
     _events_from_weekly_digest,
@@ -110,6 +110,39 @@ class TestSnapshotCache:
         save_daily_cache({"macro_ctx": {"macro_summary": "ok"}})
         data = load_daily_cache()
         assert data["macro_ctx"]["macro_summary"] == "ok"
+
+    def test_merge_technicals_preserves_existing_symbols(self):
+        merged = merge_technicals(
+            {
+                "688008": {"ma20": 256.22, "position_20d": 0.55},
+                "002273": {"ma20": 32.32},
+            },
+            {
+                "002583": {"ma20": 7.95},
+                "000725": {},
+            },
+        )
+        assert merged["688008"]["ma20"] == 256.22
+        assert merged["002273"]["ma20"] == 32.32
+        assert merged["002583"]["ma20"] == 7.95
+        assert "000725" not in merged
+
+    def test_save_daily_cache_merges_technicals_across_runs(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "agent_reach.daily_run.snapshot_cache.cache_dir",
+            lambda: tmp_path,
+        )
+        monkeypatch.setattr(
+            "agent_reach.daily_run.snapshot_cache.today_shanghai",
+            lambda: date(2026, 7, 10),
+        )
+        save_daily_cache({"technicals": {"688008": {"ma20": 256.22}}})
+        save_daily_cache({"technicals": {"002273": {"ma20": 32.32}}})
+        save_daily_cache({"technicals": {"000725": {}}})
+        data = load_daily_cache()
+        assert data["technicals"]["688008"]["ma20"] == 256.22
+        assert data["technicals"]["002273"]["ma20"] == 32.32
+        assert "000725" not in data["technicals"]
 
 
 class TestExperienceForecast:

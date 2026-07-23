@@ -29,11 +29,41 @@ def load_daily_cache(d: Optional[Any] = None) -> dict[str, Any]:
         return {}
 
 
+_TECHNICAL_FIELDS = ("ma20", "ma5", "position_20d", "volume_ratio")
+
+
+def merge_technicals(
+    existing: dict[str, Any],
+    incoming: dict[str, Any],
+) -> dict[str, Any]:
+    """Merge per-symbol technical fields; never wipe prior values with empty updates."""
+    merged = {code: dict(fields) for code, fields in existing.items() if isinstance(fields, dict)}
+    for code, fields in incoming.items():
+        if not isinstance(fields, dict):
+            continue
+        patch = {k: v for k, v in fields.items() if k in _TECHNICAL_FIELDS and v is not None}
+        if not patch:
+            continue
+        prev = merged.get(code)
+        if isinstance(prev, dict):
+            merged[code] = {**prev, **patch}
+        else:
+            merged[code] = patch
+    return merged
+
+
 def save_daily_cache(data: dict[str, Any], d: Optional[Any] = None) -> Path:
     cache_dir().mkdir(parents=True, exist_ok=True)
     path = daily_cache_path(d)
     existing = load_daily_cache(d)
-    existing.update(data)
+    payload = dict(data)
+    incoming_technicals = payload.pop("technicals", None)
+    if isinstance(incoming_technicals, dict):
+        existing["technicals"] = merge_technicals(
+            existing.get("technicals") or {},
+            incoming_technicals,
+        )
+    existing.update(payload)
     path.write_text(json.dumps(existing, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return path
 

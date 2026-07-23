@@ -39,6 +39,42 @@ class TestSnapshotBuilder:
         assert code_to_xueqiu_symbol("688008") == "SH688008"
         assert code_to_xueqiu_symbol("002273") == "SZ002273"
 
+    @patch("agent_reach.daily_run.snapshot_builder.load_daily_cache")
+    @patch("agent_reach.daily_run.snapshot_builder.collect_macro_context")
+    @patch("agent_reach.daily_run.snapshot_builder.fetch_quotes_result")
+    def test_build_snapshot_intraday_reuses_merged_technicals(
+        self, mock_fetch_result, mock_macro, mock_cache, portfolio
+    ):
+        mock_cache.return_value = {
+            "technicals": {
+                "688008": {"ma20": 256.22, "position_20d": 0.55},
+                "002273": {"ma20": 32.32},
+            }
+        }
+        mock_macro.return_value = {
+            "mss_breakdown": {"fx": 40, "flow": 50, "global": 45, "sentiment": 48},
+            "sources": {},
+            "macro_summary": "live macro",
+        }
+        mock_fetch_result.return_value = QuoteFetchResult(
+            quotes={
+                "688008": {"code": "688008", "name": "澜起科技", "price": 260.0, "change_pct": 1.5, "source": "xueqiu"},
+                "002273": {"code": "002273", "name": "水晶光电", "price": 27.0, "change_pct": 0.2, "source": "xueqiu"},
+                "603986": {"code": "603986", "name": "兆易创新", "price": 450.0, "change_pct": -3.0, "source": "xueqiu"},
+            },
+            sources_used=["xueqiu"],
+        )
+        with patch("agent_reach.daily_run.snapshot_builder._backfill_missing_technicals") as mock_backfill:
+            mock_backfill.side_effect = lambda codes, quote_map, cached: cached
+            snap = build_snapshot(
+                portfolio,
+                report_type="intraday",
+                primary_code="002273",
+                settings={"snapshot": {"intraday_enrich_level": "quotes"}},
+            )
+        assert snap["ma20"] == 32.32
+        assert snap["portfolio"]["holdings"][0]["ma20"] == 256.22
+
     @patch("agent_reach.daily_run.snapshot_builder.load_daily_cache", return_value={})
     @patch("agent_reach.daily_run.snapshot_builder.collect_macro_context")
     @patch("agent_reach.daily_run.snapshot_builder.fetch_quotes_result")

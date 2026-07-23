@@ -129,6 +129,13 @@ def _primary_row_fields(
     return {}
 
 
+_TECHNICAL_KEYS = ("ma20", "ma5", "position_20d", "volume_ratio")
+
+
+def _technicals_patch(enriched: dict[str, Any]) -> dict[str, Any]:
+    return {k: enriched.get(k) for k in _TECHNICAL_KEYS if enriched.get(k) is not None}
+
+
 def _attach_technicals(quote: dict[str, Any], code: str) -> dict[str, Any]:
     out = dict(quote)
     try:
@@ -138,6 +145,41 @@ def _attach_technicals(quote: dict[str, Any], code: str) -> dict[str, Any]:
     except Exception:
         pass
     return out
+
+
+def _apply_cached_technicals(
+    quote_map: dict[str, dict[str, Any]],
+    cached_technicals: dict[str, Any],
+) -> None:
+    for code, fields in cached_technicals.items():
+        if code in quote_map and isinstance(fields, dict) and fields:
+            quote_map[code] = {**quote_map[code], **fields}
+
+
+def _backfill_missing_technicals(
+    codes: list[str],
+    quote_map: dict[str, dict[str, Any]],
+    cached_technicals: dict[str, Any],
+) -> dict[str, Any]:
+    """Fetch AKShare technicals for symbols still missing ma20 during intraday."""
+    from agent_reach.daily_run.snapshot_cache import merge_technicals, save_daily_cache
+
+    updated = dict(cached_technicals)
+    patches: dict[str, dict[str, Any]] = {}
+    for code in dict.fromkeys(codes):
+        if code not in quote_map:
+            continue
+        have = updated.get(code) or {}
+        if isinstance(have, dict) and have.get("ma20") is not None:
+            continue
+        patch = _technicals_patch(_attach_technicals(quote_map[code], code))
+        if patch:
+            patches[code] = patch
+            quote_map[code] = {**quote_map[code], **patch}
+    if patches:
+        updated = merge_technicals(updated, patches)
+        save_daily_cache({"technicals": updated})
+    return updated
 
 
 def _try_akshare_quote(code: str) -> Optional[dict[str, Any]]:
@@ -165,9 +207,12 @@ def enrich_holding(
             out["change_pct"] = quote.get("change_pct")
         out["name"] = quote.get("name") or out.get("name")
         out["quote_source"] = quote.get("source")
+        for k in _TECHNICAL_KEYS:
+            if quote.get(k) is not None and out.get(k) is None:
+                out[k] = quote[k]
         if with_technicals:
             enriched = _attach_technicals(quote, code)
-            for k in ("ma20", "ma5", "position_20d", "volume_ratio"):
+            for k in _TECHNICAL_KEYS:
                 if enriched.get(k) is not None:
                     out[k] = enriched[k]
     elif out.get("cost") is not None:
@@ -181,7 +226,7 @@ def enrich_holding(
                 out["volume_ratio"] = fallback["volume_ratio"]
             if with_technicals:
                 enriched = _attach_technicals(fallback, code)
-                for k in ("ma20", "ma5", "position_20d", "volume_ratio"):
+                for k in _TECHNICAL_KEYS:
                     if enriched.get(k) is not None:
                         out[k] = enriched[k]
         else:
@@ -266,6 +311,10 @@ def build_snapshot(
         "errors": dict(quote_result.errors),
     }
 
+    if enrich_level == "quotes":
+        cached_technicals = _backfill_missing_technicals(all_codes, quote_map, cached_technicals)
+        _apply_cached_technicals(quote_map, cached_technicals)
+
     def _enrich_row(row: dict[str, Any], *, with_technicals: bool) -> dict[str, Any]:
         c = _normalize_code(str(row.get("code", "")))
         merged_map = dict(quote_map)
@@ -288,13 +337,9 @@ def build_snapshot(
                 continue
             enriched = _attach_technicals(quote_map[c], c)
             quote_map[c] = enriched
-            cached_technicals[c] = {
-                k: enriched.get(k)
-                for k in ("ma20", "ma5", "position_20d", "volume_ratio")
-                if enriched.get(k) is not None
-            }
-    elif code_norm in quote_map and code_norm in cached_technicals:
-        quote_map[code_norm] = {**quote_map[code_norm], **cached_technicals[code_norm]}
+            patch = _technicals_patch(enriched)
+            if patch:
+                cached_technicals[c] = patch
 
     # When live quotes fail, seed primary symbol from cost/holding row and retry technicals.
     if code_norm not in quote_map:
