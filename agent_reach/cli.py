@@ -1871,6 +1871,8 @@ def _cmd_daily_run(args):
             print(_json.dumps(result, ensure_ascii=False, indent=2))
             if result.get("ok"):
                 print(f"\n✅ 60s hot-news ready ({result.get('active_base_url') or result.get('local_base_url')})")
+                if result.get("web_url"):
+                    print(f"   Web 面板: {result['web_url']}  （8787 为 API JSON，请打开 Web 面板阅读）")
                 if result.get("settings_path"):
                     print(f"   settings: {result['settings_path']}")
             else:
