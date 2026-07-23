@@ -26,7 +26,13 @@ export TZ="${TZ:-Asia/Shanghai}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-PYTHON="${DAILY_RUN_PYTHON:-python3}"
+PYTHON="${DAILY_RUN_PYTHON:-}"
+if [ -z "$PYTHON" ] && [ -x "${REPO_ROOT}/venv/bin/python3" ]; then
+  PYTHON="${REPO_ROOT}/venv/bin/python3"
+else
+  PYTHON="${PYTHON:-python3}"
+fi
+export PATH="${HOME}/.local/node/bin:${PATH}"
 LOG_DIR="${HOME}/.agent-reach/daily_run/logs"
 mkdir -p "$LOG_DIR"
 LOG_FILE="${LOG_DIR}/cron-$(date +%Y-%m-%d).log"

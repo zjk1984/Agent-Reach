@@ -48,12 +48,19 @@ def docker_path() -> Optional[str]:
     return shutil.which("docker")
 
 
+def _user_local_bin(name: str) -> Optional[str]:
+    candidate = Path.home() / ".local" / "node" / "bin" / name
+    if candidate.is_file() and os.access(candidate, os.X_OK):
+        return str(candidate)
+    return None
+
+
 def node_path() -> Optional[str]:
-    return shutil.which("node")
+    return _user_local_bin("node") or shutil.which("node")
 
 
 def npm_path() -> Optional[str]:
-    return shutil.which("npm")
+    return _user_local_bin("npm") or shutil.which("npm")
 
 
 def git_path() -> Optional[str]:
@@ -459,6 +466,13 @@ def stop_60s(*, remove: bool = False, mode: Optional[DeployMode] = None) -> tupl
         ok = ok and n_ok
         messages.append(n_msg)
 
+    from agent_reach.daily_run.hot_news_portal import stop_portal
+
+    p_ok, p_msg = stop_portal()
+    if p_msg != "portal not running":
+        ok = ok and p_ok
+        messages.append(p_msg)
+
     if stop_docker_too and (container_exists() or container_running()):
         d_ok, d_msg = stop_container(remove=remove)
         ok = ok and d_ok
@@ -477,6 +491,18 @@ def wait_healthy(*, timeout: int = 60, poll_interval: float = 2.0) -> tuple[bool
             return True, base
         time.sleep(poll_interval)
     return False, f"60s API not reachable at {LOCAL_BASE_URL} within {timeout}s"
+
+
+def _attach_portal(result: dict[str, Any], *, force: bool = False) -> None:
+    from agent_reach.daily_run.hot_news_portal import PORTAL_PORT, portal_running, start_portal
+
+    ok, msg = start_portal(api_base=LOCAL_BASE_URL, force=force)
+    result["portal_running"] = portal_running()
+    result["web_url"] = f"http://127.0.0.1:{PORTAL_PORT}"
+    if ok:
+        result["portal_message"] = msg
+    else:
+        result["portal_message"] = f"portal start failed: {msg}"
 
 
 def _install_native(result: dict[str, Any], *, force: bool, wait_timeout: int) -> dict[str, Any]:
@@ -498,6 +524,8 @@ def _install_native(result: dict[str, Any], *, force: bool, wait_timeout: int) -
     )
     result["ok"] = healthy or bool(result["active_base_url"])
     result["message"] = health_msg if healthy else f"started but health check failed: {health_msg}"
+    if result.get("reachable"):
+        _attach_portal(result, force=force)
     return result
 
 
@@ -525,6 +553,8 @@ def _install_docker(result: dict[str, Any], *, force: bool, pull: bool, wait_tim
     )
     result["ok"] = healthy or bool(result["active_base_url"])
     result["message"] = health_msg if healthy else f"deployed but health check failed: {health_msg}"
+    if result.get("reachable"):
+        _attach_portal(result, force=force)
     return result
 
 
@@ -574,6 +604,7 @@ def install_60s_local(
         result["native_running"] = native_process_running()
         result["container_running"] = container_running()
         result["message"] = f"local 60s already healthy at {LOCAL_BASE_URL}"
+        _attach_portal(result, force=force)
         return result
 
     if mode == "native":
@@ -616,6 +647,7 @@ def status_60s() -> dict[str, Any]:
     local_ok = resolve_local_base_url([LOCAL_BASE_URL]) == LOCAL_BASE_URL
 
     ok_node, node_msg = node_version_ok()
+    from agent_reach.daily_run.hot_news_portal import PORTAL_PORT, portal_running
 
     return {
         "deploy_mode": deploy.get("mode", "native"),
@@ -630,9 +662,12 @@ def status_60s() -> dict[str, Any]:
         "container_name": CONTAINER_NAME,
         "container_running": container_running(),
         "local_base_url": LOCAL_BASE_URL,
+        "web_url": f"http://127.0.0.1:{PORTAL_PORT}",
+        "portal_running": portal_running(),
         "local_reachable": local_ok,
         "active_base_url": active,
         "using_public_fallback": active == "https://60s.viki.moe" and not local_ok,
         "base_urls": base_urls,
         "platforms": hot.get("platforms"),
+        "note": "Open web_url for readable dashboard; local_base_url root returns API JSON by design.",
     }
