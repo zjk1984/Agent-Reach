@@ -40,7 +40,8 @@ before=""
 after=""
 if echo "$existing" | grep -qF "$MARKER_BEGIN"; then
   before="$(echo "$existing" | sed "/${MARKER_BEGIN}/,/${MARKER_END}/d" | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}')"
-  after=""
+else
+  before="$(echo "$existing" | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}')"
 fi
 
 new_crontab="$before"
