@@ -52,11 +52,20 @@ def snapshot(portfolio):
 
 
 @pytest.fixture
-def settings_enabled():
+def settings_enabled(monkeypatch):
     s = load_settings()
     s.setdefault("portfolio", {})
     s["portfolio"]["auto_adjust_enabled"] = True
     s["portfolio"]["max_holdings"] = 10
+    s.setdefault("harness_runtime", {})
+    s["harness_runtime"]["position_policy"] = {
+        "deploy_ratio": 1.0,
+        "max_position_pct": 100.0,
+    }
+    monkeypatch.setattr(
+        "agent_reach.daily_run.portfolio_manager.effective_settings",
+        lambda settings=None: settings if settings is not None else s,
+    )
     return s
 
 

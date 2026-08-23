@@ -1,6 +1,8 @@
 # -*- coding: utf-8
 """Tests for finance research, study registry, branch overlay, narrative extensions."""
 
+from datetime import date, timedelta
+
 import json
 import pytest
 
@@ -42,6 +44,12 @@ def harness_tmp(monkeypatch, tmp_path):
     monkeypatch.setattr("agent_reach.daily_run.harness_snapshot.harness_dir", lambda: branch_dir)
     monkeypatch.setattr("agent_reach.daily_run.harness_snapshot._state_path", lambda: branch_dir / "harness_state.json")
     return branch_dir
+
+
+def _current_week_window() -> tuple[str, str]:
+    end = date.today()
+    start = end - timedelta(days=6)
+    return start.isoformat(), end.isoformat()
 
 
 WEEKLY = {
@@ -152,9 +160,10 @@ class TestWeeklyNarrativeExtensions:
                 "best_params": {"macro_veto": 40, "aggressive_entry": 55},
             },
         )
+        week_start, week_end = _current_week_window()
         narrative = build_weekly_harness_narrative(
-            week_start="2026-08-11",
-            week_end="2026-08-18",
+            week_start=week_start,
+            week_end=week_end,
         )
         assert narrative["audit_events"] >= 1
         assert narrative["finance_jobs"] >= 1

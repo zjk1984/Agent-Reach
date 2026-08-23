@@ -1,6 +1,8 @@
 # -*- coding: utf-8
 """Snapshot-style regression tests for weekly skill writeback blocks."""
 
+from unittest.mock import patch
+
 from agent_reach.daily_run.skill_improvements_apply import build_next_week_playbook_block
 from agent_reach.daily_run.skill_writeback import build_weekly_experience_block
 
@@ -29,7 +31,8 @@ SAMPLE_REPORT = {
 
 
 class TestSkillWritebackSnapshots:
-    def test_experience_block_snapshot_lines(self):
+    @patch("agent_reach.daily_run.skill_writeback._load_rules_summary", return_value=[])
+    def test_experience_block_snapshot_lines(self, _mock_rules):
         block = build_weekly_experience_block(SAMPLE_REPORT)
         assert "### 📅 2026-08-10 ~ 2026-08-14 周复盘（周六自动沉淀）" in block
         assert "**情况说明：**" in block

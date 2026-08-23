@@ -1,5 +1,7 @@
-# -*- coding: utf-8
+# -*- coding: utf-8 -*-
 """Tests for expert_consensus weekly rollup and MSS close path."""
+
+from datetime import date, timedelta
 
 import pytest
 
@@ -22,6 +24,12 @@ def harness_tmp(monkeypatch, tmp_path):
     monkeypatch.setattr("agent_reach.daily_run.harness_snapshot.harness_dir", lambda: hdir)
     monkeypatch.setattr("agent_reach.daily_run.harness_snapshot._state_path", lambda: hdir / "harness_state.json")
     return hdir
+
+
+def _current_week_window() -> tuple[str, str]:
+    end = date.today()
+    start = end - timedelta(days=6)
+    return start.isoformat(), end.isoformat()
 
 
 def _mss_snapshot() -> dict:
@@ -103,7 +111,8 @@ class TestExpertConsensusWeekly:
                 ]
             },
         )
-        report = {"week_start": "2026-08-11", "week_end": "2026-08-18"}
+        week_start, week_end = _current_week_window()
+        report = {"week_start": week_start, "week_end": week_end}
         result = apply_expert_consensus_weekly_harness_refinement(
             report,
             settings={
@@ -122,8 +131,9 @@ class TestExpertConsensusWeekly:
             changes=1,
             gate={"verification_signals": ["expert_mss_drift", "expert_workflow_close"]},
         )
+        week_start, week_end = _current_week_window()
         report = run_weekly_harness_refinements(
-            {"week_start": "2026-08-11", "week_end": "2026-08-18", "weekly_pnl_pct": 0.5},
+            {"week_start": week_start, "week_end": week_end, "weekly_pnl_pct": 0.5},
             settings={
                 "expert_consensus": {"enabled": True},
                 "harness": {
@@ -151,9 +161,10 @@ class TestExpertConsensusWeekly:
             gate={"verification_signals": ["expert_conflicts", "expert_mss_drift"]},
         )
         record_apply_audit(job="expert_consensus_weekly", changes=3)
+        week_start, week_end = _current_week_window()
         narrative = build_weekly_harness_narrative(
-            week_start="2026-08-11",
-            week_end="2026-08-18",
+            week_start=week_start,
+            week_end=week_end,
         )
         assert narrative["expert_consensus_runs"] >= 1
         assert narrative["expert_conflict_sessions"] >= 1

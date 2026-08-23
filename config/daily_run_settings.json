@@ -97,8 +97,6 @@
     "large_unrealized_loss_pct": 10,
     "deep_loss_sell_require_cover": true,
     "deep_loss_cover_ratio": 1.0,
-    "deep_loss_sell_ratio": 1.0,
-    "non_deep_loss_sell_ratio": 1.0,
     "deep_loss_tier_multiplier": 2.0,
     "portfolio_loss_cny_threshold": 5000,
     "coverable_realized_weight": 1.0,
