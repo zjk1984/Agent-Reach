@@ -7,8 +7,10 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
 from agent_reach.daily_run.run_manifest import StepTimer, save_run_manifest
 
@@ -22,6 +24,8 @@ except ImportError:  # pragma: no cover
 
 MARKER_BEGIN = "# agent-reach daily-run schedule BEGIN"
 MARKER_END = "# agent-reach daily-run schedule END"
+BOOT_CATCHUP_SLEEP_SECONDS = 60
+_SH_TZ = ZoneInfo("Asia/Shanghai")
 
 # 15 scans/day: S1 premarket 07:00 + S2 morning 08:00 + S3 09:00 + S4–S15 session (no 08:30 slot)
 INTRADAY_SCAN_TIMES: list[tuple[str, str]] = [
@@ -72,6 +76,62 @@ def local_cron_script() -> Path:
     return Path(__file__).resolve().parents[2] / "scripts" / "daily-run-local-cron.sh"
 
 
+def boot_catchup_script() -> Path:
+    """Absolute path to scripts/daily-run-boot-catchup.sh (repo root)."""
+    return Path(__file__).resolve().parents[2] / "scripts" / "daily-run-boot-catchup.sh"
+
+
+def has_premarket_s1_today() -> bool:
+    """True when today's intraday state already contains scan S1."""
+    from agent_reach.daily_run.intraday import load_state
+    from agent_reach.daily_run.trade_calendar import today_shanghai
+
+    st = load_state()
+    if st.date != today_shanghai().isoformat():
+        return False
+    return any(str(s.get("scan_id") or "") == "S1" for s in st.scans)
+
+
+def needs_premarket_catchup(
+    *,
+    now: Optional[datetime] = None,
+    settings: Optional[dict[str, Any]] = None,
+) -> tuple[bool, str]:
+    """Return (should_run, reason) for late-boot S1 catch-up (07:00–07:59 Shanghai)."""
+    sh_now = now or datetime.now(_SH_TZ)
+    if sh_now.tzinfo is None:
+        sh_now = sh_now.replace(tzinfo=_SH_TZ)
+    else:
+        sh_now = sh_now.astimezone(_SH_TZ)
+
+    if sh_now.hour != 7:
+        return False, f"outside catchup window (hour={sh_now.hour})"
+
+    from agent_reach.daily_run.settings import load_settings
+    from agent_reach.daily_run.trade_calendar import is_trading_day
+
+    cfg = settings or load_settings()
+    trading_ok, trading_reason = is_trading_day(settings=cfg)
+    if not trading_ok:
+        return False, trading_reason
+
+    if has_premarket_s1_today():
+        return False, "S1 already recorded"
+
+    return True, "late boot before 08:00 morning"
+
+
+def run_boot_catchup(*, push: bool = True, config=None) -> dict[str, Any]:
+    """Run intraday S1 when cron 07:00 was missed due to late boot."""
+    should_run, reason = needs_premarket_catchup()
+    if not should_run:
+        logger.info("daily-run boot catchup skipped: {}", reason)
+        return {"catchup": False, "reason": reason}
+    logger.info("daily-run boot catchup running intraday: {}", reason)
+    result = run_scheduled("intraday", push=push, config=config)
+    return {"catchup": True, "reason": reason, "result": result}
+
+
 def _cron_run_cmd(job: str) -> str:
     """Cron-safe command: prefer local wrapper script over bare CLI name."""
     script = local_cron_script()
@@ -120,6 +180,13 @@ def render_crontab_block(entries: Optional[list[CronEntry]] = None) -> str:
     ]
     if script.is_file():
         lines.append(f"# wrapper: {script}")
+    catchup = boot_catchup_script()
+    if catchup.is_file():
+        lines.append(f"# boot catchup log: ~/.agent-reach/daily_run/logs/boot-catchup-YYYY-MM-DD.log")
+        lines.append(
+            f"@reboot sleep {BOOT_CATCHUP_SLEEP_SECONDS} && {catchup}  "
+            f"# daily-run S1 catchup after late boot"
+        )
     for e in entries:
         lines.append(e.line())
     lines.append(MARKER_END)
@@ -134,6 +201,9 @@ def install_crontab(entries: Optional[list[CronEntry]] = None, *, dry_run: bool 
     script = local_cron_script()
     if script.is_file():
         script.chmod(script.stat().st_mode | 0o111)
+    catchup = boot_catchup_script()
+    if catchup.is_file():
+        catchup.chmod(catchup.stat().st_mode | 0o111)
 
     crontab_bin = shutil_which("crontab")
     if not crontab_bin:

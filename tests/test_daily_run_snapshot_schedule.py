@@ -326,6 +326,8 @@ class TestSchedule:
         assert "0 18 * * 1-5" in block
         assert "daily-run-local-cron.sh midday" in block
         assert "S15/16" in block
+        assert "daily-run-boot-catchup.sh" in block
+        assert "@reboot sleep" in block
         assert block.count("daily-run-local-cron.sh intraday") == 14
 
     def test_default_entries_count(self):
@@ -492,3 +494,42 @@ class TestRunManifest:
         path = save_run_manifest("morning", {"job": "morning"})
         assert path.parent.name == "2026-07-11"
         assert path.name.startswith("morning_0730")
+
+
+class TestBootCatchup:
+    def test_needs_premarket_catchup_outside_window(self):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        from agent_reach.daily_run.schedule import needs_premarket_catchup
+
+        sh = ZoneInfo("Asia/Shanghai")
+        ok, reason = needs_premarket_catchup(now=datetime(2026, 8, 24, 8, 5, tzinfo=sh))
+        assert ok is False
+        assert "outside catchup window" in reason
+
+    @patch("agent_reach.daily_run.schedule.has_premarket_s1_today", return_value=False)
+    @patch("agent_reach.daily_run.trade_calendar.is_trading_day", return_value=(True, "akshare_calendar"))
+    def test_needs_premarket_catchup_during_window(self, _trading, _s1):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        from agent_reach.daily_run.schedule import needs_premarket_catchup
+
+        sh = ZoneInfo("Asia/Shanghai")
+        ok, reason = needs_premarket_catchup(now=datetime(2026, 8, 24, 7, 12, tzinfo=sh))
+        assert ok is True
+        assert reason == "late boot before 08:00 morning"
+
+    @patch("agent_reach.daily_run.schedule.has_premarket_s1_today", return_value=True)
+    @patch("agent_reach.daily_run.trade_calendar.is_trading_day", return_value=(True, "akshare_calendar"))
+    def test_needs_premarket_catchup_skips_when_s1_exists(self, _trading, _s1):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        from agent_reach.daily_run.schedule import needs_premarket_catchup
+
+        sh = ZoneInfo("Asia/Shanghai")
+        ok, reason = needs_premarket_catchup(now=datetime(2026, 8, 24, 7, 12, tzinfo=sh))
+        assert ok is False
+        assert reason == "S1 already recorded"

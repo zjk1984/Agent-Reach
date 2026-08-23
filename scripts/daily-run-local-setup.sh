@@ -61,6 +61,7 @@ if command -v mcporter >/dev/null 2>&1 && [ -f "${REPO_ROOT}/config/mcporter.jso
 fi
 
 chmod +x "${REPO_ROOT}/scripts/daily-run-local-cron.sh"
+chmod +x "${REPO_ROOT}/scripts/daily-run-boot-catchup.sh"
 chmod +x "${REPO_ROOT}/scripts/60s-local-setup.sh"
 chmod +x "${REPO_ROOT}/scripts/60s-reboot-start.sh"
 chmod +x "${REPO_ROOT}/scripts/enable-team-first.sh"

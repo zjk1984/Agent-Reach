@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Scheduled power-off with RTC wake for the next session window.
-# Boot times (06:40 / 08:00 / 12:40) are set via rtcwake when shutting down.
+# Boot times (06:25 / 08:00 / 12:40) are set via rtcwake when shutting down.
 #
 # Slots (Asia/Shanghai):
 #   lunch     Mon–Fri 12:00 off → wake 12:40 same day
 #   midnight  Every day 00:00 off →
-#             Mon 00:00 (end Sun)   → wake Mon 06:40
-#             Tue–Fri 00:00         → wake same day 06:40 (end Mon–Thu)
+#             Mon 00:00 (end Sun)   → wake Mon 06:25
+#             Tue–Fri 00:00         → wake same day 06:25 (end Mon–Thu)
 #             Sat 00:00 (end Fri)   → wake Sat 08:00
 #             Sun 00:00 (end Sat)   → wake Sun 08:00
 #
@@ -42,8 +42,8 @@ case "$SLOT" in
   midnight)
     DOW="$(date +%u)"
     case "$DOW" in
-      1) WAKE="$(date -d 'today 06:40' '+%Y-%m-%d %H:%M:%S')" ;;
-      2|3|4|5) WAKE="$(date -d 'today 06:40' '+%Y-%m-%d %H:%M:%S')" ;;
+      1) WAKE="$(date -d 'today 06:25' '+%Y-%m-%d %H:%M:%S')" ;;
+      2|3|4|5) WAKE="$(date -d 'today 06:25' '+%Y-%m-%d %H:%M:%S')" ;;
       6|7) WAKE="$(date -d 'today 08:00' '+%Y-%m-%d %H:%M:%S')" ;;
       *)
         log "midnight unexpected dow=$DOW — skip"
