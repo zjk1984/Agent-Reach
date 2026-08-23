@@ -551,6 +551,7 @@ def generate_week_forecast(
         settings=settings,
         enrich_extras=not reuse_digest,
     )
+    live_macro_fetch = bool(macro_signals)
     if not macro_signals:
         cached = snapshot.get("macro_signals")
         if isinstance(cached, dict) and cached:
@@ -574,7 +575,11 @@ def generate_week_forecast(
 
     from agent_reach.daily_run.xueqiu_cookie_health import check_xueqiu_cookie_health
 
-    xueqiu_health = check_xueqiu_cookie_health(macro_signals=macro_signals)
+    xueqiu_health = check_xueqiu_cookie_health(
+        macro_signals=macro_signals,
+        settings=settings,
+        live_macro_fetch=live_macro_fetch,
+    )
     if xueqiu_health.get("status") != "ok":
         notes.append(f"雪球 Cookie {xueqiu_health.get('status')}：{xueqiu_health.get('message', '')}")
 

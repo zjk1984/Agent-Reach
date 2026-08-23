@@ -233,6 +233,7 @@ def render_weekly_push_sections(report) -> list[ReportSection]:
 
 
 _FORECAST_CATEGORY_MAP = {
+    "Cookie预警": "xueqiu_cookie",
     "规则解读": "forecast_narrative",
     "MSS预测": "forecast_mss",
     "个股路径": "forecast_symbols",

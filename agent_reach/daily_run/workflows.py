@@ -1739,7 +1739,14 @@ def run_forecast(
     if wf_cfg.get("enabled", True) is False:
         return {"steps": ["skipped"], "message": "week_forecast disabled", "feishu": None}
 
-    steps: list[str] = ["generate"]
+    from agent_reach.daily_run.xueqiu_cookie_health import refresh_xueqiu_cookie_from_browser
+
+    cookie_refresh = refresh_xueqiu_cookie_from_browser(settings=cfg, config=config)
+    steps: list[str] = []
+    if not cookie_refresh.get("skipped"):
+        steps.append("xueqiu_cookie_refresh")
+
+    steps.append("generate")
     forecast = generate_week_forecast(snapshot, cfg, portfolio=portfolio)
     path = persist_week_forecast(forecast)
     steps.append("persist")
@@ -1822,6 +1829,7 @@ def run_forecast(
 
     return {
         "steps": steps,
+        "xueqiu_cookie_refresh": cookie_refresh,
         "forecast": forecast.to_dict(),
         "forecast_path": str(path),
         "harness": harness_result,
