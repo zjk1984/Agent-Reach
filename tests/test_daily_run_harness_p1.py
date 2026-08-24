@@ -10,6 +10,10 @@ from agent_reach.daily_run.experience_harness import (
     experience_to_harness_evidence,
 )
 from agent_reach.daily_run.intraday_harness import intraday_to_harness_evidence
+from agent_reach.daily_run.midday_harness import (
+    apply_midday_harness_refinement,
+    midday_to_harness_evidence,
+)
 from agent_reach.daily_run.morning_harness import morning_to_harness_evidence
 from agent_reach.daily_run.run_guard_harness import (
     apply_run_guard_harness_refinement,
@@ -60,6 +64,38 @@ def test_intraday_sparse_scans():
         }
     )
     assert any("扫描偏少" in m for m in ev["memory"])
+
+
+def test_midday_evidence_flags_audit_failure_and_baseline_swing():
+    ev = midday_to_harness_evidence(
+        {
+            "scan": {"scan_id": "S10", "name": "澜起", "mss_final": 70, "verdict": "可做"},
+            "scan_result": {
+                "trend": "turning_up",
+                "lookback_mss": 65.0,
+                "xueqiu_cross": {},
+                "enriched": {"macro_summary": "北向大幅流入"},
+            },
+            "evaluation": {
+                "audit": type("A", (), {"passed": False, "issues": ["quote missing"], "warnings": []})(),
+            },
+        }
+    )
+    assert any("审计未通过" in m for m in ev["memory"])
+    assert any("拐点" in p for p in ev["playbook"])
+
+
+def test_midday_evidence_empty_when_skipped():
+    ev = midday_to_harness_evidence({"skipped": True, "message": "midday disabled"})
+    assert ev["memory"] == ["midday skipped：midday disabled"]
+    assert ev["policy"] == []
+    assert ev["playbook"] == []
+
+
+def test_apply_midday_harness_refinement_skips_on_empty_evidence(monkeypatch):
+    result = apply_midday_harness_refinement({"skipped": True, "message": ""}, settings={})
+    assert result["skipped"] is True
+    assert result["job"] == "midday"
 
 
 def test_run_guard_dedupe_event():

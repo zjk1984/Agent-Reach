@@ -356,7 +356,7 @@ def _apply_scheduled_job_harness(
     push: bool = False,
     config=None,
 ) -> None:
-    """Post-schedule harness for intraday only; morning is handled inside run_morning()."""
+    """Post-schedule harness for intraday/midday only; morning is handled inside run_morning()."""
     if job == "morning":
         return
     try:
@@ -380,6 +380,30 @@ def _apply_scheduled_job_harness(
                     steps = push_scheduled_harness_card(
                         job="intraday",
                         harness_result={"intraday": harness_ref},
+                        settings=settings,
+                        config=config,
+                        push=push,
+                        harness_errors=result.get("harness_errors"),
+                    )
+                    if steps:
+                        result.setdefault("harness_followup_steps", []).extend(steps)
+        elif job == "midday":
+            from agent_reach.daily_run.midday_harness import apply_midday_harness_refinement
+
+            run_result = result.get("result") if not result.get("skipped") else result
+            harness_ref = (
+                apply_midday_harness_refinement(run_result, settings=settings)
+                if run_result
+                else {"skipped": True, "reason": "empty midday result"}
+            )
+            if harness_ref:
+                result["harness_midday"] = harness_ref
+                if push and config is not None:
+                    from agent_reach.daily_run.workflows import push_scheduled_harness_card
+
+                    steps = push_scheduled_harness_card(
+                        job="midday",
+                        harness_result={"midday": harness_ref},
                         settings=settings,
                         config=config,
                         push=push,
@@ -490,13 +514,26 @@ def _run_job_body(
 
     _maybe_send_scheduled_start_notification(job, push=push, config=config, settings=settings)
 
-    per_symbol = job in ("morning", "intraday", "close") and _uses_per_symbol_jobs(settings)
+    per_symbol = job in ("morning", "midday", "intraday", "close") and _uses_per_symbol_jobs(settings)
 
     if per_symbol and job == "morning":
         from agent_reach.daily_run.symbol_runner import run_morning_for_symbols
 
         with StepTimer("schedule.morning"):
             result = run_morning_for_symbols(
+                settings=settings,
+                push=push,
+                config=config,
+                doctor_channels=doctor,
+            )
+            feishu = result.get("feishu")
+        return result, feishu
+
+    if per_symbol and job == "midday":
+        from agent_reach.daily_run.symbol_runner import run_midday_for_symbols
+
+        with StepTimer("schedule.midday"):
+            result = run_midday_for_symbols(
                 settings=settings,
                 push=push,
                 config=config,

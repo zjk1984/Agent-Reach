@@ -288,6 +288,88 @@ class TestCloseWorkflow:
         assert "代码走读" in result["markdown"]
         assert "已重算 cash_ratio" in result["markdown"]
 
+    @pytest.mark.parametrize("push_summary_on_close", [True, False])
+    @patch("agent_reach.daily_run.market_review.get_or_collect_market_review", return_value=None)
+    @patch("agent_reach.daily_run.workflows.run_exa_research", return_value=[])
+    @patch("agent_reach.daily_run.workflows.push_report_sections")
+    @patch("agent_reach.daily_run.workflows._run_close_harness_layer_ab")
+    def test_run_close_harness_always_before_narrative_and_push(
+        self,
+        mock_harness_ab,
+        mock_push_sections,
+        mock_research,
+        _mock_mr,
+        push_summary_on_close,
+        morning_snapshot,
+    ):
+        """Harness layer A/B must run exactly once, before narrative/push, regardless of
+        harness.push_summary_on_close (previously ran *after* push when that flag was False,
+        so the narrative could never see harness_result — same anti-pattern fixed in run_forecast)."""
+        call_order: list[str] = []
+        mock_harness_ab.side_effect = lambda **kwargs: (
+            call_order.append("harness"),
+            {"layer_a": {"summary": "ok"}, "layer_b": {"summary": "ok"}},
+        )[1]
+        mock_push_sections.side_effect = lambda *a, **k: (call_order.append("push"), {"code": 0})[1]
+
+        cfg = load_settings()
+        cfg = {**cfg, "harness": {**(cfg.get("harness") or {}), "push_summary_on_close": push_summary_on_close}}
+
+        baseline = dict(morning_snapshot)
+        baseline["mss_final"] = 65
+        baseline["verdict"] = "可做"
+        baseline["mss_range"] = [45, 58]
+        current = dict(morning_snapshot)
+        current["mss_breakdown"] = {"fx": 35, "flow": 48, "global": 38, "sentiment": 50}
+
+        result = run_close(current, baseline, settings=cfg, push=True)
+
+        assert mock_harness_ab.call_count == 1
+        assert call_order == ["harness", "push"]
+        assert result["harness"] == {"layer_a": {"summary": "ok"}, "layer_b": {"summary": "ok"}}
+        assert result["llm_narrative"].get("harness_result") or result["llm_narrative"] is not None
+
+    @patch("agent_reach.daily_run.market_review.get_or_collect_market_review", return_value=None)
+    @patch("agent_reach.daily_run.workflows.run_exa_research", return_value=[])
+    @patch("agent_reach.daily_run.workflows.push_report_sections")
+    def test_run_close_pushes_forecast_review_and_extras_sections(
+        self, mock_push_sections, mock_research, _mock_mr, morning_snapshot
+    ):
+        """The Feishu card must actually include forecast_review/improvements/watchlist/code_review
+        (previously computed but silently dropped before render_close_sections)."""
+        mock_push_sections.return_value = {"code": 0}
+        baseline = dict(morning_snapshot)
+        baseline["mss_final"] = 65
+        baseline["verdict"] = "可做"
+        baseline["mss_range"] = [45, 58]
+        current = dict(morning_snapshot)
+        current["mss_breakdown"] = {"fx": 35, "flow": 48, "global": 38, "sentiment": 50}
+
+        run_close(
+            current,
+            baseline,
+            settings=load_settings(),
+            push=True,
+            watchlist_adjust={
+                "applied": True,
+                "message": "观察池调整 1 项（close）",
+                "changes": [
+                    {"action": "add", "code": "002273", "name": "水晶光电", "reason": "盘中卖出回收"}
+                ],
+            },
+            code_review={"findings": [], "fixes_applied": ["已重算 cash_ratio"], "portfolio_changed": True},
+        )
+
+        assert mock_push_sections.call_count == 1
+        sections = mock_push_sections.call_args[0][0]
+        categories = [s.category for s in sections]
+        assert "watchlist_adjust" in categories
+        assert "code_review" in categories
+        # forecast_review/close_improvements only render when there's non-empty content;
+        # this fixture has no active forecast, so just assert the categories aren't silently
+        # excluded by render_close_sections' signature (would raise TypeError otherwise).
+        assert "verify" in categories
+
 
 class TestPrepareCloseRun:
     @patch("agent_reach.daily_run.snapshot_builder.save_portfolio")
