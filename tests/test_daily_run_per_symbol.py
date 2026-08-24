@@ -7,7 +7,7 @@ from agent_reach.daily_run.settings import load_settings
 from agent_reach.daily_run.snapshot_builder import build_snapshot
 from agent_reach.daily_run.symbols import list_target_symbols, resolve_target_symbols
 from agent_reach.daily_run.report_push import ReportSection, merge_sections_by_category
-from agent_reach.daily_run.symbol_runner import run_morning_for_symbols
+from agent_reach.daily_run.symbol_runner import run_midday_for_symbols, run_morning_for_symbols
 from agent_reach.daily_run.workflows import load_morning_baseline, save_morning_baseline
 
 
@@ -218,6 +218,80 @@ class TestSymbolRunner:
         result = run_morning_for_symbols(settings=cfg, push=False, symbols=["688008", "002273"])
         assert len(result["symbol_results"]) == 2
         assert mock_run.call_count == 2
+
+    @patch("agent_reach.daily_run.intraday.load_state")
+    @patch("agent_reach.daily_run.midday.run_midday")
+    @patch("agent_reach.daily_run.symbol_runner.build_and_save")
+    @patch("agent_reach.daily_run.symbol_runner.load_portfolio")
+    def test_run_midday_for_symbols_per_symbol_push(
+        self, mock_pf, mock_build, mock_run, mock_load_state, tmp_path
+    ):
+        from agent_reach.daily_run.intraday import IntradayState
+
+        mock_pf.return_value = PORTFOLIO
+        mock_load_state.return_value = IntradayState(date="2026-08-18")
+        mock_build.side_effect = [
+            ({"code": "688008", "name": "澜起科技"}, tmp_path / "a.json"),
+            ({"code": "002273", "name": "水晶光电"}, tmp_path / "b.json"),
+        ]
+        mock_run.side_effect = [
+            {"scan": {"scan_id": "S10", "code": "688008"}, "markdown": "md1", "feishu": {"ok": 1}},
+            {"scan": {"scan_id": "S10", "code": "002273"}, "markdown": "md2", "feishu": {"ok": 2}},
+        ]
+        cfg = load_settings()
+        cfg = {
+            **cfg,
+            "schedule": {
+                **(cfg.get("schedule") or {}),
+                "symbols_mode": "holdings",
+                "symbol_push_mode": "per_symbol",
+            },
+            "midday": {**(cfg.get("midday") or {}), "enabled": True},
+        }
+        result = run_midday_for_symbols(settings=cfg, push=True, symbols=["688008", "002273"])
+        assert len(result["symbol_results"]) == 2
+        assert mock_run.call_count == 2
+        # per_symbol push mode: run_midday itself pushes each card, not the merged path
+        for call in mock_run.call_args_list:
+            assert call.kwargs.get("push") is True
+
+    @patch("agent_reach.daily_run.intraday.load_state")
+    @patch("agent_reach.daily_run.midday.run_midday")
+    @patch("agent_reach.daily_run.symbol_runner.build_and_save")
+    @patch("agent_reach.daily_run.symbol_runner.load_portfolio")
+    def test_run_midday_for_symbols_merge_by_category(
+        self, mock_pf, mock_build, mock_run, mock_load_state, tmp_path
+    ):
+        from agent_reach.daily_run.intraday import IntradayState
+
+        mock_pf.return_value = PORTFOLIO
+        mock_load_state.return_value = IntradayState(date="2026-08-18")
+        mock_build.side_effect = [
+            ({"code": "688008", "name": "澜起科技"}, tmp_path / "a.json"),
+            ({"code": "002273", "name": "水晶光电"}, tmp_path / "b.json"),
+        ]
+        mock_run.side_effect = [
+            {"scan": {"scan_id": "S10", "code": "688008"}, "markdown": "md1", "feishu": None},
+            {"scan": {"scan_id": "S10", "code": "002273"}, "markdown": "md2", "feishu": None},
+        ]
+        cfg = load_settings()
+        cfg = {
+            **cfg,
+            "schedule": {
+                **(cfg.get("schedule") or {}),
+                "symbols_mode": "holdings",
+                "symbol_push_mode": "merge_by_category",
+            },
+            "midday": {**(cfg.get("midday") or {}), "enabled": True},
+        }
+        with patch("agent_reach.integrations.feishu.send_card", return_value={"code": 0}) as mock_send_card:
+            result = run_midday_for_symbols(settings=cfg, push=True, symbols=["688008", "002273"])
+        assert mock_send_card.call_count == 1
+        merged_body = mock_send_card.call_args[0][2]
+        assert "md1" in merged_body and "md2" in merged_body
+        for call in mock_run.call_args_list:
+            assert call.kwargs.get("push") is False
+        assert result["feishu"] == {"code": 0}
 
     @patch("agent_reach.daily_run.report_narrative.generate_merged_morning_narrative")
     @patch("agent_reach.daily_run.report_push.push_report_sections", return_value={"mode": "split"})

@@ -288,6 +288,18 @@ def run_midday(
     markdown = render_midday_markdown(scan_result, settings=cfg, narrative=narrative)
     steps.append("render")
 
+    # Midday never blocks (it's a light-touch check-in, unlike morning's hard
+    # fail / close's push-block), but readers should still see the same audit
+    # warning banner intraday scans already show.
+    audit = evaluation.get("audit")
+    if audit is not None and (not audit.passed or audit.warnings):
+        warn_lines = ["**⚠️ 数据审计提示**"]
+        if not audit.passed:
+            warn_lines.append("；".join(audit.issues))
+        for w in audit.warnings:
+            warn_lines.append(f"- {w}")
+        markdown = "\n".join(warn_lines) + "\n\n---\n\n" + markdown
+
     feishu_result = None
     push_error: Optional[str] = None
     if push:

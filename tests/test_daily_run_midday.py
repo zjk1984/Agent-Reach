@@ -83,6 +83,36 @@ def test_run_midday_records_source_midday(mock_eval, mock_record, _mock_macro):
     assert "午盘分析" in result["markdown"]
 
 
+@patch("agent_reach.daily_run.midday.apply_midday_macro_refresh", side_effect=lambda s, **_: s)
+@patch("agent_reach.daily_run.intraday.record_scan_from_evaluation")
+@patch("agent_reach.daily_run.midday.evaluate_snapshot")
+def test_run_midday_shows_audit_warning_without_blocking(mock_eval, mock_record, _mock_macro):
+    """Midday must surface audit failures (like intraday does) instead of pushing silently,
+    but unlike morning it must not raise/block the job."""
+    mock_eval.return_value = {
+        "audit": type("A", (), {"passed": False, "warnings": ["行情覆盖率不足"], "issues": ["quote missing"]})(),
+        "report": {"verdict": "观察", "mss_final": 44, "reasoning": "午后宜观望"},
+        "gate": type("G", (), {"passed": True, "downgraded": False, "missing_fields": []})(),
+        "verdict": type("V", (), {"verdict": "观察"})(),
+    }
+    mock_record.return_value = {
+        "scan": {"scan_id": "S10", "mss_final": 44, "verdict": "观察", "source": "midday"},
+        "state": {"scans": [{"scan_id": "S10", "source": "midday"}]},
+        "lookback_mss": 43.5,
+        "lookback_detail": [{"scan_id": "S10", "mss_final": 44, "weight": 1.0, "weighted": 44}],
+        "trend": "flat",
+        "xueqiu_cross": {},
+    }
+    result = run_midday(
+        {"code": "688008", "name": "澜起", "portfolio": {}},
+        settings={"midday": {"enabled": True}},
+        push=False,
+    )
+    assert "数据审计提示" in result["markdown"]
+    assert "行情覆盖率不足" in result["markdown"]
+    assert "quote missing" in result["markdown"]
+
+
 def test_render_midday_markdown_sections():
     md = render_midday_markdown(
         {

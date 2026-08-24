@@ -4,6 +4,7 @@
 from unittest.mock import patch
 
 from agent_reach.daily_run.report_push import (
+    close_sections_from_run,
     push_report_sections,
     render_close_sections,
     render_morning_sections,
@@ -43,6 +44,43 @@ class TestReportPush:
         )
         assert len(sections) == 1
         assert sections[0].category == "verify"
+
+    def test_render_close_sections_includes_forecast_review_and_improvements(self):
+        """forecast_review/improvements/watchlist/code_review must reach Feishu, not just CLI markdown."""
+        sections = render_close_sections(
+            verify_name="澜起",
+            verify_markdown="**验证**",
+            watchlist_adjust_markdown="**观察池调整内容**",
+            code_review_markdown="**代码走读内容**",
+            forecast_review_markdown="**预测回顾内容**",
+            close_improvements_markdown="**改进建议内容**",
+        )
+        categories = [s.category for s in sections]
+        assert "watchlist_adjust" in categories
+        assert "code_review" in categories
+        assert "forecast_review" in categories
+        assert "close_improvements" in categories
+        # research -> extras -> experience/verify ordering (mirrors run_close's combined markdown join order)
+        assert categories.index("watchlist_adjust") < categories.index("forecast_review")
+        assert categories.index("forecast_review") < categories.index("close_improvements")
+        assert categories.index("close_improvements") < categories.index("verify")
+
+    def test_close_sections_from_run_includes_forecast_review(self):
+        """Per-symbol merge path (close_sections_from_run) must also carry the new markdown fields."""
+        run_result = {
+            "snapshot": {"macro_signals": {}},
+            "verify_markdown": "**验证**",
+            "forecast_review_markdown": "**预测回顾**",
+            "close_improvements_markdown": "**改进建议**",
+            "watchlist_adjust_markdown": "**观察池调整**",
+            "code_review_markdown": "**代码走读**",
+        }
+        sections = close_sections_from_run(run_result, verify_name="澜起")
+        categories = [s.category for s in sections]
+        assert "forecast_review" in categories
+        assert "close_improvements" in categories
+        assert "watchlist_adjust" in categories
+        assert "code_review" in categories
 
     def test_split_push_enabled(self):
         cfg = {"report": {"split_push": True, "morning_split_push": False}}

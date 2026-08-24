@@ -400,6 +400,103 @@ def run_intraday_for_symbols(
     }
 
 
+def run_midday_for_symbols(
+    *,
+    settings: Optional[dict[str, Any]] = None,
+    push: bool = True,
+    config=None,
+    doctor_channels: Optional[dict[str, dict]] = None,
+    symbols: Optional[list[str]] = None,
+) -> dict[str, Any]:
+    """Per-symbol midday refresh (mirrors run_intraday_for_symbols: single merged card, no split sections)."""
+    from agent_reach.daily_run.intraday import default_state_path, load_state
+    from agent_reach.daily_run.midday import midday_cfg, run_midday
+    from agent_reach.daily_run.schedule import INTRADAY_MAX_SCANS
+
+    cfg = settings or load_settings()
+    if not midday_cfg(cfg)["enabled"]:
+        return {"job": "midday", "skipped": True, "reason": "midday disabled", "feishu": None}
+
+    pf = load_portfolio()
+    targets = symbols or resolve_target_symbols(pf, cfg, workflow="intraday")
+    merge_push = _should_merge_push(cfg)
+    symbol_results: list[dict[str, Any]] = []
+    body_rows: list[tuple[str, str]] = []
+    scan_id: Optional[str] = None
+    errors: list[str] = []
+
+    for i, code in enumerate(targets):
+        name = symbol_display_name(pf, code)
+        print(f"[daily-run] midday {i + 1}/{len(targets)} {code} {name}", flush=True)
+        try:
+            state = load_state(default_state_path(code), code=code)
+            if len(state.scans) >= INTRADAY_MAX_SCANS:
+                symbol_results.append(
+                    {
+                        "code": code,
+                        "name": name,
+                        "skipped": True,
+                        "reason": f"今日扫描已达 {INTRADAY_MAX_SCANS} 次上限",
+                    }
+                )
+                continue
+
+            snap, path = build_and_save(
+                report_type="midday",
+                config=config,
+                primary_code=code,
+                portfolio=pf,
+                enrich_level="quotes",
+            )
+            run_result = run_midday(
+                snap,
+                settings=cfg,
+                doctor_channels=doctor_channels,
+                push=push and not merge_push,
+                config=config,
+            )
+            body = str(run_result.get("markdown") or "").strip()
+            scan = run_result.get("scan") or {}
+            if scan.get("scan_id"):
+                scan_id = scan.get("scan_id")
+            if merge_push and body:
+                body_rows.append((name, body))
+            symbol_results.append(
+                {
+                    "code": code,
+                    "name": name,
+                    "snapshot_path": str(path),
+                    "result": run_result,
+                    "feishu": run_result.get("feishu"),
+                }
+            )
+        except Exception as exc:
+            errors.append(f"{code}: {exc}")
+
+    if errors and not symbol_results:
+        raise RuntimeError(errors[0])
+
+    feishu_result = None
+    if push and merge_push and body_rows:
+        from agent_reach.config import Config
+        from agent_reach.integrations.feishu import send_card
+
+        body = "\n\n---\n\n".join(f"## {name}\n\n{content}" for name, content in body_rows)
+        title = f"☀️ 午盘分析 · {scan_id or '—'} · {len(body_rows)}只"
+        tpl = cfg.get("report", {}).get("feishu_template_midday", "blue")
+        feishu_result = send_card(config or Config(), title, body, template=tpl)
+
+    return {
+        "job": "midday",
+        "symbol_push_mode": symbol_push_mode(cfg),
+        "symbols": targets,
+        "symbol_results": symbol_results,
+        "errors": errors,
+        "feishu": feishu_result
+        or next((r.get("feishu") for r in reversed(symbol_results) if r.get("feishu")), None),
+    }
+
+
 def run_close_for_symbols(
     *,
     settings: Optional[dict[str, Any]] = None,

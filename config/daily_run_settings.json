@@ -986,6 +986,7 @@
       "run_guard": true,
       "morning": true,
       "intraday": true,
+      "midday": true,
       "rejected_strategies": true,
       "skill_gates": true,
       "watchlist_adjust": true,
