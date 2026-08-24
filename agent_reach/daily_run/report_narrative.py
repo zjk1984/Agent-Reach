@@ -414,7 +414,7 @@ def _generate_narrative(
         out = deterministic_fn(context)
     else:
         out = _default_deterministic(context, job)
-    if job in ("close", "weekly") and isinstance(out, dict) and not out.get("skipped"):
+    if job in ("close", "weekly", "forecast") and isinstance(out, dict) and not out.get("skipped"):
         out = _attach_rule_interpretation_extras(out, context, settings=settings)
     out = _compact_narrative_payload(out, limits)
     out["skipped"] = False
@@ -1721,12 +1721,13 @@ def build_harness_evolution_summary(
     *,
     settings: Optional[dict[str, Any]] = None,
 ) -> Optional[dict[str, Any]]:
-    """Build harness parameter evolution summary for weekly 规则解读."""
-    if ctx.get("job") != "weekly":
+    """Build harness parameter evolution summary for weekly/forecast 规则解读."""
+    job = ctx.get("job")
+    if job not in ("weekly", "forecast"):
         return None
 
     harness_result = dict(ctx.get("harness_result") or {})
-    weekly_skills = harness_result.get("weekly_skills") or {}
+    weekly_skills = harness_result.get("weekly_skills") or harness_result.get("forecast_skills") or {}
     effective_overlay = ctx.get("effective_overlay") or weekly_skills.get("effective_overlay")
 
     overlay_lines = _collect_harness_overlay_evolution_lines(
@@ -2456,7 +2457,11 @@ def _week_direction(days: dict[str, Any]) -> str:
     return "flat"
 
 
-def build_forecast_context(forecast: dict[str, Any]) -> dict[str, Any]:
+def build_forecast_context(
+    forecast: dict[str, Any],
+    *,
+    harness_result: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
     from agent_reach.daily_run.xueqiu_hot_display import (
         portfolio_hot_post_summary,
         portfolio_hot_stock_summary,
@@ -2505,6 +2510,10 @@ def build_forecast_context(forecast: dict[str, Any]) -> dict[str, Any]:
         "portfolio_hot_stock_summary": portfolio_hot_stock_summary(macro_signals),
         "portfolio_hot_post_summary": portfolio_hot_post_summary(macro_signals),
         **supplements,
+        "harness_result": harness_result or forecast.get("harness") or forecast.get("harness_result"),
+        "effective_overlay": (
+            (harness_result or {}).get("forecast_skills") or {}
+        ).get("effective_overlay"),
     }
 
 
@@ -2553,8 +2562,9 @@ def generate_forecast_narrative(
     forecast: dict[str, Any],
     *,
     settings: Optional[dict[str, Any]] = None,
+    harness_result: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
-    context = build_forecast_context(forecast)
+    context = build_forecast_context(forecast, harness_result=harness_result)
     return _generate_narrative(
         "forecast",
         context,
