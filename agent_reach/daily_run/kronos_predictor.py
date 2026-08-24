@@ -13,6 +13,15 @@ from typing import Any, Optional
 
 from agent_reach.daily_run.akshare_adapter import AKShareError, normalize_symbol
 
+# torch's bundled MKL/OpenMP runtime can collide with numpy/pandas's own MKL
+# in the same process (both loaded by daily-run's other akshare/pandas-based
+# jobs), which intermittently segfaults with "OMP: Error #15" / MKL kernel
+# crashes. These must be set before torch is imported anywhere in this
+# process; harmless no-ops when torch's runtime isn't actually loaded.
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+
 
 class KronosError(RuntimeError):
     """Kronos prediction failed or dependencies missing."""
@@ -120,6 +129,9 @@ def get_kronos_predictor(settings: Optional[dict[str, Any]] = None) -> Any:
         )
 
     Kronos, KronosTokenizer, KronosPredictor = _import_kronos_classes(repo)
+    import torch
+
+    torch.set_num_threads(1)
     device = _resolve_device(cfg)
     tokenizer_id = str(cfg.get("tokenizer_model", "NeoQuasar/Kronos-Tokenizer-base"))
     model_id = str(cfg.get("predictor_model", "NeoQuasar/Kronos-small"))

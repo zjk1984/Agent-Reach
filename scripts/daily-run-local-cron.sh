@@ -25,6 +25,12 @@ esac
 export TZ="${TZ:-Asia/Shanghai}"
 # Cron redirects stdout to a file; unbuffered so progress appears in cron-YYYY-MM-DD.log
 export PYTHONUNBUFFERED=1
+# torch's bundled MKL/OpenMP runtime can collide with numpy/pandas's own MKL in
+# the same process (weekly/forecast jobs use both) and intermittently segfault.
+# Harmless no-ops on days/jobs that never import torch (kronos.enabled=false).
+export KMP_DUPLICATE_LIB_OK="${KMP_DUPLICATE_LIB_OK:-TRUE}"
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
+export MKL_NUM_THREADS="${MKL_NUM_THREADS:-1}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"

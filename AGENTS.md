@@ -37,3 +37,20 @@ Non-obvious environment notes:
   `python3 -m agent_reach.cli daily-run hot-news install` — requires Node.js 22.6+, git, npm.
   Optional Docker: `--mode docker`. Configure `hot_news.base_urls` in settings (default
   `http://127.0.0.1:8787` then `https://60s.viki.moe`).
+- **Kronos (Sunday forecast blend + close-day technical)**: `kronos.enabled=true` in
+  `~/.agent-reach/daily_run_settings.json` (this machine's user override, not the repo default,
+  which stays `false`) with `tokenizer_model`/`predictor_model` pointing at **local ModelScope**
+  snapshot dirs under `~/.agent-reach/models/modelscope/...` — `huggingface.co` and `github.com`
+  are **not reachable** from this box's network (only `pypi.org`/`hf-mirror.com` are), so
+  ModelScope + local paths is the only viable model source here; don't try to `git clone` from
+  GitHub or download from the bare HF Hub without the `hf-mirror.com` mirror.
+  `agent-reach[daily-run-kronos]` (torch CPU wheel + safetensors/huggingface_hub/einops) is
+  `pip install --break-system-packages`-ed into `~/.local` on this box (not part of the repo's
+  `dev` extra, since it's a large optional dependency); if a fresh session reports
+  `torch`/`huggingface_hub` missing via `is_kronos_runtime_available()`, reinstall with:
+  `python3 -m pip install --break-system-packages --index-url https://download.pytorch.org/whl/cpu
+  torch --extra-index-url https://pypi.org/simple safetensors huggingface_hub einops tqdm`.
+  `kronos_predictor.py` sets `KMP_DUPLICATE_LIB_OK=TRUE`/`OMP_NUM_THREADS=1`/`MKL_NUM_THREADS=1`
+  at import time (and `scripts/daily-run-local-cron.sh` sets the same before Python starts) to
+  avoid a rare torch-MKL/numpy-MKL segfault race observed when both run in one process; don't
+  remove these when touching that file/script.
