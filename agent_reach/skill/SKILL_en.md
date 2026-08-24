@@ -1,5 +1,6 @@
 ---
 name: agent-reach
+version: "1.5.0"
 description: >
   MUST USE when user wants to research/search/look up/find anything on the
   internet — e.g. "research this topic", "do a deep dive on X", "search the
@@ -16,10 +17,25 @@ description: >
   NOT for: writing reports/analysis/translation (this skill only FETCHES
   internet content); posting/commenting/liking (write operations); platforms
   that already have a dedicated skill installed (prefer that skill).
+allowed-tools: Bash, Read, Grep, Glob
+triggers:
+  - research: research/deep dive/look into/investigate
+  - search: search/look up/find/what do people say
+  - social: xiaohongshu/xhs/twitter/x.com/bilibili/v2ex/reddit/facebook/instagram
+  - career: jobs/recruiting/hiring/linkedin
+  - dev: github/repo/code/gh/issue/pr/branch/commit
+  - web: webpage/link/article/rss/read this/open this
+  - video: youtube/video/podcast/subtitles/xiaoyuzhou/transcript/yt
+  - finance: xueqiu/stock/stocks/quote/fund
 metadata:
   openclaw:
     homepage: https://github.com/Panniantong/Agent-Reach
 ---
+
+> 📖 **This is the compact English variant.** The canonical, most detailed and
+> actively maintained doc is [SKILL.md](SKILL.md) (Chinese; commands themselves
+> are language-neutral). If anything here looks incomplete or out of date,
+> defer to `SKILL.md` and its `references/*.md`.
 
 # Agent Reach — internet capability router
 
@@ -45,16 +61,28 @@ these platforms — do not invent your own approach.**
    https://raw.githubusercontent.com/Panniantong/agent-reach/main/docs/update.md".
    Never interrupt the current task to update; never nag about the same version twice.
 
+## ⛔ FORBIDDEN (any environment)
+
+| Forbidden | Reason |
+|------|------|
+| XiaoHongShu MCP `get_login_qrcode` / QR scan | Hangs in Cloud/cron; use Cookie-Editor or OpenCLI |
+| Switching backends without running `doctor` first | Wastes quota; see errors.md |
+| Writing persistent files in the agent workspace | Use `/tmp/` for temp, `~/.agent-reach/` for persistent |
+| Modifying upstream open-source project source code | Agent Reach is a glue/routing layer only |
+| Retrying the same error signal more than 2 times | See errors.md Retry budget |
+
 ## Routing table
 
 | User intent | Category | Details |
 |---------|------|---------|
-| Web / code search | search | [references/search.md](references/search.md) |
+| Web / code search / Exa | search | [references/search.md](references/search.md) |
+| Failures / 401 / 429 / lock / retry | errors | [references/errors.md](references/errors.md) |
 | XiaoHongShu / Twitter / Bilibili / V2EX / Reddit / Facebook / Instagram | social | [references/social.md](references/social.md) |
 | Jobs / LinkedIn | career | [references/career.md](references/career.md) |
 | GitHub / code | dev | [references/dev.md](references/dev.md) |
 | Web pages / articles / RSS | web | [references/web.md](references/web.md) |
 | YouTube / Bilibili / podcast transcripts | video | [references/video.md](references/video.md) |
+| Xueqiu / stock quotes / finance | finance | [references/finance.md](references/finance.md) |
 
 ## Zero-config quick commands
 
@@ -117,11 +145,13 @@ common cases; references hold per-backend command groups, caveats, retry
 chains — note: reference docs are written in Chinese, commands are universal):
 
 - [Search](references/search.md) — Exa AI search
+- [Errors](references/errors.md) — signal table, retry budget, lock/auth
 - [Social](references/social.md) — XiaoHongShu, Twitter, Bilibili, V2EX, Reddit, Facebook, Instagram (multi-backend/login-backed groups)
 - [Career](references/career.md) — LinkedIn
 - [Dev](references/dev.md) — GitHub CLI
 - [Web](references/web.md) — Jina Reader, RSS
 - [Video](references/video.md) — YouTube, Bilibili, Xiaoyuzhou
+- [Finance](references/finance.md) — Xueqiu (stock quotes); portfolio-level review lives in the daily_run skill
 
 ## Configure a channel
 

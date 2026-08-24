@@ -25,7 +25,7 @@ description: >-
 | `skill_gates` | `skill_gates_harness.py` | 周六 skill gate 失败 |
 | `watchlist_adjust` | `watchlist_adjust_harness.py` | 收盘/早盘观察池 adjust |
 | `forecast_calibrate` | `forecast_calibrate_harness.py` | 周日 forecast MSS/校准 |
-| `pnl_overview` | `pnl_overview_harness.py` | 收盘 FIFO 已实现 + 浮动盈亏总览 |
+| `pnl_overview` | `pnl_overview_harness.py` | 收盘 FIFO 已实现 + 浮动盈亏总览（深入见 `daily-run-pnl-overview` skill） |
 | `pnl_target` | `pnl_target_harness.py` | 下一交易日总盈亏目标 + 达成奖励/未达处罚 |
 | `finance_close` | `finance_close_harness.py` | 收盘 dsh-finance 对账/风控/variance bridge |
 | `finance_ledger_prep` | `finance_ledger_prep_harness.py` | 收盘 journal-entry-prep（approval matrix / memo） |
@@ -36,16 +36,23 @@ description: >-
 | `finance_close_plan` | `finance_close_plan_harness.py` | 周六 T+1~T+5 下周 close 日历 |
 | `expert_consensus` | `expert_consensus_harness.py` | 收盘/早盘/盘中 Team-First 专家共识 → policy/playbook |
 | `expert_consensus_weekly` | `expert_consensus_weekly_harness.py` | 周六汇总本周 expert_consensus audit → 周度 policy |
+| `midday` | `midday_harness.py` | 午盘 12:30 轻分析（`schedule run midday`，无独立顶层 CLI 子命令） |
+| `watchlist_intel` | `watchlist_intel_harness.py` | 收盘观察池情报增强（`watchlist.*` 配置门控，非 `harness.jobs`） |
+| `xueqiu_hit` | `xueqiu_hit_harness.py` | 收盘雪球（xueqiu）信号命中率结算 |
+| `sell_rules_whatif` | `sell_rules_whatif_harness.py` | 周六 weekly 卖出规则 what-if 回测 |
+| `intraday_friction` | `intraday_friction_harness.py` | 周六 weekly 汇总本周盘中摩擦惩罚阻断 |
+| `intraday_sell` | `intraday_sell_harness.py` | 周六 weekly 汇总本周盘中卖出决策 |
+| `harness_threshold` | `harness_evolution_optimizers.py` | 周六 weekly LLM 阈值调优（DeepSeek/Groq/OpenAI，否则规则 planner） |
 
 ## 收盘自动
 
-`run_close()` → `run_close_harness_refinements()` 依次 refine verify / close_improve / data_audit / **pnl_overview** / **pnl_target** / **finance_close** / **finance_ledger_prep** / **finance_ledger** / **expert_consensus**；
+`run_close()` → `run_close_harness_refinements()` 依次 refine verify / close_improve / data_audit / **pnl_overview** / **pnl_target** / **finance_close** / **finance_ledger_prep** / **finance_ledger** / **expert_consensus** / **watchlist_adjust** / **watchlist_intel** / **xueqiu_hit**；
 `append_experience_entry()` → experience harness（harness 模式下 rules 同步进 memory/policy）；
 随后 `run_close_layer_a_refinement()` 只写入组合盈亏等 residual。
 
 ## 定时任务
 
-`run_scheduled()` 在 dedupe/lock/失败时写 run_guard harness；morning/intraday 成功后写对应 job harness。
+`run_scheduled()` 在 dedupe/lock/失败时写 run_guard harness；morning/intraday/**midday** 成功后写对应 job harness。
 
 **forecast 去重**：`forecast_calibrate` 开启时，`forecast` layer_a 只写 Kronos 偏强/偏弱。
 
@@ -64,13 +71,13 @@ python3 -m agent_reach.cli daily-run harness migrate-settings
 
 **weekly 去重**：
 - `skill_closure` / `run_guard` 开启时，`weekly` layer_a 只写 PnL / experience_snippets / applied_config
-- 周六顺序：`apply_weekly_skill_closure` → `run_weekly_harness_refinements`（**finance_variance** / **finance_statements** / **finance_research** / **finance_close_plan** / **expert_consensus_weekly** / run_guard）→ `run_weekly_layer_a_refinement`
+- 周六顺序：`apply_weekly_skill_closure` → `run_weekly_harness_refinements`（**finance_variance** / **finance_statements** / **finance_research** / **finance_close_plan** / **expert_consensus_weekly** / **sell_rules_whatif** / **intraday_friction** / **intraday_sell** / **harness_threshold** / run_guard）→ `run_weekly_layer_a_refinement`
 - 周日 forecast：`run_forecast_harness_refinements` 在 `forecast_calibrate` 后可再跑 **finance_research**（`finance_research.run_on_forecast`）
 
 ## 手动运行
 
 ```bash
-# 收盘三件套（smoke）
+# 收盘 verify smoke（默认只跑 verify；传 improvements/audit/portfolio_summary 等 kwargs 才会跑 close_improve/data_audit）
 python3 .cursor/skills/daily-run-harness-skills/scripts/run_close_harness.py --json
 
 # 盈亏总览 harness
@@ -94,7 +101,7 @@ python3 .cursor/skills/daily-run-code-walk/scripts/run_walk.py
 
 - Layer B：`use_llm_review: true` 时审查门控也走 DeepSeek；无 key 时规则兜底。
 - Summarize：Layer A 成功后追加综合 edits；**禁止** morning/intraday；无 key 时 skip（不重复写 Layer A）。
-- 周六 `sync_canonical_skill_to_local()` 同步 canonical skill 至 `~/.agents/skills/` **并**复制 repo `.cursor/skills/daily-run-*` 至 `~/.cursor/skills/`。
+- 周六 `sync_canonical_skill_to_local()` 同步 canonical skill 至 `~/.agents/skills/` **并**复制 repo `.cursor/skills/daily-run-*`（SKILL.md + `scripts/` + `references/`）至 `~/.cursor/skills/`。
 - 高频 job 的 Layer A **保持确定性**，不改为 LLM。
 
 ```json
@@ -113,8 +120,11 @@ python3 .cursor/skills/daily-run-code-walk/scripts/run_walk.py
 
 ## 配置
 
+`harness.jobs` 完整开关列表（含 `midday` / finance_* / `sell_rules_whatif` 等，随 job 增多持续变化）以
+`config/daily_run_settings.json` 为准，不要照抄下面这个精简示例；示例仅演示形状：
+
 ```json
-"harness": { "jobs": { "verify": true, "close_improve": true, "data_audit": true, "pnl_overview": true, "skill_closure": true, "optimize": true, "experience": true, "morning": true, "intraday": true, "run_guard": true } },
+"harness": { "jobs": { "verify": true, "close_improve": true, "data_audit": true, "pnl_overview": true, "skill_closure": true, "optimize": true, "experience": true, "morning": true, "midday": true, "intraday": true, "run_guard": true } },
 "pnl_overview": { "harness_evolve": true },
 "pnl_target": { "enabled": true, "harness_evolve": true, "base_target_pct": 0.5 },
 "close_improvements": { "harness_evolve": true },
@@ -328,7 +338,8 @@ python3 -m agent_reach.cli daily-run harness sync-settings
 ## 测试
 
 ```bash
-python3 -m pytest tests/test_daily_run_harness_p8.py tests/test_daily_run_harness_p7.py tests/test_daily_run_harness_p6.py tests/test_daily_run_harness_p5.py tests/test_daily_run_harness_p4.py tests/test_daily_run_harness_p3.py tests/test_daily_run_harness_p2.py tests/test_daily_run_harness_p1.py -q
+# p1-p14（新增 job 通常落在下一个空闲编号，跑全部分区避免漏测）
+python3 -m pytest tests/test_daily_run_harness_p*.py tests/test_daily_run_harness_policy.py -q
 ```
 
 ### 测试隔离（统一 monkeypatch，避免读真实生产状态）

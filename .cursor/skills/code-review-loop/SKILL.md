@@ -12,6 +12,8 @@ Adapted from [zjk1984/claude-review-loop](https://github.com/zjk1984/claude-revi
 Two phases: **implement / inspect** → **parallel review** → **consolidate** → **address** (optional).
 
 Daily-run harness 专用走读仍用 `daily-run-code-walk`；本 skill 负责 **通用 diff + 结构走读**。
+**判断：** 改动落在 `agent_reach/daily_run/**` 且要跑 harness 自进化 → 先用 `daily-run-code-walk`
+（Phase R 会自动交接回本 skill 做通用质量二审）；其余任意代码改动 → 直接用本 skill。
 
 ---
 

@@ -7,10 +7,14 @@
 所有阈值与权重位于 `config/daily_run_settings.json`（可被 `~/.agent-reach/daily_run_settings.json` 覆盖）：
 
 - `mss_weights` / `lookback_weights` — MSS 与 Lookback 权重
-- `thresholds.macro_veto` — 宏观一票否决线（默认 40）
-- `thresholds.aggressive_entry` — 进攻阈值（默认 50）
+- `thresholds.macro_veto` — 宏观一票否决线（静态默认 40，`harness.threshold_modes.macro_veto=harness` 时由 harness 演化，见下）
+- `thresholds.aggressive_entry` — 进攻阈值（静态默认 50，同上可被 harness 演化）
 - `quality_gate.required_fields` — 飞书推送前必填字段
 - `data_audit.required_source_categories` — 必须覆盖 quote / flow / sentiment
+
+> ⚠️ `macro_veto`/`aggressive_entry` 是否使用上面的静态默认值取决于 `harness.threshold_modes`
+> （每个 key 可单独设为 `fixed` 或 `harness`）。生效值**不要**直接按本文档的 40/50 硬编码判断，
+> 以 `daily-run harness show --overlay` 或代码里的 `effective_settings()` 结果为准。
 
 ### 数据审计 Gate（Step 1.5）
 

@@ -36,7 +36,7 @@ agent-reach daily-run hot-news stop
 
 `daily-run-local-setup.sh` 已包含 60s native 部署。无 Node.js 时自动 fallback 到 `https://60s.viki.moe`。
 
-配置：`config/daily_run_settings.json` → `hot_news`（用户覆盖：`~/.agent-reach/daily_run_settings.json`）。Skill 参考：[references/daily_run_hot_news.md](references/daily_run_hot_news.md)。
+配置：`config/daily_run_settings.json` → `hot_news`（用户覆盖：`~/.agent-reach/daily_run_settings.json`）。Skill 参考：[daily_run_hot_news.md](../../references/daily_run_hot_news.md)。
 
 ### Cron 定时（北京时间 Asia/Shanghai）
 

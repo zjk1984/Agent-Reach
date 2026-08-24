@@ -109,3 +109,28 @@ def isolate_daily_run_state(monkeypatch, tmp_path):
         "agent_reach.daily_run.daily_pnl_history.default_pnl_history_path",
         lambda: tmp_path / "pnl_history.jsonl",
     )
+
+    # Skill fragments (external playbook.md / experience_latest.md / fragments.json
+    # + archives) are the "Agent 优先顺序" entry point the daily_run_skill tells
+    # every agent to read first. A test that forgets its own isolation and calls
+    # write_fragments() directly (as test_gates_pass_on_canonical_skill once did)
+    # silently overwrites this real file with dummy fixture content and no
+    # recovery path (the archive-before-overwrite step no-ops if a same-named
+    # archive already exists). Default everything to tmp_path as defense in
+    # depth; tests that specifically exercise skill_fragments still use their
+    # own local fragments_tmp fixture, which simply re-patches the same names.
+    skill_frag_dir = tmp_path / "skill_fragments"
+    monkeypatch.setattr("agent_reach.daily_run.skill_fragments.FRAGMENTS_DIR", skill_frag_dir)
+    monkeypatch.setattr("agent_reach.daily_run.skill_fragments.PLAYBOOK_FRAGMENT", skill_frag_dir / "playbook.md")
+    monkeypatch.setattr(
+        "agent_reach.daily_run.skill_fragments.EXPERIENCE_FRAGMENT",
+        skill_frag_dir / "experience_latest.md",
+    )
+    monkeypatch.setattr(
+        "agent_reach.daily_run.skill_fragments.FRAGMENTS_MANIFEST",
+        skill_frag_dir / "fragments.json",
+    )
+    monkeypatch.setattr(
+        "agent_reach.daily_run.skill_fragments.ARCHIVE_DIR",
+        tmp_path / "archives" / "skill",
+    )

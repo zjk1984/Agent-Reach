@@ -21,6 +21,12 @@
 
 ### 3. 极致风控与交易摩擦控制 (Anti-Churning & Slippage Control)
 *   **滑点与摩擦惩罚 (Slippage Penalty)：** 引入交易摩擦惩罚函数。如果 Final_MSS 算出的预期收益率不能覆盖双边交易成本（0.15%）与预估滑点（0.1%），系统强制取消交易，以对抗频繁交易带来的损耗。
-*   **持股生命周期硬约束 (Holding Lifecycle)：** 极度厌恶频繁换手。个股买入后，除触发硬性止损（跌破 MA20 且亏损 > -4%）或宏观极速避险（MSS < 40分）外，**3 个交易日内禁止执行任何主动卖出操作**，以静制动，对抗日内噪音。
+*   **持股生命周期硬约束 (Holding Lifecycle)：** 极度厌恶频繁换手。个股买入后，除触发硬性止损（跌破 MA20 且亏损 > -4%）或宏观极速避险（MSS < 40分）外，
+    **`trading.holding_lock_days` 个交易日内禁止执行任何主动卖出操作**，以静制动，对抗日内噪音。
+    该参数由 harness 演化（`harness_policy.py`），静态默认 1 天，harness 模式下地板值为 2 天，不是固定 3 天；
+    实际生效值以 `daily-run harness show --overlay` / `effective_settings()` 为准，不要按文档硬编码天数做判断。
+*   **A 股可交易性硬门禁 (Tradability Gate)：** 买卖执行前会先过 `tradability.py` 的涨跌停/停牌检查——
+    涨停不追买、跌停不割肉卖、停牌标的直接跳过；命中时决策会带 `tradability_block_reason`，
+    这不是 bug，是硬性风控，禁止绕过或强行下单。
 
 ---

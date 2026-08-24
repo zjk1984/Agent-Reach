@@ -18,7 +18,7 @@ build_pnl_overview() / build_close_pnl_overview()
         ↓
 pnl_overview_to_harness_evidence()
         ↓
-apply_pnl_overview_harness_refinement()  →  ~/.agent-reach/harness_state.json
+apply_pnl_overview_harness_refinement()  →  ~/.agent-reach/daily_run/harness/harness_state.json
 
 收盘 portfolio_summary.daily_pnl
         ↓
@@ -66,8 +66,10 @@ python3 -m agent_reach.cli daily-run pnl history --days 30
 python3 -m agent_reach.cli daily-run pnl history --chart svg -o /tmp/pnl.svg
 python3 -m agent_reach.cli daily-run pnl history --backfill --json
 
-# 入金/出金（避免日 PnL 失真）
+# 入金/出金（避免日 PnL 失真；默认自动同步 portfolio.json 现金+total，--no-adjust-cash 仅记账）
 python3 -m agent_reach.cli daily-run capital deposit --amount 100000 --note "追加本金"
+python3 -m agent_reach.cli daily-run capital withdraw --amount 20000 --note "取现"
+python3 -m agent_reach.cli daily-run capital list
 ```
 
 ## 手动 harness smoke
