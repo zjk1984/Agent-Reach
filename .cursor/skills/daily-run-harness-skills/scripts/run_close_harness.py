@@ -1,6 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8
-"""Run close-phase harness skills (verify + close_improve + data_audit)."""
+"""Run close-phase harness skills — verify-only smoke by default.
+
+``run_close_harness_refinements()`` also accepts ``improvements``/``audit``/
+``portfolio_summary``/``forecast_review``/``watchlist_adjust``/``pnl_target_cycle``
+kwargs that each gate a separate harness job (close_improve, data_audit,
+watchlist_intel, ...). This script only passes a stub ``verify`` dict, so by
+default it exercises **verify only** — it does NOT smoke-test close_improve or
+data_audit. Pass real fixtures for those kwargs (e.g. from a saved close
+manifest) if you need to smoke-test the full close-phase harness cascade.
+"""
 
 from __future__ import annotations
 

@@ -56,15 +56,29 @@ def resolve_cursor_agent_skill_sources() -> list[Path]:
 
 
 def sync_cursor_agent_skills_to_local() -> list[str]:
-    """Copy repo .cursor/skills/daily-run-* manuals to ~/.cursor/skills/."""
+    """Copy repo .cursor/skills/daily-run-* manuals (+ scripts/references) to ~/.cursor/skills/.
+
+    Skill bodies instruct agents to run e.g. ``scripts/run_close_harness.py`` or
+    read ``references/*.md`` relative to the skill dir. Only mirroring SKILL.md
+    left the global install (the copy agents actually see once this repo isn't
+    their cwd) missing those files entirely, so also mirror any ``scripts/`` and
+    ``references/`` subdirectories that ship next to the manual.
+    """
     import shutil
 
     synced: list[str] = []
     for source in resolve_cursor_agent_skill_sources():
-        dest = Path.home() / ".cursor" / "skills" / source.parent.name / "SKILL.md"
-        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest_dir = Path.home() / ".cursor" / "skills" / source.parent.name
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / "SKILL.md"
         shutil.copy2(source, dest)
         synced.append(str(dest))
+        for subdir_name in ("scripts", "references"):
+            src_subdir = source.parent / subdir_name
+            if src_subdir.is_dir():
+                dest_subdir = dest_dir / subdir_name
+                shutil.copytree(src_subdir, dest_subdir, dirs_exist_ok=True)
+                synced.append(str(dest_subdir))
     return synced
 
 

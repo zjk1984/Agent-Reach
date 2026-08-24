@@ -50,7 +50,7 @@ upstream `analyzeEmotion()` 综合打分 → 定级 → 仓位：
 - 综合分 1–3 → **中** → **5 成**
 - 综合分 ≤0 → **弱** → **2–3 成**
 
-与 daily-run MSS 择时 **并存**：upstream 偏「全市场宽度 + 短线情绪」；MSS 偏「全球共振 + 持仓标的 + 巴菲特过滤」。收盘飞书卡片宜 **并列展示**（待增强）。
+与 daily-run MSS 择时 **并存**：upstream 偏「全市场宽度 + 短线情绪」；MSS 偏「全球共振 + 持仓标的 + 巴菲特过滤」。已落地：收盘飞书卡「全市场复盘」段与 MSS 并列展示（`render_close_sections(close_market)`，见 §「与收盘/周报工作流衔接」）。
 
 ### 板块主线判定（upstream `analyzeSectors`）
 
@@ -106,10 +106,15 @@ upstream `analyzeEmotion()` 综合打分 → 定级 → 仓位：
 - [x] `market_review.py` — 编排 + `~/.agent-reach/daily_run/market_review/{date}.json` 持久化 + vs 昨日/上周
 - [x] 收盘飞书卡「全市场复盘」— `render_close_sections(close_market)` + `run_close` 按日缓存
 
-**待增强：**
+**已完成（近期批次）：**
 
 - [x] 情绪定级与 MSS 宏观分自动融合（`emotion_mss_fusion.py` + 收盘 market_review）
 - [x] 全市场宽度失败时降级为 macro_collector 摘要（不阻断收盘）— `market_review._attach_macro_collector_fallback` + `macro_fallback_enabled`
+
+**待增强（真实 roadmap gap，见上方「东财 API 清单」/「板块主线判定」小节）：**
+
+- [ ] 全市场涨停池拉取（连板梯队目前按行业聚合估算，非实时涨停池）
+- [ ] 个股主力流 Top（`clist/get` fid=f62，板块主力流已间接覆盖，个股级未接入）
 
 **参考文件（upstream）：** `SKILL.md` · `index.html`（`analyzeEmotion` / `analyzeSectors` / `analyzeLHB`）· `server.js`
 
