@@ -184,6 +184,36 @@ def attach_cumulative_pnl(rows: list[DailyPnlRecord]) -> list[DailyPnlRecord]:
     return rows
 
 
+def detect_pnl_history_gaps(
+    rows: list[DailyPnlRecord],
+    *,
+    start: date,
+    end: Optional[date] = None,
+    settings: Optional[dict[str, Any]] = None,
+) -> list[str]:
+    """Trading days in [start, end] with no row in `rows` (e.g. a missed close run).
+
+    `cumulative_pnl` is a running sum over *recorded* rows only (see
+    `attach_cumulative_pnl`) — a silently missing trading day drops that day's
+    real P&L (and any capital event booked that day) from the running total with
+    no signal. This is a cheap read-only scan callers (e.g. close_code_review)
+    can surface as a finding; it intentionally does not fabricate a value for the
+    missing day — use `backfill_from_manifests` if a manifest still exists.
+    """
+    from agent_reach.daily_run.trade_calendar import is_trading_day
+
+    end_day = end or today_shanghai()
+    recorded = {r.date for r in rows}
+    gaps: list[str] = []
+    d = start
+    while d <= end_day:
+        ok, _ = is_trading_day(d, settings=settings)
+        if ok and d.isoformat() not in recorded:
+            gaps.append(d.isoformat())
+        d += timedelta(days=1)
+    return gaps
+
+
 def backfill_from_manifests(
     *,
     start: Optional[date] = None,
@@ -398,7 +428,7 @@ def render_pnl_history_markdown(
 
     recent = rows[-days:] if days > 0 else rows
     lines = ["## 📈 每日盈亏", ""]
-    lines.append("| 日期 | 当日盈亏 | 累计 | 净值 |")
+    lines.append("| 日期 | 当日盈亏 | 累计（净值口径） | 净值 |")
     lines.append("|------|---------:|-----:|-----:|")
     for row in recent:
         pct = f" ({row.daily_pnl_pct:+.2f}%)" if row.daily_pnl_pct is not None else ""
@@ -407,4 +437,10 @@ def render_pnl_history_markdown(
         lines.append(
             f"| {row.date} | {row.daily_pnl:+,.0f}{pct} | {cum} | {end_total} |"
         )
+    lines.append("")
+    lines.append(
+        "> 累计（净值口径）= 已记录交易日的当日盈亏逐日累加，缺失的交易日会被跳过；"
+        "与收盘卡片「总收益」（历史已实现 FIFO + 当前持股浮盈浮亏）是两套不同口径，"
+        "正常情况下会有差异，不代表数据错误。"
+    )
     return "\n".join(lines)
