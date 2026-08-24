@@ -157,6 +157,40 @@ def global_trades_today() -> int:
     return len(load_daily_trade_state().get("fingerprints") or [])
 
 
+def _fingerprint_codes(fingerprint: str) -> set[str]:
+    """Extract normalized symbol codes out of an _actions_fingerprint string."""
+    codes: set[str] = set()
+    for part in fingerprint.split("||"):
+        segs = part.split("|")
+        if len(segs) >= 2 and segs[1]:
+            codes.add(segs[1])
+    return codes
+
+
+def symbol_trades_today(code: str) -> int:
+    """Applied (buy/sell) trade count today for one symbol, across all fingerprints."""
+    norm = _normalize_code(str(code))
+    if not norm:
+        return 0
+    state = load_daily_trade_state()
+    return sum(1 for fp in state.get("fingerprints") or [] if norm in _fingerprint_codes(fp))
+
+
+def applied_trades_today_for(code: str, settings: dict[str, Any]) -> int:
+    """Applied-trade count today, scoped by schedule.max_applied_trades_per_day_scope.
+
+    Default scope is "global" (the historical/default behavior: one shared cap
+    across the whole portfolio). Set to "per_symbol" to give every symbol its own
+    daily cap instead — useful when symbols_mode="all" runs many symbols in
+    parallel and a single global cap can starve later symbols of any chance to
+    apply a valid signal.
+    """
+    scope = str((settings.get("schedule") or {}).get("max_applied_trades_per_day_scope") or "global").strip().lower()
+    if scope == "per_symbol" and code:
+        return symbol_trades_today(code)
+    return global_trades_today()
+
+
 def register_applied_trade(actions: list[TradeAction]) -> bool:
     """Record a successful paper trade for today. Returns False if duplicate."""
     if not actions:
@@ -395,7 +429,7 @@ def resolve_deep_loss_sell_shares(
     ratio = deep_loss_policy_default(settings, ratio_key)
     if ratio >= 0.999:
         return total_shares
-    sold = _round_lot(code, int(total_shares * ratio))
+    sold = _round_lot(code, int(total_shares * ratio), total_shares=total_shares)
     if sold <= 0:
         return 0
     return min(sold, total_shares)
@@ -664,6 +698,13 @@ def _apply_sell(
         return ApplyResult(applied=False, portfolio=pf, message=f"{code} 不在持仓中，跳过卖出")
 
     target.update(enriched.get(code, {}))
+
+    from agent_reach.daily_run.tradability import tradability_block_reason
+
+    block_reason = tradability_block_reason(target, side="sell", code=code)
+    if block_reason:
+        return ApplyResult(applied=False, portfolio=pf, message=block_reason)
+
     total_shares = int(target.get("shares") or 0)
     sellable = holding_sellable_shares(target)
     if sellable <= 0:
@@ -688,7 +729,10 @@ def _apply_sell(
         return ApplyResult(applied=False, portfolio=pf, message=str(sell_analysis["block_reason"]))
 
     shares = min(int(sell_analysis["sell_shares"] or 0), sellable)
-    shares = _round_lot(code, shares, total_shares=total_shares)
+    # Ceiling for lot rounding is `sellable`, not the raw holding total: T+1-locked
+    # shares (today_buy_shares) must never be pulled in when rounding a partial
+    # sell up to one lot.
+    shares = _round_lot(code, shares, total_shares=sellable)
     price = _price_for(target, enriched)
     if shares <= 0 or price is None or price <= 0:
         if holding_today_buy_shares(target) > 0:
@@ -823,6 +867,12 @@ def _apply_buy(
         target = candidates[0]
 
     code = _normalize_code(str(target["code"]))
+
+    from agent_reach.daily_run.tradability import tradability_block_reason
+
+    tradability_block = tradability_block_reason(target, side="buy", code=code)
+    if tradability_block:
+        return ApplyResult(applied=False, portfolio=pf, message=tradability_block)
 
     buy_block = pnl_buy_block_reason(settings, pf, code=code)
     if buy_block:
@@ -1227,21 +1277,24 @@ def _symbol_score(row: dict[str, Any], decision: Any, settings: dict[str, Any]) 
 
 
 def _round_lot(code: str, shares: int, *, total_shares: Optional[int] = None) -> int:
+    """Round to board lot size (STAR 688 = 200, else 100).
+
+    When ``total_shares`` (the full remaining position) is given, this is a
+    sell-sizing call: a partial-sell amount below one lot must round UP to one
+    lot rather than be dropped to 0 (the board lot is a minimum order size, not
+    a rounding-down unit) — as long as the position actually holds ≥1 lot.
+    Selling the entire remaining position is always allowed regardless of lot
+    size.
+    """
     if shares <= 0:
         return 0
-    text = str(code).zfill(6)
-    if text.startswith("688"):
-        lot = 200
-        if shares >= lot:
-            return (shares // lot) * lot
-        if total_shares is not None and shares >= total_shares:
-            return total_shares
-        return 0
-    lot = 100
-    if shares >= lot:
-        return (shares // lot) * lot
+    lot = 200 if str(code).zfill(6).startswith("688") else 100
     if total_shares is not None and shares >= total_shares:
         return total_shares
+    if shares >= lot:
+        return (shares // lot) * lot
+    if total_shares is not None:
+        return lot if total_shares >= lot else total_shares
     return 0
 
 

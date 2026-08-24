@@ -34,7 +34,11 @@ def build_enriched_symbols(
         c = _normalize_code(str(code))
         out[c] = {
             **out.get(c, {}),
-            **{k: snapshot[k] for k in ("price", "name", "change_pct", "ma20", "sector", "industry") if k in snapshot},
+            **{
+                k: snapshot[k]
+                for k in ("price", "name", "change_pct", "ma20", "sector", "industry", "volume", "turnover")
+                if k in snapshot
+            },
         }
 
     cfg = settings

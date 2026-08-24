@@ -723,6 +723,10 @@ def build_snapshot(
         snapshot["turnover_rate"] = primary_quote["turnover_rate"]
     if primary_quote.get("market_capital") is not None:
         snapshot["market_capital"] = primary_quote["market_capital"]
+    if primary_quote.get("volume") is not None:
+        snapshot["volume"] = primary_quote["volume"]
+    if primary_quote.get("turnover") is not None:
+        snapshot["turnover"] = primary_quote["turnover"]
     if row_fields.get("unrealized_pnl") is not None:
         snapshot["unrealized_pnl"] = row_fields["unrealized_pnl"]
 

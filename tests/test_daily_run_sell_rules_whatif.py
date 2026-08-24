@@ -134,8 +134,11 @@ class TestSellRulesWhatIf:
         assert "700" in md
         assert "1400" in md
 
-    def test_deep_loss_blocked_on_star_board(self):
-        """688 STAR board: 35% of 100 shares rounds to 0 lots."""
+    def test_deep_loss_odd_lot_on_star_board_sells_in_full(self):
+        """688 STAR board: holding (100 shares) is itself a sub-lot odd lot (< 200
+        lot size). 35% of it can't be sold as a partial lot, but a valid odd lot
+        can always be liquidated in full — it must not be rounded down to 0 and
+        blocked forever."""
         morning = {
             "portfolio": {
                 "cash": 50000.0,
@@ -184,9 +187,8 @@ class TestSellRulesWhatIf:
         row = result.rows[0]
         assert row["code"] == "688008"
         assert row["actual_sold"] == 0
-        assert row["hypothetical_sold"] == 0
+        assert row["hypothetical_sold"] == 100
         assert row["is_deep_loss"] is True
-        assert "不足一手" in str(row.get("block_reason") or "")
 
     def test_skipped_without_morning_holdings(self):
         result = build_sell_rules_whatif(

@@ -32,7 +32,7 @@ from agent_reach.daily_run.pnl_execution_guard import (
     pnl_symbol_ledger_block_reason,
 )
 from agent_reach.daily_run.settings import effective_settings, load_settings
-from agent_reach.daily_run.trade_calendar import today_shanghai
+from agent_reach.daily_run.trade_calendar import is_continuous_session, today_shanghai
 
 
 from agent_reach.daily_run.schedule import INTRADAY_MAX_SCANS as MAX_SCANS
@@ -162,6 +162,9 @@ def explain_trade_skip_reason(
     sched = cfg.get("schedule") or {}
     if sched.get("intraday_trade_enabled", True) is not True:
         return "盘中调仓已关闭（schedule.intraday_trade_enabled=false）"
+
+    if sched.get("intraday_session_gate_enabled", True) and not is_continuous_session():
+        return "当前非连续竞价时段（09:30-11:30 / 13:00-14:57），仅记录扫描不评估调仓"
 
     st = state or load_state(state_path)
     min_scans = runtime_int_default(cfg, "schedule", "trade_min_scans")
@@ -476,6 +479,12 @@ def should_evaluate_trade(
     if not sched.get("intraday_trade_enabled", True):
         return False
 
+    # Pre-open (S1-S2 ~09:00-09:25) and post-close (S15 ~15:00) scans record
+    # data but must not fire buy/sell — no continuous-matching session exists
+    # to fill them. Lunch break (11:30-13:00) is likewise excluded.
+    if sched.get("intraday_session_gate_enabled", True) and not is_continuous_session():
+        return False
+
     st = state or load_state(state_path)
     if len(st.scans) < runtime_int_default(cfg, "schedule", "trade_min_scans"):
         return False
@@ -500,8 +509,8 @@ def apply_paper_trade(
     from agent_reach.daily_run.portfolio_manager import (
         ApplyResult,
         append_trade_ledger,
+        applied_trades_today_for,
         apply_auto_adjust,
-        global_trades_today,
         is_auto_adjust_enabled,
         register_applied_trade,
     )
@@ -509,6 +518,7 @@ def apply_paper_trade(
     from agent_reach.daily_run.symbols import sync_snapshot_portfolio
 
     cfg = effective_settings(settings)
+    _merge_keys = ("price", "change_pct", "name", "ma20", "volume", "turnover")
 
     with _PORTFOLIO_IO_LOCK:
         pf = load_portfolio()
@@ -524,24 +534,27 @@ def apply_paper_trade(
         for row in (snap.get("portfolio") or {}).get("holdings") or []:
             code = _normalize_code(str(row.get("code", "")))
             if code in quote_map:
-                row.update({k: quote_map[code][k] for k in ("price", "change_pct", "name", "ma20") if quote_map[code].get(k) is not None})
+                row.update({k: quote_map[code][k] for k in _merge_keys if quote_map[code].get(k) is not None})
         merged_watchlist = []
         for row in snap.get("watchlist") or []:
             item = dict(row)
             code = _normalize_code(str(item.get("code", "")))
             if code in quote_map:
-                item.update({k: quote_map[code][k] for k in ("price", "change_pct", "name", "ma20") if quote_map[code].get(k) is not None})
+                item.update({k: quote_map[code][k] for k in _merge_keys if quote_map[code].get(k) is not None})
             merged_watchlist.append(item)
         snap["watchlist"] = merged_watchlist
 
         action = decision.action
         applied_cap = max_applied_trades_per_day(cfg)
-        if action in ("buy", "sell") and global_trades_today() >= applied_cap:
+        cap_code = _normalize_code(str(snapshot.get("code") or ""))
+        if action in ("buy", "sell") and applied_trades_today_for(cap_code, cfg) >= applied_cap:
+            scope = str((cfg.get("schedule") or {}).get("max_applied_trades_per_day_scope") or "global")
+            scope_label = "本标的" if scope == "per_symbol" else "全组合"
             return ApplyResult(
                 applied=False,
                 portfolio=pf,
                 message=(
-                    f"今日全组合落账已达上限 {applied_cap} 次，"
+                    f"今日{scope_label}落账已达上限 {applied_cap} 次，"
                     f"{'买入' if action == 'buy' else '卖出'}信号仅记录不落账"
                 ),
             )

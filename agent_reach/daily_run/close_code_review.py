@@ -275,12 +275,28 @@ def _review_portfolio(
                 )
             )
         elif acquired is None and stored is not None:
+            fix_note = ""
+            fixed = False
+            if auto_fix:
+                try:
+                    from agent_reach.daily_run.trade_calendar import today_shanghai, trading_day_before
+
+                    backfilled = trading_day_before(today_shanghai(), int(stored), settings=settings)
+                    h["acquired_date"] = backfilled.isoformat()
+                    out.portfolio_changed = True
+                    fixed = True
+                    fix_note = f"acquired_date ← {backfilled.isoformat()}（由 days_held={stored} 反推，交易日历）"
+                except Exception:
+                    fixed = False
             out.findings.append(
                 CodeFinding(
                     "portfolio",
                     "medium",
                     f"持仓 {code} 仅有 days_held 计数器",
-                    "缺少 acquired_date，跨假期/停盘后计数可能失真；建议补写买入日",
+                    "缺少 acquired_date，跨假期/停盘后计数可能失真；建议补写买入日"
+                    + ("" if not fixed else "（已按 days_held 反推补写）"),
+                    fixed=fixed,
+                    fix_note=fix_note,
                 )
             )
         elif stored is None and acquired:

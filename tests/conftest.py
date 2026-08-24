@@ -79,3 +79,14 @@ def isolate_daily_run_state(monkeypatch, tmp_path):
         "agent_reach.daily_run.portfolio_manager.daily_trade_state_path",
         lambda: tmp_path / "daily_trade_state.json",
     )
+
+    # is_continuous_session() gates should_evaluate_trade() on real wall-clock
+    # time (A-share continuous trading hours), which would otherwise make the
+    # whole suite flaky/order-dependent depending on when tests happen to run.
+    # Default to "always in session" so existing tests stay deterministic;
+    # tests that specifically exercise the session gate monkeypatch this back.
+    # intraday.py does ``from trade_calendar import is_continuous_session`` (a
+    # frozen name binding), so both the defining module and that import site
+    # need patching.
+    monkeypatch.setattr("agent_reach.daily_run.trade_calendar.is_continuous_session", lambda dt=None: True)
+    monkeypatch.setattr("agent_reach.daily_run.intraday.is_continuous_session", lambda dt=None: True)
