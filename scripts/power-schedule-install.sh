@@ -2,8 +2,9 @@
 # Install local power-on/off crontab (Asia/Shanghai).
 #
 # Schedule (boot via rtcwake at prior shutdown):
-#   Mon–Fri: 06:25 on · 12:00 off → 12:40 on · 00:00 off → next on
-#   Sat/Sun: 08:00 on · 00:00 off → next on
+#   Mon–Fri: 06:25 on · 00:00 off → next 06:25
+#   Sat/Sun: 08:00 on · 00:00 off → next 08:00 (Sun→Mon 06:25)
+#   (Noon 12:00 lunch shutdown removed — daily-run midday at 12:30 stays in daily-run cron)
 #
 # Also run once: sudo bash scripts/install-power-schedule-sudo.sh
 set -euo pipefail
@@ -21,7 +22,6 @@ SHELL=/bin/bash
 CRON_TZ=Asia/Shanghai
 # log: ~/.agent-reach/daily_run/logs/power-schedule-YYYY-MM-DD.log
 # script: ${SCRIPT}
-0 12 * * 1-5 ${SCRIPT} lunch  # 12:00 off → wake 12:40
 0 0 * * * ${SCRIPT} midnight  # 00:00 off → wake 06:25 (Mon–Fri) or 08:00 (Sat/Sun)
 ${MARKER_END}
 EOF
@@ -51,7 +51,7 @@ new_crontab="${new_crontab}${BLOCK}"
 printf '%s\n' "$new_crontab" | crontab -
 
 echo "✅ Power schedule crontab installed (Asia/Shanghai)"
-echo "   Mon–Fri: 06:25 on · 12:00 off→12:40 on · 00:00 off→next 06:25 (Fri→Sat 08:00)"
+echo "   Mon–Fri: 06:25 on · 00:00 off→next 06:25 (Fri→Sat 08:00)"
 echo "   Sat/Sun: 08:00 on · 00:00 off→next 08:00 (Sun→Mon 06:25)"
 echo "   Boot times use rtcwake at shutdown"
 echo

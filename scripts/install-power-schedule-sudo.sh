@@ -35,4 +35,5 @@ fi
 
 echo "✅ Sudoers: ${SUDOERS}"
 echo "   Verified: sudo -n rtcwake -m show (as ${USER_NAME})"
-echo "   Do not test lunch/midnight here — those power off the machine"
+echo "   Do not test midnight here — it powers off the machine"
+echo "   (lunch slot remains for manual use only; not scheduled by install script)"

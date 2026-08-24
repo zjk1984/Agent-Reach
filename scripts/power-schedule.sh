@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # Scheduled power-off with RTC wake for the next session window.
-# Boot times (06:25 / 08:00 / 12:40) are set via rtcwake when shutting down.
+# Boot times (06:25 / 08:00) are set via rtcwake when shutting down.
 #
 # Slots (Asia/Shanghai):
-#   lunch     Mon–Fri 12:00 off → wake 12:40 same day
-#   midnight  Every day 00:00 off →
+#   midnight  Every day 00:00 off → (installed by power-schedule-install.sh)
 #             Mon 00:00 (end Sun)   → wake Mon 06:25
 #             Tue–Fri 00:00         → wake same day 06:25 (end Mon–Thu)
 #             Sat 00:00 (end Fri)   → wake Sat 08:00
 #             Sun 00:00 (end Sat)   → wake Sun 08:00
+#   lunch     Mon–Fri 12:00 off → wake 12:40 (manual only; no longer in cron)
 #
 # Requires: sudo bash scripts/install-power-schedule-sudo.sh (once)
 set -euo pipefail
@@ -25,7 +25,7 @@ log() {
 }
 
 usage() {
-  echo "usage: $(basename "$0") lunch|midnight" >&2
+  echo "usage: $(basename "$0") midnight|lunch" >&2
   exit 2
 }
 
