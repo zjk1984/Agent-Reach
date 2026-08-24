@@ -4,14 +4,22 @@
 from __future__ import annotations
 
 import json
-import time
-from datetime import date, datetime, timedelta
+import time as time_module
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Optional
 from zoneinfo import ZoneInfo
 
 _SH_TZ = ZoneInfo("Asia/Shanghai")
-_CACHE: dict[str, Any] = {"dates": set(), "ts": 0.0, "ttl": 86400}
+_CACHE: dict[str, set] = {"dates": set(), "ts": 0.0, "ttl": 86400}
+
+# Continuous trading windows (Asia/Shanghai): morning + afternoon, excluding the
+# 14:57-15:00 closing call auction where only the closing price matches (not a
+# regular continuous-matching order).
+CONTINUOUS_SESSIONS: tuple[tuple[time, time], ...] = (
+    (time(9, 30), time(11, 30)),
+    (time(13, 0), time(14, 57)),
+)
 
 
 def today_shanghai() -> date:
@@ -21,6 +29,18 @@ def today_shanghai() -> date:
 def is_weekend(d: Optional[date] = None) -> bool:
     d = d or today_shanghai()
     return d.weekday() >= 5
+
+
+def is_continuous_session(dt: Optional[datetime] = None) -> bool:
+    """True during A-share continuous trading (09:30-11:30 / 13:00-14:57).
+
+    Excludes the opening/closing call auctions and the lunch break, when orders
+    placed by this system would not realistically fill via continuous matching.
+    """
+    now = dt or datetime.now(_SH_TZ)
+    now = now.replace(tzinfo=_SH_TZ) if now.tzinfo is None else now.astimezone(_SH_TZ)
+    t = now.time()
+    return any(start <= t < end for start, end in CONTINUOUS_SESSIONS)
 
 
 def load_holiday_overrides(path: Optional[Path] = None) -> set[str]:
@@ -55,7 +75,7 @@ def load_workday_overrides(path: Optional[Path] = None) -> set[str]:
 
 
 def _load_trade_dates_akshare() -> set[str]:
-    now = time.time()
+    now = time_module.time()
     if _CACHE["dates"] and now - float(_CACHE["ts"]) < float(_CACHE["ttl"]):
         return _CACHE["dates"]
 
@@ -135,6 +155,39 @@ def trading_days_held(
             count += 1
         d += timedelta(days=1)
     return count
+
+
+def trading_day_before(
+    as_of: date,
+    n: int,
+    *,
+    settings: Optional[dict] = None,
+) -> date:
+    """Date that is exactly ``n`` trading days before ``as_of`` (n<=0 -> as_of).
+
+    Used to backfill an approximate ``acquired_date`` from a legacy ``days_held``
+    trading-day counter (see close_code_review._review_portfolio).
+    """
+    if n <= 0:
+        return as_of
+
+    trade_dates = sorted(_load_trade_dates_akshare())
+    if trade_dates:
+        as_of_s = as_of.isoformat()
+        earlier = [d for d in trade_dates if d <= as_of_s]
+        if len(earlier) > n:
+            return date.fromisoformat(earlier[-1 - n])
+        if earlier:
+            return date.fromisoformat(earlier[0])
+
+    cursor = as_of
+    counted = 0
+    while counted < n:
+        cursor -= timedelta(days=1)
+        ok, _ = is_trading_day(cursor, settings=settings)
+        if ok:
+            counted += 1
+    return cursor
 
 
 def next_trading_day(

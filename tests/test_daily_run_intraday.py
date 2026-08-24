@@ -210,6 +210,68 @@ class TestIntradayWorkflow:
         saved = __import__("json").loads(portfolio_path.read_text(encoding="utf-8"))
         assert any(h["code"] == "000725" for h in saved["holdings"])
 
+    def test_apply_paper_trade_blocks_buy_when_suspended(self, tmp_path, monkeypatch):
+        """M4: suspension (volume=0) merges through apply_paper_trade's quote_map
+        into the enriched buy-candidate row and blocks the fill."""
+        from agent_reach.daily_run.intraday import TradeDecision, apply_paper_trade
+
+        portfolio_path = tmp_path / "portfolio.json"
+        portfolio_path.write_text(
+            '{"total":100000,"cash":80000,"cash_ratio":0.8,'
+            '"holdings":[{"code":"688008","name":"澜起科技","shares":100,"cost":255.87,"days_held":5}],'
+            '"watchlist":[{"code":"000725","name":"京东方A"}]}',
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            "agent_reach.daily_run.snapshot_builder.default_portfolio_path",
+            lambda: portfolio_path,
+        )
+        monkeypatch.setattr(
+            "agent_reach.daily_run.portfolio_manager.daily_trade_state_path",
+            lambda: tmp_path / "daily_trade_state.json",
+        )
+        monkeypatch.setattr(
+            "agent_reach.daily_run.portfolio_manager.default_ledger_path",
+            lambda: tmp_path / "trade_ledger.jsonl",
+        )
+        monkeypatch.setattr(
+            "agent_reach.daily_run.portfolio_manager._today_str",
+            lambda: "2026-07-24",
+        )
+
+        snapshot = {
+            "code": "000725",
+            "name": "京东方A",
+            "price": 7.5,
+            "change_pct": 0.0,
+            "volume": 0,
+            "portfolio": {
+                "total": 100000,
+                "cash": 80000,
+                "cash_ratio": 0.8,
+                "holdings": [
+                    {"code": "688008", "name": "澜起科技", "shares": 100, "cost": 255.87, "price": 260.0},
+                ],
+            },
+            "watchlist": [
+                {"code": "000725", "name": "京东方A", "price": 7.5, "change_pct": 0.0},
+            ],
+        }
+        settings = load_settings()
+        settings.setdefault("portfolio", {})["auto_adjust_enabled"] = True
+        decision = TradeDecision(
+            action="buy",
+            trade_id="T1",
+            lookback_mss=55.0,
+            lookback_detail=[],
+            trend="rising",
+            reasoning="MSS 达阈值",
+        )
+
+        result = apply_paper_trade(decision, snapshot, settings=settings)
+        assert result.applied is False
+        assert "停牌" in result.message
+
     def test_apply_paper_trade_blocks_duplicate(self, tmp_path, monkeypatch):
         from agent_reach.daily_run.intraday import TradeDecision, apply_paper_trade
         from agent_reach.daily_run.portfolio_manager import ApplyResult, TradeAction

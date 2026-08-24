@@ -95,6 +95,64 @@ def test_auto_fix_stale_days_held():
     assert any("days_held" in f for f in result.fixes_applied)
 
 
+def test_auto_fix_backfills_missing_acquired_date():
+    """M1: legacy holdings with only a days_held counter get acquired_date
+    backfilled (reconstructed via the trading calendar) so future T+1 checks
+    use the more reliable acquired_date path instead of the raw counter."""
+    from datetime import date
+    from unittest.mock import patch
+
+    settings = load_settings()
+    portfolio = {
+        "total": 100000,
+        "cash": 50000,
+        "cash_ratio": 0.5,
+        "holdings": [
+            {
+                "code": "000725",
+                "name": "京东方A",
+                "shares": 1000,
+                "cost": 6.0,
+                "days_held": 3,
+            }
+        ],
+        "watchlist": [],
+    }
+    with patch(
+        "agent_reach.daily_run.trade_calendar._load_trade_dates_akshare",
+        return_value=set(),
+    ), patch(
+        "agent_reach.daily_run.trade_calendar.today_shanghai",
+        return_value=date(2026, 8, 24),
+    ):
+        result = run_close_code_review(portfolio=portfolio, snapshot={}, settings=settings)
+    assert result.portfolio_changed is True
+    acquired = result.portfolio["holdings"][0].get("acquired_date")
+    assert acquired == "2026-08-19"
+    findings = [f for f in result.findings if "days_held 计数器" in f.title]
+    assert findings and findings[0].fixed is True
+
+
+def test_no_backfill_when_auto_fix_disabled():
+    from datetime import date
+    from unittest.mock import patch
+
+    settings = load_settings()
+    settings["close_code_review"] = {"auto_fix_portfolio": False}
+    portfolio = {
+        "total": 100000,
+        "cash": 50000,
+        "cash_ratio": 0.5,
+        "holdings": [
+            {"code": "000725", "name": "京东方A", "shares": 1000, "cost": 6.0, "days_held": 3}
+        ],
+        "watchlist": [],
+    }
+    with patch("agent_reach.daily_run.trade_calendar.today_shanghai", return_value=date(2026, 8, 24)):
+        result = run_close_code_review(portfolio=portfolio, snapshot={}, settings=settings)
+    assert result.portfolio["holdings"][0].get("acquired_date") is None
+
+
 def test_duplicate_scan_ids_reported():
     settings = load_settings()
     settings.setdefault("close_code_review", {})["walk_on_close"] = False

@@ -23,3 +23,18 @@ def test_build_enriched_symbols_merges_holdings_and_watchlist():
     m = build_enriched_symbols(snap)
     assert "688008" in m
     assert "603986" in m
+
+
+def test_build_enriched_symbols_carries_volume_and_turnover():
+    """M4: primary-code volume/turnover must reach the map for suspension checks."""
+    snap = {
+        "code": "688008",
+        "price": 100,
+        "volume": 0,
+        "turnover": 0,
+        "portfolio": {"holdings": [{"code": "688008", "price": 100}]},
+        "watchlist": [],
+    }
+    m = build_enriched_symbols(snap)
+    assert m["688008"]["volume"] == 0
+    assert m["688008"]["turnover"] == 0
