@@ -8,10 +8,13 @@ from agent_reach.daily_run.harness_policy import (
 
 
 def test_repo_settings_has_no_harness_evolved_keys():
+    """Regression: must not clobber settings["harness"] before checking — that
+    would blind the scan to pollution inside the harness section itself
+    (bad_trade_pnl_pct, bad_trade_weekly_pnl_pct, sell_ratio, ...)."""
     from agent_reach.daily_run.settings import _DEFAULT_PATH, _read_json
 
     settings = _read_json(_DEFAULT_PATH)
-    settings["harness"] = {"threshold_evolution_mode": "harness"}
+    settings.setdefault("harness", {})["threshold_evolution_mode"] = "harness"
     pollution = list_static_config_pollution(settings)
     assert pollution == [], f"remove evolved keys from static JSON: {pollution}"
 

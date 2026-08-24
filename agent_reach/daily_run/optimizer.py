@@ -165,6 +165,14 @@ def save_optimized_settings(
         from agent_reach.daily_run.optimizer_harness import apply_optimizer_harness_refinement
 
         apply_optimizer_harness_refinement(result, settings=cfg)
+        # Self-heal: a prior fixed-mode run (or manual edit) may have left static
+        # backtest.macro_veto/aggressive_entry in the persisted file. Harness mode
+        # never reads these (threshold_base ignores them), so leaving them in place
+        # would silently re-persist stale config pollution on every optimizer run.
+        backtest_block = cfg.get("backtest")
+        if isinstance(backtest_block, dict):
+            backtest_block.pop("macro_veto", None)
+            backtest_block.pop("aggressive_entry", None)
     else:
         cfg.setdefault("thresholds", {})
         cfg["thresholds"]["macro_veto"] = params["macro_veto"]

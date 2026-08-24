@@ -886,8 +886,6 @@
     "push_harness_errors_on_feishu": true,
     "push_rollback_on_feishu": true,
     "auto_rollback_on_bad_trade": true,
-    "bad_trade_pnl_pct": -1.0,
-    "bad_trade_weekly_pnl_pct": -2.0,
     "apply_gate": {
       "enabled": true,
       "block_policy_on_audit_fail": true,
