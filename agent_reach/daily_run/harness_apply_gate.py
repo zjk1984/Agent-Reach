@@ -591,10 +591,9 @@ def record_apply_audit(
         event["git_branch"] = detect_git_branch()
     except Exception:
         pass
-    path = _audit_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "a", encoding="utf-8") as f:
-        f.write(json.dumps(event, ensure_ascii=False) + "\n")
+    from agent_reach.daily_run.jsonl_log import append_jsonl_capped
+
+    append_jsonl_capped(_audit_path(), event)
     return event
 
 

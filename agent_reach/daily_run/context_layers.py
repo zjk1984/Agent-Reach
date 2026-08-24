@@ -168,10 +168,9 @@ def record_runtime_overlay_diff(
     if not any(ops[k] for k in ("adds", "updates", "deletes")):
         return None
     diff = build_memory_diff(ops, job=job, trigger=trigger)
-    path = _harness_root() / "overlay_diff.jsonl"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "a", encoding="utf-8") as f:
-        f.write(json.dumps(diff, ensure_ascii=False) + "\n")
+    from agent_reach.daily_run.jsonl_log import append_jsonl_capped
+
+    append_jsonl_capped(_harness_root() / "overlay_diff.jsonl", diff)
     return diff
 
 
@@ -207,10 +206,9 @@ def record_harness_entry_diff(
         trigger=trigger or f"job:{job}",
         refinement_id=refinement_id,
     )
-    path = _harness_root() / "memory_diff.jsonl"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "a", encoding="utf-8") as f:
-        f.write(json.dumps(diff, ensure_ascii=False) + "\n")
+    from agent_reach.daily_run.jsonl_log import append_jsonl_capped
+
+    append_jsonl_capped(_harness_root() / "memory_diff.jsonl", diff)
     return diff
 
 

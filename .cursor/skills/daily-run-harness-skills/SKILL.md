@@ -139,6 +139,8 @@ python3 .cursor/skills/daily-run-code-walk/scripts/run_walk.py
 
 审计轨迹：`~/.agent-reach/daily_run/harness/apply_audit.jsonl`；Feishu harness 卡展示 verification_signals / 门控拦截。
 
+`apply_audit.jsonl` / `refinements.jsonl` / `overlay_diff.jsonl` / `memory_diff.jsonl` 均经 `jsonl_log.append_jsonl_capped()` 写入：超过 2MB 后自动截断为最近 2000 行，避免像 snapshot 之外的审计日志无限增长（曾观察到 `overlay_diff.jsonl` 达两位数 MB）。
+
 ### 改前快照 + Layer B Admission（dsh-guard / self-evolving）
 
 | 能力 | 说明 |
@@ -151,6 +153,17 @@ python3 .cursor/skills/daily-run-code-walk/scripts/run_walk.py
 python3 -m agent_reach.cli daily-run harness list-snapshots
 python3 -m agent_reach.cli daily-run harness restore-snapshot --path ~/.agent-reach/daily_run/harness/snapshots/....json
 ```
+
+### 分支隔离目录回收（branch_overlay GC）
+
+`harness/branches/<slug>/` 在 `branch_overlay.enabled` 时按 git 分支隔离 harness 状态，但**分支合并/删除后从不自动清理**——放着会无限增长（曾观察到累计 MB 级残留，含已不存在分支的目录）。
+
+```bash
+python3 -m agent_reach.cli daily-run harness gc-branches --dry-run --json
+python3 -m agent_reach.cli daily-run harness gc-branches   # 实际删除
+```
+
+只清理 `git branch -a` 找不到对应分支、且目录 mtime 超过 `--min-age-days`（默认 3 天）的目录；`detached` 恒不清理。建议周六 weekly 收尾或本地 cron 里定期跑一次。
 
 ```json
 "harness": {

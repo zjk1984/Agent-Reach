@@ -332,6 +332,12 @@ def main():
     p_dr_h_snap_restore = p_dr_harness_sub.add_parser("restore-snapshot", help="Restore harness state from snapshot")
     p_dr_h_snap_restore.add_argument("--path", required=True, help="Snapshot file path")
     p_dr_h_snap_restore.add_argument("--json", action="store_true", help="JSON output")
+    p_dr_h_gc = p_dr_harness_sub.add_parser(
+        "gc-branches", help="Remove harness/branches/<slug>/ dirs for branches that no longer exist"
+    )
+    p_dr_h_gc.add_argument("--min-age-days", type=int, default=3, help="Skip dirs newer than this (default 3)")
+    p_dr_h_gc.add_argument("--dry-run", action="store_true", help="List what would be removed without deleting")
+    p_dr_h_gc.add_argument("--json", action="store_true", help="JSON output")
     p_dr_capital = p_daily_sub.add_parser(
         "capital",
         help="Record external deposits/withdrawals for accurate daily P&L",
@@ -2358,7 +2364,22 @@ def _cmd_daily_run(args):
                     print(f"   pre-restore backup: {result.get('pre_restore_snapshot')}")
             return
 
-        print("Usage: agent-reach daily-run harness {show|list-refinements|rollback|refine|migrate-settings|sync-settings|list-snapshots|restore-snapshot}")
+        if action == "gc-branches":
+            from agent_reach.daily_run.harness_git import gc_stale_branch_dirs
+
+            result = gc_stale_branch_dirs(min_age_days=args.min_age_days, dry_run=args.dry_run)
+            if args.json:
+                print(_json.dumps(result, ensure_ascii=False, indent=2))
+            else:
+                verb = "Would remove" if args.dry_run else "Removed"
+                if result["removed"]:
+                    print(f"{verb} {len(result['removed'])} stale branch dir(s): {', '.join(result['removed'])}")
+                else:
+                    print("No stale harness branch dirs found.")
+                print(f"Kept: {len(result['kept'])}")
+            return
+
+        print("Usage: agent-reach daily-run harness {show|list-refinements|rollback|refine|migrate-settings|sync-settings|list-snapshots|restore-snapshot|gc-branches}")
         sys.exit(1)
 
     if args.daily_action == "capital":

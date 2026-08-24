@@ -288,10 +288,9 @@ class HarnessState:
             created_at=_now_iso(),
         )
         self.refinements.append(event)
-        refinements_path = _refinements_path()
-        refinements_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(refinements_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(event.to_dict(), ensure_ascii=False) + "\n")
+        from agent_reach.daily_run.jsonl_log import append_jsonl_capped
+
+        append_jsonl_capped(_refinements_path(), event.to_dict())
         return event
 
     def overview(self, *, entry_limit: int = 6) -> str:

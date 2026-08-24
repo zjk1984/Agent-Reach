@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -68,3 +70,80 @@ def resolve_harness_paths(settings: Optional[dict[str, Any]] = None) -> dict[str
 
 def resolve_harness_state_path(settings: Optional[dict[str, Any]] = None) -> Path:
     return resolve_harness_paths(settings)["state"]
+
+
+def list_known_branch_slugs(*, cwd: Optional[Path] = None) -> set[str]:
+    """Slugs for every local + remote-tracking branch (matches branch_slug())."""
+    try:
+        proc = subprocess.run(
+            ["git", "branch", "-a", "--format=%(refname:short)"],
+            cwd=str(cwd or Path.cwd()),
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return set()
+    if proc.returncode != 0:
+        return set()
+    slugs: set[str] = set()
+    for raw in (proc.stdout or "").splitlines():
+        name = raw.strip()
+        if not name:
+            continue
+        # Strip "origin/" (or any remote name) so local + remote copies of the
+        # same branch collapse to one slug.
+        name = name.split("/", 1)[1] if name.startswith("origin/") else name
+        slugs.add(branch_slug(name))
+    return slugs
+
+
+def gc_stale_branch_dirs(
+    *,
+    min_age_days: int = 3,
+    dry_run: bool = False,
+    cwd: Optional[Path] = None,
+) -> dict[str, Any]:
+    """Remove ``harness/branches/<slug>/`` dirs whose branch no longer exists.
+
+    Branch-isolated harness state (see ``resolve_harness_paths``) is never
+    cleaned up when a feature branch is merged/deleted, so it accumulates
+    forever. Guarded by ``min_age_days`` (mtime) so a dir isn't removed the
+    moment a branch is briefly unavailable (e.g. mid-rename).
+    """
+    branches_dir = _harness_root() / "branches"
+    if not branches_dir.exists():
+        return {"removed": [], "kept": [], "scanned": 0}
+
+    known = list_known_branch_slugs(cwd=cwd)
+    known.add("detached")  # always-valid fallback slug, never orphaned
+    now = datetime.now(timezone.utc).timestamp()
+    min_age_seconds = max(0, min_age_days) * 86400
+
+    removed: list[str] = []
+    kept: list[str] = []
+    for entry in sorted(branches_dir.iterdir()):
+        if not entry.is_dir():
+            continue
+        slug = entry.name
+        if slug in known:
+            kept.append(slug)
+            continue
+        try:
+            age = now - entry.stat().st_mtime
+        except OSError:
+            age = 0
+        if age < min_age_seconds:
+            kept.append(slug)
+            continue
+        removed.append(slug)
+        if not dry_run:
+            shutil.rmtree(entry, ignore_errors=True)
+
+    return {
+        "removed": removed,
+        "kept": kept,
+        "scanned": len(removed) + len(kept),
+        "dry_run": dry_run,
+    }
