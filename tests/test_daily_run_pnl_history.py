@@ -9,7 +9,9 @@ from agent_reach.daily_run.daily_pnl_history import (
     append_daily_pnl,
     attach_cumulative_pnl,
     backfill_from_manifests,
+    detect_pnl_history_gaps,
     load_daily_pnl_history,
+    render_pnl_history_markdown,
     render_pnl_line_chart_ascii,
     render_pnl_line_chart_svg,
     summary_to_history_row,
@@ -107,3 +109,58 @@ class TestDailyPnlHistory:
         svg = render_pnl_line_chart_svg(rows, value_key="cumulative_pnl")
         assert "<polyline" in svg
         assert "2026-08-16" in svg
+
+    def test_markdown_clarifies_cumulative_is_nav_based(self):
+        """M2: the 累计 column should be labeled distinctly from the close
+        card's 总收益 (FIFO) so the two unrelated 'cumulative' figures aren't
+        mistaken for the same number."""
+        rows = attach_cumulative_pnl([summary_to_history_row(_summary("2026-08-15", 500.0))])
+        md = render_pnl_history_markdown(rows)
+        assert "净值口径" in md
+        assert "总收益" in md
+
+
+class TestDetectPnlHistoryGaps:
+    def test_no_gaps_when_all_trading_days_recorded(self, monkeypatch):
+        monkeypatch.setattr(
+            "agent_reach.daily_run.trade_calendar._load_trade_dates_akshare",
+            lambda: {"2026-08-17", "2026-08-18", "2026-08-19"},
+        )
+        rows = [
+            summary_to_history_row(_summary("2026-08-17", 100.0)),
+            summary_to_history_row(_summary("2026-08-18", 100.0)),
+            summary_to_history_row(_summary("2026-08-19", 100.0)),
+        ]
+        gaps = detect_pnl_history_gaps(
+            rows, start=date(2026, 8, 17), end=date(2026, 8, 19)
+        )
+        assert gaps == []
+
+    def test_flags_missing_trading_day(self, monkeypatch):
+        monkeypatch.setattr(
+            "agent_reach.daily_run.trade_calendar._load_trade_dates_akshare",
+            lambda: {"2026-08-17", "2026-08-18", "2026-08-19"},
+        )
+        rows = [
+            summary_to_history_row(_summary("2026-08-17", 100.0)),
+            # 2026-08-18 missing (e.g. cron crashed) -> should be flagged.
+            summary_to_history_row(_summary("2026-08-19", 100.0)),
+        ]
+        gaps = detect_pnl_history_gaps(
+            rows, start=date(2026, 8, 17), end=date(2026, 8, 19)
+        )
+        assert gaps == ["2026-08-18"]
+
+    def test_non_trading_days_are_not_gaps(self, monkeypatch):
+        """A weekend with no trade-date-calendar coverage falls back to the
+        weekday heuristic and should never be reported as a gap."""
+        monkeypatch.setattr(
+            "agent_reach.daily_run.trade_calendar._load_trade_dates_akshare",
+            lambda: set(),
+        )
+        # 2026-08-15 and 2026-08-16 are a Sat/Sun.
+        rows: list = []
+        gaps = detect_pnl_history_gaps(
+            rows, start=date(2026, 8, 15), end=date(2026, 8, 16)
+        )
+        assert gaps == []

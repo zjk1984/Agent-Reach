@@ -28,13 +28,12 @@ class TestWeeklyReport:
                 "watchlist": [{"code": "603986", "name": "兆易"}],
             }
         }
-        dr = tmp_path / ".agent-reach" / "daily_run"
-        dr.mkdir(parents=True)
-        (dr / "last_morning.json").write_text(__import__("json").dumps(morning), encoding="utf-8")
-        monkeypatch.setattr(
-            "agent_reach.daily_run.weekly_report.Path.home",
-            lambda: tmp_path,
-        )
+        # tests/conftest.py's isolate_daily_run_state autouse fixture already
+        # points workflows._default_baseline_path() at tmp_path/"last_morning.json"
+        # (to keep this from reading the real, live ~/.agent-reach/daily_run
+        # baseline) — write there directly instead of patching Path.home().
+        baseline_path = tmp_path / "last_morning.json"
+        baseline_path.write_text(__import__("json").dumps(morning), encoding="utf-8")
         pf, notes = resolve_weekly_portfolio(
             {},
             {"holdings": [], "watchlist": []},

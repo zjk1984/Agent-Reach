@@ -304,3 +304,108 @@ class TestWatchVersionCompare:
         out = capsys.readouterr().out
         assert "新版本可用" not in out
         assert "全部正常" in out
+
+
+class TestDailyRunCapitalCLI:
+    """M3: `daily-run capital deposit/withdraw` should atomically log the event
+    and sync portfolio.json's cash/total, so it can't drift out of sync with
+    the ledger event (which previously required a separate manual edit and
+    could get "corrected away" by close_code_review's cash-vs-ledger check)."""
+
+    def _write_portfolio(self, tmp_path):
+        import json
+
+        portfolio_path = tmp_path / "portfolio.json"
+        portfolio_path.write_text(
+            json.dumps(
+                {
+                    "cash": 50000.0,
+                    "total": 120000.0,
+                    "cash_ratio": round(50000.0 / 120000.0, 4),
+                    "holdings": [],
+                    # load_portfolio() falls back to the bundled example
+                    # portfolio when both holdings and watchlist are empty
+                    # (_portfolio_is_empty) — keep a watchlist entry so this
+                    # test's own file is the one actually loaded.
+                    "watchlist": [{"code": "000725", "name": "京东方A"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return portfolio_path
+
+    def test_deposit_syncs_portfolio_cash_by_default(self, tmp_path, capsys):
+        import json
+
+        portfolio_path = self._write_portfolio(tmp_path)
+        with patch(
+            "sys.argv",
+            [
+                "agent-reach",
+                "daily-run",
+                "capital",
+                "deposit",
+                "--amount",
+                "30000",
+                "--date",
+                "2026-08-17",
+            ],
+        ):
+            main()
+
+        saved = json.loads(portfolio_path.read_text(encoding="utf-8"))
+        assert saved["cash"] == 80000.0
+        assert saved["total"] == 150000.0
+        assert saved["cash_ratio"] == round(80000.0 / 150000.0, 4)
+
+        out = capsys.readouterr().out
+        assert "已记录入金" in out
+        assert "portfolio 现金已同步" in out
+
+    def test_withdraw_syncs_portfolio_cash_down(self, tmp_path, capsys):
+        import json
+
+        portfolio_path = self._write_portfolio(tmp_path)
+        with patch(
+            "sys.argv",
+            [
+                "agent-reach",
+                "daily-run",
+                "capital",
+                "withdraw",
+                "--amount",
+                "10000",
+                "--date",
+                "2026-08-17",
+            ],
+        ):
+            main()
+
+        saved = json.loads(portfolio_path.read_text(encoding="utf-8"))
+        assert saved["cash"] == 40000.0
+        assert saved["total"] == 110000.0
+
+    def test_no_adjust_cash_flag_leaves_portfolio_untouched(self, tmp_path, capsys):
+        import json
+
+        portfolio_path = self._write_portfolio(tmp_path)
+        with patch(
+            "sys.argv",
+            [
+                "agent-reach",
+                "daily-run",
+                "capital",
+                "deposit",
+                "--amount",
+                "30000",
+                "--date",
+                "2026-08-17",
+                "--no-adjust-cash",
+            ],
+        ):
+            main()
+
+        saved = json.loads(portfolio_path.read_text(encoding="utf-8"))
+        assert saved["cash"] == 50000.0  # unchanged
+        out = capsys.readouterr().out
+        assert "未同步" in out

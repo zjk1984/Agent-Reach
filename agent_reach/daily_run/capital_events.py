@@ -120,6 +120,38 @@ def net_capital_flow(
     return round(total, 2)
 
 
+def apply_capital_event_to_portfolio(
+    portfolio: dict[str, Any],
+    kind: str,
+    amount: float,
+) -> dict[str, Any]:
+    """Apply a deposit/withdraw's cash delta to `portfolio` (cash + total in lockstep).
+
+    A capital event doesn't change any holding's market value, so `total` can be
+    shifted by the same delta as `cash` without a fresh quote/enriched-symbols
+    fetch. Intended to be called right alongside `append_capital_event` (see the
+    `daily-run capital deposit/withdraw` CLI) so the ledger event and the
+    portfolio balance never drift apart — logging one without the other is what
+    causes `close_code_review`'s cash-vs-ledger check to (correctly, but
+    unhelpfully) treat a real deposit/withdrawal as unexplained drift.
+    """
+    kind_norm = kind.strip().lower()
+    if kind_norm not in ("deposit", "withdraw"):
+        raise ValueError("kind must be deposit or withdraw")
+    amt = float(amount)
+    if amt <= 0:
+        raise ValueError("amount must be positive")
+    delta = amt if kind_norm == "deposit" else -amt
+
+    pf = dict(portfolio)
+    pf["cash"] = round(float(pf.get("cash") or 0) + delta, 2)
+    if pf.get("total") is not None:
+        new_total = round(float(pf["total"]) + delta, 2)
+        pf["total"] = new_total
+        pf["cash_ratio"] = round(pf["cash"] / new_total, 4) if new_total > 0 else 1.0
+    return pf
+
+
 def format_capital_flow_note(net_flow: float) -> str:
     if abs(net_flow) < 0.01:
         return ""

@@ -1246,7 +1246,13 @@ def _recalc_totals(pf: dict[str, Any], enriched: dict[str, dict[str, Any]]) -> N
     mv = 0.0
     for h in pf.get("holdings") or []:
         code = _normalize_code(str(h.get("code", "")))
-        price = _price_for(h, enriched) or h.get("cost") or 0
+        # Merge enriched (freshest quote) over the holding's own possibly-stale
+        # embedded `price` first — same idiom as `_holding_unrealized_pnl` —
+        # so `total`/`cash_ratio` mark to the same price used elsewhere for
+        # per-holding P&L (e.g. weekly_report._holding_pnl_rows), instead of a
+        # snapshot price captured earlier in the same run.
+        row = {**h, **enriched.get(code, {})}
+        price = _price_for(row, enriched) or h.get("cost") or 0
         mv += int(h.get("shares") or 0) * float(price)
     total = round(cash + mv, 2)
     pf["total"] = total

@@ -90,3 +90,22 @@ def isolate_daily_run_state(monkeypatch, tmp_path):
     # need patching.
     monkeypatch.setattr("agent_reach.daily_run.trade_calendar.is_continuous_session", lambda dt=None: True)
     monkeypatch.setattr("agent_reach.daily_run.intraday.is_continuous_session", lambda dt=None: True)
+
+    # Morning baseline / capital events / daily P&L history: same real-file leak
+    # as harness state and the trade ledger above. This machine also runs the
+    # live daily-run cron, so ~/.agent-reach/daily_run/last_morning.json,
+    # capital_events.jsonl, and pnl_history.jsonl all have real, non-empty
+    # content that would otherwise silently feed close_code_review's
+    # cash-vs-ledger check / pnl-history-gap check during tests.
+    monkeypatch.setattr(
+        "agent_reach.daily_run.workflows._default_baseline_path",
+        lambda: tmp_path / "last_morning.json",
+    )
+    monkeypatch.setattr(
+        "agent_reach.daily_run.capital_events.default_capital_events_path",
+        lambda: tmp_path / "capital_events.jsonl",
+    )
+    monkeypatch.setattr(
+        "agent_reach.daily_run.daily_pnl_history.default_pnl_history_path",
+        lambda: tmp_path / "pnl_history.jsonl",
+    )

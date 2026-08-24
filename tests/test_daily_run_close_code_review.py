@@ -64,6 +64,88 @@ def test_detect_cash_ratio_mismatch():
     assert abs(float(result.portfolio["cash_ratio"]) - cash / total) < 0.001
 
 
+def test_auto_fix_cash_vs_ledger_recalcs_total(tmp_path, monkeypatch):
+    """H1: the cash-vs-ledger auto-fix must recompute `total`, not just `cash`/
+    `cash_ratio` — otherwise total = cash + MV drifts out of its own identity
+    by exactly the corrected amount."""
+    import json
+
+    from agent_reach.daily_run import workflows
+
+    baseline_path = tmp_path / "last_morning.json"
+    baseline_path.write_text(
+        json.dumps({"portfolio": {"cash": 50000.0, "holdings": []}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(workflows, "_default_baseline_path", lambda: baseline_path)
+
+    settings = load_settings()
+    settings = {
+        **settings,
+        "harness": {**(settings.get("harness") or {}), "enabled": False, "runtime_overlay": False},
+    }
+    # No ledger trades today, no capital events -> expected end cash = morning
+    # cash (50000). portfolio.json on disk claims cash=60000 (drift +10000) and
+    # a stale, already-inconsistent `total` (999999, unrelated to cash/MV) —
+    # deliberately NOT `old_total - drift`, so a naive "shift total by drift"
+    # fix (999999 - 10000 = 989999) would still be wrong; only a genuine
+    # recompute (cash + MV) lands on the correct 70000.
+    portfolio = {
+        "total": 999999.0,
+        "cash": 60000.0,
+        "cash_ratio": 0.5,
+        "holdings": [{"code": "000725", "name": "京东方A", "shares": 1000, "cost": 4.0}],
+        "watchlist": [],
+    }
+    snapshot = {
+        "portfolio": {
+            "holdings": [{"code": "000725", "name": "京东方A", "price": 20.0}],
+        },
+    }
+    result = run_close_code_review(portfolio=portfolio, snapshot=snapshot, settings=settings)
+
+    assert result.portfolio_changed is True
+    fixed = result.portfolio
+    assert fixed["cash"] == 50000.0
+    # total must reflect cash(50000) + MV(1000 * 20.0 = 20000) = 70000.
+    assert fixed["total"] == 70000.0
+    assert abs(fixed["cash"] / fixed["total"] - fixed["cash_ratio"]) < 1e-3
+    assert any("ledger 不一致" in f.title for f in result.findings)
+
+
+def test_pnl_history_gap_flagged(monkeypatch):
+    """M2: recent trading days missing from pnl_history.jsonl surface as a
+    (non-auto-fixable) finding, since `cumulative_pnl` silently skips them."""
+    from datetime import date
+
+    monkeypatch.setattr(
+        "agent_reach.daily_run.trade_calendar.today_shanghai",
+        lambda: date(2026, 8, 24),
+    )
+    monkeypatch.setattr(
+        "agent_reach.daily_run.trade_calendar._load_trade_dates_akshare",
+        lambda: {
+            "2026-08-17",
+            "2026-08-18",
+            "2026-08-19",
+            "2026-08-20",
+            "2026-08-21",
+            "2026-08-24",
+        },
+    )
+    settings = load_settings()
+    settings["close_code_review"] = {"walk_on_close": False, "run_smoke_tests": False}
+    result = run_close_code_review(
+        portfolio={"holdings": [], "watchlist": [], "cash": 1, "total": 1, "cash_ratio": 1},
+        snapshot={},
+        settings=settings,
+    )
+    gap_findings = [f for f in result.findings if f.area == "pnl_history"]
+    assert gap_findings
+    assert gap_findings[0].fixed is False
+    assert "2026-08-21" in gap_findings[0].detail
+
+
 def test_auto_fix_stale_days_held():
     from datetime import date
     from unittest.mock import patch
