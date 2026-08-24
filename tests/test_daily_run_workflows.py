@@ -61,7 +61,9 @@ class TestMorningWorkflow:
     @patch("agent_reach.daily_run.workflows._push_markdown", return_value={"code": 0, "data": {}})
     @patch("agent_reach.daily_run.workflows._send_start_notification")
     def test_run_morning_dry_pipeline(self, mock_start, mock_push, morning_snapshot):
-        result = run_morning(morning_snapshot, settings=load_settings(), push=False, start_notify=False)
+        # Repo default has team.enabled + morning_team_first; CI has no user override.
+        settings = _settings_with_team(enabled=False, morning_team_first=False)
+        result = run_morning(morning_snapshot, settings=settings, push=False, start_notify=False)
         assert "evaluate" in result["steps"]
         assert "team_first" not in result["steps"]
         assert result["steps"][0] in ("snapshot", "mss_experts")
