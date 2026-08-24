@@ -698,6 +698,11 @@ class TestIntradaySellWhatIf:
             "thresholds": {"macro_veto": 40, "aggressive_entry": 50, "min_cash_ratio": 0.1},
             "trading": {"holding_lock_days": 0},
             "harness": {"threshold_evolution_mode": "harness"},
+            # Bypass the deep-loss "coverable gains" requirement (which
+            # otherwise reads the real trade ledger for other realized/
+            # unrealized gains to cover this loss) so this test only
+            # exercises the macro-veto sell signal it's actually about.
+            "harness_runtime": {"deep_loss_policy": {"cover_ratio": 0}},
         }
 
         with patch(
@@ -829,6 +834,10 @@ class TestIntradaySellWhatIf:
                     "thresholds": {"macro_veto": 40, "aggressive_entry": 50, "min_cash_ratio": 0.1},
                     "trading": {"holding_lock_days": 0},
                     "harness": {"threshold_evolution_mode": "harness"},
+                    # See test_missed_macro_veto_sell_signal: bypass the
+                    # deep-loss coverable-gains check (real trade ledger
+                    # dependent) so only the macro-veto signal is tested.
+                    "harness_runtime": {"deep_loss_policy": {"cover_ratio": 0}},
                 },
             )
 

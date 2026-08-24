@@ -10,7 +10,20 @@ from agent_reach.daily_run.snapshot_builder import _normalize_code
 
 _CODE_RE = re.compile(r"\b(\d{6})\b")
 _BUY_PHRASES = ("买入", "加仓", "可做", "追涨", "建仓")
-_AVOID_PHRASES = ("回避", "减仓", "清仓", "止损")
+# Negated/avoid-consistent phrasing that legitimately contains a "买入"-style
+# substring (e.g. verdict.py's standard macro-veto reasoning "MSS 30 低于宏观
+# 一票否决线 40，禁止买入") — must not be flagged as a bullish contradiction.
+_AVOID_PHRASES = (
+    "回避",
+    "减仓",
+    "清仓",
+    "止损",
+    "禁止买入",
+    "暂缓买入",
+    "不宜买入",
+    "严禁买入",
+    "否决",
+)
 
 
 def report_coherence_enabled(settings: Optional[dict[str, Any]] = None) -> bool:

@@ -1054,6 +1054,7 @@ class TestHarnessRuntimeExtensions:
         assert policy["min_target_cny"] <= 80
 
     def test_bad_trade_policy_evolution_on_miss(self):
+        from agent_reach.daily_run.harness import save_harness
         from agent_reach.daily_run.harness_policy import (
             bad_trade_policy_default,
             resolve_harness_bad_trade_policy,
@@ -1081,12 +1082,15 @@ class TestHarnessRuntimeExtensions:
         policy = resolve_harness_bad_trade_policy(state, settings=settings)
         assert policy["bad_trade_pnl_pct"] == -0.8
         assert policy["bad_trade_weekly_pnl_pct"] == -1.5
+        # apply_harness_policy_overlay() re-reads harness state from disk, so
+        # the in-memory state must be persisted for the overlay to see it.
+        save_harness(state)
         eff = apply_harness_policy_overlay({**settings, "thresholds": {}})
         assert eff["harness"]["bad_trade_pnl_pct"] == -0.8
         assert bad_trade_policy_default(eff, "bad_trade_pnl_pct") == -0.8
 
     def test_sell_ratio_harness_evolution_on_defensive_trim(self):
-        from agent_reach.daily_run.harness import HarnessEntry, HarnessState
+        from agent_reach.daily_run.harness import HarnessEntry, HarnessState, save_harness
         from agent_reach.daily_run.harness_policy import (
             apply_harness_policy_overlay,
             deep_loss_policy_default,
@@ -1114,6 +1118,9 @@ class TestHarnessRuntimeExtensions:
         }
         policy = resolve_harness_deep_loss_policy(state, settings=settings)
         assert policy["sell_ratio"] == 0.5
+        # apply_harness_policy_overlay() re-reads harness state from disk, so
+        # the in-memory state must be persisted for the overlay to see it.
+        save_harness(state)
         eff = apply_harness_policy_overlay({**settings, "thresholds": {}})
         assert eff["pnl_overview"]["deep_loss_sell_ratio"] == 0.5
         assert deep_loss_policy_default(eff, "sell_ratio") == 0.5
@@ -1145,7 +1152,7 @@ class TestHarnessRuntimeExtensions:
         assert policy["sell_ratio"] == 0.8
 
     def test_non_deep_loss_sell_ratio_harness_evolution_on_defensive_trim(self):
-        from agent_reach.daily_run.harness import HarnessEntry, HarnessState
+        from agent_reach.daily_run.harness import HarnessEntry, HarnessState, save_harness
         from agent_reach.daily_run.harness_policy import (
             apply_harness_policy_overlay,
             deep_loss_policy_default,
@@ -1173,6 +1180,9 @@ class TestHarnessRuntimeExtensions:
         }
         policy = resolve_harness_deep_loss_policy(state, settings=settings)
         assert policy["non_deep_loss_sell_ratio"] == 0.7
+        # apply_harness_policy_overlay() re-reads harness state from disk, so
+        # the in-memory state must be persisted for the overlay to see it.
+        save_harness(state)
         eff = apply_harness_policy_overlay({**settings, "thresholds": {}})
         assert eff["pnl_overview"]["non_deep_loss_sell_ratio"] == 0.7
         assert deep_loss_policy_default(eff, "non_deep_loss_sell_ratio") == 0.7

@@ -330,3 +330,41 @@ python3 -m agent_reach.cli daily-run harness sync-settings
 ```bash
 python3 -m pytest tests/test_daily_run_harness_p8.py tests/test_daily_run_harness_p7.py tests/test_daily_run_harness_p6.py tests/test_daily_run_harness_p5.py tests/test_daily_run_harness_p4.py tests/test_daily_run_harness_p3.py tests/test_daily_run_harness_p2.py tests/test_daily_run_harness_p1.py -q
 ```
+
+### 测试隔离（统一 monkeypatch，避免读真实生产状态）
+
+`tests/conftest.py` 里的 `isolate_daily_run_state`（**autouse**，对全部测试生效）统一把
+harness 落盘路径重定向到 `tmp_path`：
+
+- 只需要 patch `agent_reach.daily_run.harness_git.resolve_harness_paths` /
+  `resolve_harness_state_path` / `_harness_root` 这三个函数即可——`harness.py` 的
+  `harness_dir()` / `_state_path()` / `_refinements_path()`、`harness_apply_gate.py` 的
+  `_audit_path()`、`context_layers.py` 的 `_harness_root()` 全部在函数体内 `from
+  agent_reach.daily_run.harness_git import ...`（每次调用现取），patch 这三个源头即可级联生效，
+  不需要逐个测试文件写 `harness_tmp` fixture。
+- 同时把 `trade_ledger.jsonl`（`default_ledger_path`，在 `portfolio_manager.py` /
+  `realized_pnl.py` / `weekly_report.py` 三处都有**模块级** `from ... import` 冻结引用，三处都要
+  单独 patch）和 `daily_trade_state.json` 重定向到 `tmp_path`。
+
+**这解决的真实 bug**：这台机器同时跑真实 cron（daily-run）和测试，`harness_state.json` /
+`trade_ledger.jsonl` 会被 cron 并发修改。之前很多测试没做任何隔离，直接读了这些真实文件：
+
+- `test_intraday_narrative_includes_context_trace`、`test_daily_run_pnl_target.py` 两个用例：
+  读到真实 harness 已进化的 `pnl_target.base_target_pct` 等值，断言随时间漂移，偶发失败。
+- `test_daily_run_portfolio_manager.py::test_buy_from_watchlist` 等：`pnl_buy_block_reason()`
+  重放真实 `trade_ledger.jsonl` 的连亏/胜率，导致 buy 决策依机器当天真实交易而变。
+- `test_daily_run_harness_policy.py` 里几个 `apply_harness_policy_overlay()` 用例：只在内存里
+  造了 `HarnessState`，忘记 `save_harness(state)` 落盘——`apply_harness_policy_overlay` 内部会
+  重新 `load_harness()`，之前全靠真实磁盘状态凑巧匹配断言，隔离后必须显式 `save_harness(state)`。
+- `test_daily_run_sell_rules_whatif.py` 里 `threshold_evolution_mode: harness` 的用例：深亏
+  cover 检查会读真实 ledger 里"其他仓位/历史已实现盈利"来算 `coverable`；干净环境下 `coverable=0`
+  必然 block。测试真正要验的是 macro_veto 信号，应显式传
+  `harness_runtime.deep_loss_policy.cover_ratio=0` 绕开 cover 检查，而不是依赖真实盈利数据。
+
+**新写 harness-evolution 相关测试时**：如果要断言某个 harness-evolved 值（`macro_veto` /
+`aggressive_entry` / `deep_loss_policy` / `position_policy` / `pnl_target` 等），优先用
+`settings["harness_runtime"][xxx_policy]` 直接注入期望值（多数 `_position_policy()` /
+`_deep_loss_policy()` 风格的函数都会优先读这个，不走磁盘），或显式 `harness["threshold_modes"]
+= {"key": "fixed"}` + `thresholds.key = value` 强制走 fixed 模式；只有确实要测「从
+`HarnessState` 到 effective 值」的转换逻辑时才应该 `save_harness(state)` 后再调
+`effective_settings()` / `apply_harness_policy_overlay()`。
