@@ -54,3 +54,6 @@ Non-obvious environment notes:
   at import time (and `scripts/daily-run-local-cron.sh` sets the same before Python starts) to
   avoid a rare torch-MKL/numpy-MKL segfault race observed when both run in one process; don't
   remove these when touching that file/script.
+- **Abandoned branches (do not merge or remind):** `cursor/local-setup-scripts` — deleted
+  2026-08-25; superseded by `scripts/daily-run-local-{setup,cron}.sh`. Local setup uses repo-relative
+  paths; no need to resurrect `env.sh` / `tools/daily-run-wrapper.sh`.
