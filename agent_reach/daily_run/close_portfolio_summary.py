@@ -71,6 +71,7 @@ class ClosePortfolioSummary:
     intraday_friction_whatif: Optional[dict[str, Any]] = None
     intraday_sell_whatif: Optional[dict[str, Any]] = None
     pnl_attribution: dict[str, Any] = field(default_factory=dict)
+    deploy_budget_line: Optional[str] = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -118,6 +119,7 @@ class ClosePortfolioSummary:
             "intraday_friction_whatif": self.intraday_friction_whatif,
             "intraday_sell_whatif": self.intraday_sell_whatif,
             "pnl_attribution": self.pnl_attribution,
+            "deploy_budget_line": self.deploy_budget_line,
         }
 
 
@@ -530,9 +532,15 @@ def format_intraday_trade_narrative_line(
     if reasoning:
         parts.append(f"决策：{reasoning}")
 
+    from agent_reach.daily_run.portfolio_manager import trade_buy_budget_blocked
+
+    is_buy_budget = trade_buy_budget_blocked(trade_record)
+
     applied = trade_record.get("portfolio_applied")
     if applied is False:
-        if portfolio_message and portfolio_message != reasoning:
+        if is_buy_budget:
+            parts.append("预算预检阻断（部署预算不足一手，非执行失败）")
+        elif portfolio_message and portfolio_message != reasoning:
             parts.append(f"未落账：{portfolio_message}")
         else:
             parts.append("未落账")
@@ -548,7 +556,7 @@ def format_intraday_trade_narrative_line(
         parts.append("摩擦惩罚阻断")
 
     block_kind = str(trade_record.get("block_kind") or "").strip()
-    if trade_record.get("blocked") and block_kind:
+    if trade_record.get("blocked") and block_kind and block_kind != "buy_budget":
         parts.append(f"阻断 {block_kind}")
 
     return " · ".join(parts)
@@ -582,25 +590,35 @@ def format_intraday_trade_narrative_lines(
 
 
 def _format_intraday_trade_lines(trades: list[dict[str, Any]]) -> list[str]:
+    from agent_reach.daily_run.portfolio_manager import trade_buy_budget_blocked
+
     lines: list[str] = []
     for entry in trades:
         action = entry.get("action")
-        if action in (None, "hold", "skip"):
+        is_buy_budget = trade_buy_budget_blocked(entry)
+        if action in (None, "hold", "skip") and not is_buy_budget:
             continue
         name = entry.get("name") or entry.get("code") or "?"
         code = entry.get("code") or "?"
-        side = "买入" if action == "buy" else "卖出" if action == "sell" else str(action)
+        if is_buy_budget:
+            side = "观望（预算阻断）"
+        else:
+            side = "买入" if action == "buy" else "卖出" if action == "sell" else str(action)
         reason = str(entry.get("reasoning") or entry.get("portfolio_message") or "").strip()
         shares = entry.get("shares")
         price = entry.get("price")
-        line = f"- {side} **{name}** ({code})"
+        trade_id = entry.get("trade_id")
+        prefix = f"- {trade_id} · " if trade_id else "- "
+        line = f"{prefix}{side} **{name}** ({code})"
         if shares and price:
             line += f" {shares}股 @ ¥{float(price):.2f}"
         if reason:
             line += f" — {reason}"
         elif entry.get("lookback_mss") is not None:
             line += f" — Lookback MSS {entry.get('lookback_mss')}"
-        if not entry.get("portfolio_applied", True):
+        if is_buy_budget:
+            line += "（预算预检阻断，非现金不足）"
+        elif not entry.get("portfolio_applied", True):
             line += "（未落账）"
         lines.append(line)
         entry_at = str(entry.get("as_of") or "")
@@ -1147,6 +1165,14 @@ def build_close_portfolio_summary(
         watchlist_intel=dict(current.get("watchlist_intel") or {}),
         notes=notes,
     )
+    if settings:
+        from agent_reach.daily_run.portfolio_manager import portfolio_deploy_budget_markdown
+
+        summary.deploy_budget_line = portfolio_deploy_budget_markdown(
+            close_pf,
+            enriched,
+            settings,
+        )
     from agent_reach.daily_run.backtest_attributor import build_close_pnl_attribution
 
     close_cfg = (settings or {}).get("close_portfolio") or {}
@@ -1210,6 +1236,9 @@ def render_close_portfolio_markdown(
         lines.append(
             f"- 仓位：股票 **{float(stock_ratio):.1%}** / 现金 **{float(cash_ratio):.1%}**"
         )
+    deploy_budget_line = data.get("deploy_budget_line")
+    if deploy_budget_line:
+        lines.append(str(deploy_budget_line))
     total_return_line = format_total_return_line(data)
     if total_return_line:
         lines.append(total_return_line)

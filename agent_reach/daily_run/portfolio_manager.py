@@ -1134,6 +1134,14 @@ def buy_budget_footer_markdown(
     return "💰 **部署预算：** " + " · ".join(parts)
 
 
+def trade_buy_budget_blocked(record: dict[str, Any]) -> bool:
+    """Decision- or trade-record-level deploy budget precheck block."""
+    if record.get("block_kind") == "buy_budget":
+        return True
+    reasoning = str(record.get("reasoning") or "")
+    return "可部署买入预算" in reasoning
+
+
 def buy_budget_precheck_reason(
     pf: dict[str, Any],
     enriched: dict[str, dict[str, Any]],
@@ -1147,6 +1155,33 @@ def buy_budget_precheck_reason(
         return None
     reason = str(analysis.get("block_reason") or "").strip()
     return reason or "买入预算不足"
+
+
+def portfolio_deploy_budget_markdown(
+    pf: dict[str, Any],
+    enriched: dict[str, dict[str, Any]],
+    settings: dict[str, Any],
+) -> Optional[str]:
+    """Portfolio-level deploy budget snapshot for close review cards."""
+    from agent_reach.daily_run.harness_policy import _position_policy
+
+    holdings = list(pf.get("holdings") or [])
+    budget_ctx = _buy_budget_context(pf, enriched, settings, holdings)
+    position = _position_policy(settings)
+    deploy_ratio = float(position.get("deploy_ratio", 1.0))
+    if isinstance(budget_ctx, ApplyResult):
+        return (
+            f"- **部署预算：** {budget_ctx.message}"
+            f" · deploy_ratio {deploy_ratio:.0%}"
+        )
+
+    total, _cash, deployable, _min_deploy, min_cash_ratio, commission_rate = budget_ctx
+    budget_gross = harness_buy_budget(total=total, deployable=deployable, settings=settings)
+    budget = budget_gross / (1 + commission_rate)
+    return (
+        f"- **部署预算：** 可部署 ¥{deployable:,.0f}（min_cash {min_cash_ratio:.0%} 保留）"
+        f" · deploy_ratio {deploy_ratio:.0%} → 单笔约 ¥{budget:,.0f}"
+    )
 
 
 def _buy_budget_context(

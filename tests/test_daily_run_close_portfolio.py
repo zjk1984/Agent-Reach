@@ -586,6 +586,49 @@ class TestClosePortfolioSummary:
         assert "当前持股" in md
         assert any("总收益" in line for line in summary.reason_lines)
 
+    def test_render_includes_deploy_budget_line(self):
+        settings = {
+            "thresholds": {"min_cash_ratio": 0.5},
+            "portfolio": {"min_deploy_cash": 1000},
+            "harness_runtime": {
+                "position_policy": {"deploy_ratio": 0.25, "max_position_pct": 25.0},
+            },
+        }
+        summary = _build_summary(_close_snapshot(), _morning_baseline(), settings=settings)
+        assert summary.deploy_budget_line
+        assert "deploy_ratio 25%" in summary.deploy_budget_line
+        md = render_close_portfolio_markdown(summary)
+        assert "部署预算" in md
+
+    def test_buy_budget_intraday_trade_shown_in_close_trades(self):
+        from agent_reach.daily_run.close_portfolio_summary import format_intraday_trade_narrative_line
+
+        trade = {
+            "action": "hold",
+            "trade_id": "T4",
+            "name": "兆易创新",
+            "code": "603986",
+            "blocked": True,
+            "block_kind": "buy_budget",
+            "portfolio_applied": False,
+            "portfolio_message": "决策 hold，不调仓",
+            "reasoning": "603986 可部署买入预算 ¥1,712 不足一手（100 股 @ ¥388.77 ≈ ¥39,000）",
+        }
+        narrative = format_intraday_trade_narrative_line(trade)
+        assert "预算预检阻断" in narrative
+        assert "阻断 buy_budget" not in narrative
+        assert "未落账：决策 hold" not in narrative
+
+        summary = _build_summary(
+            _close_snapshot(),
+            _morning_baseline(),
+            intraday_trades=[trade],
+        )
+        md = render_close_portfolio_markdown(summary)
+        assert "T4" in md
+        assert "预算阻断" in md
+        assert "预算预检阻断" in md
+
 
 class TestHoldingLine:
     def test_shows_cost_and_price(self):

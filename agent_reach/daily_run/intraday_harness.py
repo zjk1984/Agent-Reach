@@ -6,14 +6,12 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from agent_reach.daily_run.harness_skill_base import apply_skill_refinement
+from agent_reach.daily_run.portfolio_manager import trade_buy_budget_blocked
 
 
 def _decision_buy_budget_blocked(decision: dict[str, Any]) -> bool:
     """Decision-layer deploy budget precheck — not a failed trade apply."""
-    if decision.get("block_kind") == "buy_budget":
-        return True
-    reasoning = str(decision.get("reasoning") or "")
-    return "可部署买入预算" in reasoning
+    return trade_buy_budget_blocked(decision)
 
 
 def intraday_to_harness_evidence(payload: dict[str, Any]) -> dict[str, Any]:
