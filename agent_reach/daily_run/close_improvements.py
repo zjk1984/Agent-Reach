@@ -51,28 +51,17 @@ class CloseImprovements:
 
 
 def expected_scan_slots() -> list[dict[str, str]]:
-    """Premarket S1 + morning S2 + S3–S9 + midday + S10–S16 session slots (Beijing)."""
+    """Premarket S1 + morning S2 + S3–S12 cron slots + midday anchor (Beijing)."""
     slots: list[dict[str, str]] = [
         {"scan_id": "S1", "time": "07:00", "label": "盘前"},
         {"scan_id": "S2", "time": "08:00", "label": "早报"},
     ]
     scan_idx = 3
+    midday_added = False
     for minute, hour in INTRADAY_SCAN_TIMES:
-        if int(hour) >= 13:
-            break
-        slots.append(
-            {
-                "scan_id": f"S{scan_idx}",
-                "time": f"{int(hour):02d}:{minute.zfill(2)}",
-                "label": "盘中",
-            }
-        )
-        scan_idx += 1
-    slots.append({"scan_id": f"S{scan_idx}", "time": "12:30", "label": "午盘"})
-    scan_idx += 1
-    for minute, hour in INTRADAY_SCAN_TIMES:
-        if int(hour) < 13:
-            continue
+        if int(hour) >= 13 and not midday_added:
+            slots.append({"scan_id": "midday", "time": "12:30", "label": "午盘"})
+            midday_added = True
         slots.append(
             {
                 "scan_id": f"S{scan_idx}",
