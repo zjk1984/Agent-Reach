@@ -973,7 +973,7 @@ def simulate_buy_analysis(
             "max_position_pct": float(position.get("max_position_pct", 35.0)),
         }
 
-    total, cash, deployable, _min_deploy, _min_cash_ratio, commission_rate = budget_ctx
+    total, cash, deployable, _min_deploy, min_cash_ratio, commission_rate = budget_ctx
 
     target, resolve_err = _resolve_single_buy_target(prefer, pf, enriched)
     if resolve_err:
@@ -1046,6 +1046,10 @@ def simulate_buy_analysis(
             "price": price,
             "buy_budget": budget,
             "min_lot_cost": min_lot * price * (1 + commission_rate),
+            "deployable": deployable,
+            "cash": cash,
+            "total": total,
+            "min_cash_ratio": min_cash_ratio,
             "deploy_ratio": float(position.get("deploy_ratio", 1.0)),
             "max_position_pct": float(position.get("max_position_pct", 35.0)),
         }
@@ -1094,6 +1098,40 @@ def format_min_lot_budget_message(
         f"{code} 可部署买入预算 ¥{buy_budget:,.0f} 不足一手"
         f"（{min_lot} 股 @ ¥{price:.2f} ≈ ¥{lot_cost:,.0f}）"
     )
+
+
+def buy_budget_footer_markdown(
+    pf: dict[str, Any],
+    enriched: dict[str, dict[str, Any]],
+    settings: dict[str, Any],
+    *,
+    prefer_code: str,
+) -> Optional[str]:
+    """One-line deploy budget context for Feishu cards when buy is budget-blocked."""
+    analysis = simulate_buy_analysis(pf, enriched, settings, prefer_code=prefer_code)
+    block = str(analysis.get("block_reason") or "")
+    if analysis.get("allowed") or "可部署买入预算" not in block:
+        return None
+
+    parts: list[str] = []
+    deployable = analysis.get("deployable")
+    min_cash_ratio = analysis.get("min_cash_ratio")
+    if deployable is not None and min_cash_ratio is not None:
+        parts.append(
+            f"可部署现金 ¥{float(deployable):,.0f}（min_cash {float(min_cash_ratio):.0%} 保留）"
+        )
+    deploy_ratio = analysis.get("deploy_ratio")
+    buy_budget = analysis.get("buy_budget")
+    if deploy_ratio is not None and buy_budget is not None:
+        parts.append(
+            f"deploy_ratio {float(deploy_ratio):.0%} → 本笔预算 ¥{float(buy_budget):,.0f}"
+        )
+    min_lot_cost = analysis.get("min_lot_cost")
+    if min_lot_cost is not None:
+        parts.append(f"一手约 ¥{float(min_lot_cost):,.0f}")
+    if not parts:
+        return None
+    return "💰 **部署预算：** " + " · ".join(parts)
 
 
 def buy_budget_precheck_reason(
@@ -1189,45 +1227,9 @@ def _resolve_single_buy_target(
     return row, None
 
 
-def _watchlist_buy_candidates(
-    pf: dict[str, Any],
-    enriched: dict[str, dict[str, Any]],
-    held_codes: set[str],
-) -> list[dict[str, Any]]:
-    candidates: list[dict[str, Any]] = []
-    for w in pf.get("watchlist") or []:
-        code = _normalize_code(str(w.get("code", "")))
-        if code in held_codes:
-            continue
-        row = dict(w)
-        row.update(enriched.get(code, {}))
-        if _price_for(row, enriched) is None:
-            continue
-        candidates.append(row)
-    return candidates
-
-
 def _min_lot(code: str) -> int:
     text = str(code).zfill(6)
     return 200 if text.startswith("688") else 100
-
-
-def _can_afford_min_lot(
-    code: str,
-    price: float,
-    *,
-    deployable: float,
-    commission_rate: float,
-    min_deploy: float,
-    total: float,
-    settings: dict[str, Any],
-) -> bool:
-    if price <= 0 or deployable < min_deploy:
-        return False
-    budget_gross = harness_buy_budget(total=total, deployable=deployable, settings=settings)
-    budget = budget_gross / (1 + commission_rate)
-    shares = _round_lot(code, int(budget // price))
-    return shares >= _min_lot(code)
 
 
 def _add_bought_shares(
@@ -1335,8 +1337,18 @@ def _decision_reason(decision: Any, fallback: str) -> str:
     return reason or fallback
 
 
-def render_apply_markdown(result: ApplyResult) -> str:
+def _decision_block_kind(decision: Any) -> Optional[str]:
+    if decision is None:
+        return None
+    if isinstance(decision, dict):
+        return decision.get("block_kind")
+    return getattr(decision, "block_kind", None)
+
+
+def render_apply_markdown(result: ApplyResult, *, decision: Optional[Any] = None) -> str:
     if not result.applied:
+        if _decision_block_kind(decision) == "buy_budget":
+            return "**调仓执行：** 决策层预算预检阻断，未进入 paper 落账"
         return f"**调仓执行：** 未执行 — {result.message}"
     lines = ["**调仓执行（paper）：**"]
     payloads = result.action_payloads or [a.to_dict() for a in result.actions]

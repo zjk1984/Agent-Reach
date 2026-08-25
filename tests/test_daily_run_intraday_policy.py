@@ -371,6 +371,63 @@ class TestTradeBlockMessages:
         assert "不允许买入" in message
         assert "不允许卖出" not in message
 
+    def test_buy_budget_block_shows_deploy_footer(self):
+        from agent_reach.daily_run.intraday import TradeDecision, render_intraday_trade_markdown
+        from agent_reach.daily_run.portfolio_manager import ApplyResult, render_apply_markdown
+
+        settings = {
+            "thresholds": {"macro_veto": 30, "aggressive_entry": 45, "min_cash_ratio": 0.5},
+            "trading": {"commission_rate": 0.0015, "slippage_rate": 0.001},
+            "portfolio": {"min_deploy_cash": 1000},
+            "harness_runtime": {
+                "position_policy": {"deploy_ratio": 0.25, "max_position_pct": 25.0},
+            },
+        }
+        snapshot = {
+            "code": "603986",
+            "name": "兆易创新",
+            "price": 388.77,
+            "portfolio": {
+                "total": 98561.92,
+                "cash": 56130.92,
+                "cash_ratio": 0.5695,
+                "holdings": [
+                    {"code": "688008", "name": "澜起科技", "shares": 100, "cost": 255.87, "days_held": 5},
+                ],
+                "watchlist": [{"code": "603986", "name": "兆易创新"}],
+            },
+            "watchlist": [{"code": "603986", "name": "兆易创新", "price": 388.77}],
+        }
+        decision = TradeDecision(
+            action="hold",
+            trade_id="T4",
+            lookback_mss=48.0,
+            lookback_detail=[],
+            trend="rising",
+            reasoning="603986 可部署买入预算 ¥1,712 不足一手（100 股 @ ¥388.77 ≈ ¥39,000）",
+            blocked=True,
+            block_kind="buy_budget",
+        )
+        markdown = render_intraday_trade_markdown(
+            decision,
+            [],
+            {"code": "603986", "name": "兆易创新"},
+            [],
+            settings=settings,
+            enriched=snapshot,
+        )
+        assert "部署预算" in markdown
+        assert "deploy_ratio 25%" in markdown
+        assert "本笔预算" in markdown
+        assert "一手约" in markdown
+
+        apply_md = render_apply_markdown(
+            ApplyResult(applied=False, portfolio=snapshot["portfolio"], message="决策 hold，不调仓"),
+            decision=decision,
+        )
+        assert "预算预检阻断" in apply_md
+        assert "决策 hold" not in apply_md
+
 
 class TestDefensiveTrimPolicy:
     def test_defensive_trim_requires_mss_buffer(self):

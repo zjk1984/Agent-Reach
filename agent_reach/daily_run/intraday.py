@@ -708,7 +708,7 @@ def evaluate_trade(
         settings=cfg,
         enriched=enriched,
     )
-    markdown = markdown + "\n\n---\n\n" + render_apply_markdown(apply_result)
+    markdown = markdown + "\n\n---\n\n" + render_apply_markdown(apply_result, decision=decision)
 
     return {
         "decision": decision.to_dict(),
@@ -959,6 +959,20 @@ def render_intraday_trade_markdown(
     block_message = format_trade_block_message(decision)
     if block_message:
         lines.append(block_message)
+    if infer_trade_block_kind(decision) == "buy_budget" and enriched and settings is not None:
+        from agent_reach.daily_run.portfolio_manager import buy_budget_footer_markdown
+        from agent_reach.daily_run.symbols import build_enriched_symbols
+
+        pf = enriched.get("portfolio") if isinstance(enriched, dict) else {}
+        code = str(report.get("code") or enriched.get("code") or "")
+        footer = buy_budget_footer_markdown(
+            pf or {},
+            build_enriched_symbols(enriched),
+            settings,
+            prefer_code=code,
+        )
+        if footer:
+            lines.append(footer)
 
     if enriched and (enriched.get("team_review") or enriched.get("expert_results")):
         from agent_reach.daily_run.team import expert_card_enabled, render_team_markdown
