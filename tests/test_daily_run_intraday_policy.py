@@ -124,6 +124,29 @@ class TestIntradayGuards:
 
 
 class TestIntradayHarnessEvidence:
+    def test_buy_budget_block_skips_miss_apply_harness_signal(self):
+        ev = intraday_to_harness_evidence(
+            {
+                "scan": {"scan_id": "S5", "code": "603986", "name": "兆易创新", "mss_final": 55},
+                "trend": "rising",
+                "lookback_mss": 52,
+                "trade": {
+                    "decision": {
+                        "action": "hold",
+                        "trend": "rising",
+                        "lookback_mss": 52,
+                        "blocked": True,
+                        "block_kind": "buy_budget",
+                        "reasoning": (
+                            "603986 可部署买入预算 ¥1,712 不足一手"
+                            "（100 股 @ ¥388.77 ≈ ¥39,000）；MSS 达进攻阈值"
+                        ),
+                    }
+                },
+            }
+        )
+        assert not any("达进攻阈值未落账" in item for item in ev["memory"] + ev["policy"])
+
     def test_friction_and_trend_policy_phrases(self):
         ev = intraday_to_harness_evidence(
             {

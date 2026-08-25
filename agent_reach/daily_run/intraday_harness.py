@@ -8,6 +8,14 @@ from typing import Any, Optional
 from agent_reach.daily_run.harness_skill_base import apply_skill_refinement
 
 
+def _decision_buy_budget_blocked(decision: dict[str, Any]) -> bool:
+    """Decision-layer deploy budget precheck — not a failed trade apply."""
+    if decision.get("block_kind") == "buy_budget":
+        return True
+    reasoning = str(decision.get("reasoning") or "")
+    return "可部署买入预算" in reasoning
+
+
 def intraday_to_harness_evidence(payload: dict[str, Any]) -> dict[str, Any]:
     memory: list[str] = []
     policy: list[str] = []
@@ -73,7 +81,11 @@ def intraday_to_harness_evidence(payload: dict[str, Any]) -> dict[str, Any]:
                 memory.append(
                     "评估已达上限：单标的 T 槽不足，下日放宽 max_trade_evaluations_per_symbol"
                 )
-            if "达进攻阈值" in reasoning and action in (None, "hold", "skip"):
+            if (
+                "达进攻阈值" in reasoning
+                and action in (None, "hold", "skip")
+                and not _decision_buy_budget_blocked(decision)
+            ):
                 memory.append(
                     "达进攻阈值未落账：MSS 达标但未成交，下日检查 trade_min_scans/落账上限/friction"
                 )
