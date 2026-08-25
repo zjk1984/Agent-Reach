@@ -194,6 +194,7 @@ TRADE_BLOCK_MESSAGES: dict[str, str] = {
     "buy_ledger": "⚠️ **风控阻断：** 标的账本不允许买入",
     "buy_kronos": "⚠️ **风控阻断：** Kronos 看空信号，不允许买入",
     "buy_cash": "⚠️ **风控阻断：** 现金比例不足，不允许加仓",
+    "buy_budget": "⚠️ **风控阻断：** 可部署买入预算不足一手，维持观望",
     "buy_deep_loss": "⚠️ **风控阻断：** 深度套牢标的需连续 3 次买入建议才允许加仓",
     "sell_deep_loss": "⚠️ **风控阻断：** 深度套牢且组合覆盖不足，暂不允许卖出",
 }
@@ -915,6 +916,8 @@ def infer_trade_block_kind(decision: TradeDecision | dict[str, Any]) -> Optional
         return "buy_kronos"
     if "现金比例" in reasoning:
         return "buy_cash"
+    if "可部署买入预算" in reasoning or "不足一手" in reasoning:
+        return "buy_budget"
     if "审计" in reasoning:
         return "audit"
     if "阻断买入" in reasoning or ("标签" in reasoning and "阻断" in reasoning):
@@ -1192,6 +1195,28 @@ def _decide_trade(
                 reasoning=f"{deep_loss_block}{overlay_note}",
                 blocked=True,
                 block_kind="buy_deep_loss",
+                friction_blocked=False,
+                expected_return_pct=exp_ret,
+            )
+        from agent_reach.daily_run.portfolio_manager import buy_budget_precheck_reason
+        from agent_reach.daily_run.symbols import build_enriched_symbols
+
+        budget_block = buy_budget_precheck_reason(
+            portfolio,
+            build_enriched_symbols(snapshot),
+            settings,
+            prefer_code=symbol_code,
+        )
+        if budget_block:
+            return TradeDecision(
+                action="hold",
+                trade_id=trade_id,
+                lookback_mss=lookback_mss,
+                lookback_detail=[],
+                trend=trend,
+                reasoning=f"{budget_block}{overlay_note}",
+                blocked=True,
+                block_kind="buy_budget",
                 friction_blocked=False,
                 expected_return_pct=exp_ret,
             )
