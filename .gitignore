@@ -7,7 +7,6 @@ dist/
 build/
 .env
 .agent-reach/
-prime-agent/
 *.log
 
 # Claude Code personal permission settings — local only, never commit
