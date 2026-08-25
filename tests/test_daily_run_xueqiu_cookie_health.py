@@ -6,6 +6,7 @@ from unittest.mock import patch
 from agent_reach.daily_run.week_forecast import render_forecast_sections
 from agent_reach.daily_run.xueqiu_cookie_health import (
     check_xueqiu_cookie_health,
+    ensure_xueqiu_browser_session,
     refresh_xueqiu_cookie_from_browser,
     render_xueqiu_cookie_alert_markdown,
 )
@@ -164,7 +165,10 @@ def test_refresh_skipped_when_disabled():
 
 
 def test_refresh_success_resets_channel_cache():
-    with patch("agent_reach.cookie_extract.configure_from_browser") as mock_cfg, patch(
+    with patch(
+        "agent_reach.daily_run.xueqiu_cookie_health.ensure_xueqiu_browser_session",
+        return_value={"skipped": True, "success": True, "reason": "already_healthy"},
+    ), patch("agent_reach.cookie_extract.configure_from_browser") as mock_cfg, patch(
         "agent_reach.daily_run.xueqiu_cookie_health._reset_xueqiu_channel_cookies"
     ) as mock_reset, patch("agent_reach.config.Config"):
         mock_cfg.return_value = [("Xueqiu", True, "18 cookies (含 xq_a_token)")]
@@ -172,6 +176,86 @@ def test_refresh_success_resets_channel_cache():
     assert result["success"] is True
     assert result["browser"] == "chrome"
     mock_reset.assert_called_once()
+
+
+def test_ensure_browser_login_skipped_when_disabled():
+    result = ensure_xueqiu_browser_session(
+        settings={"week_forecast": {"xueqiu_cookie_browser_login_enabled": False}}
+    )
+    assert result["skipped"] is True
+    assert result["reason"] == "disabled"
+
+
+def test_ensure_browser_login_skipped_when_healthy():
+    with patch(
+        "agent_reach.daily_run.xueqiu_cookie_health._cookie_needs_browser_login",
+        return_value=False,
+    ):
+        result = ensure_xueqiu_browser_session(settings={"week_forecast": {}})
+    assert result["skipped"] is True
+    assert result["reason"] == "already_healthy"
+
+
+def test_ensure_browser_login_skipped_without_display():
+    with patch(
+        "agent_reach.daily_run.xueqiu_cookie_health._cookie_needs_browser_login",
+        return_value=True,
+    ), patch(
+        "agent_reach.daily_run.xueqiu_cookie_health._has_gui_display",
+        return_value=False,
+    ):
+        result = ensure_xueqiu_browser_session(settings={"week_forecast": {}})
+    assert result["skipped"] is True
+    assert result["reason"] == "no_display"
+
+
+def test_ensure_browser_login_launches_chrome_and_waits_for_token():
+    proc = type("P", (), {"pid": 4242, "poll": lambda self: None, "terminate": lambda self: None, "wait": lambda self, timeout=None: 0})()
+    with patch(
+        "agent_reach.daily_run.xueqiu_cookie_health._cookie_needs_browser_login",
+        return_value=True,
+    ), patch(
+        "agent_reach.daily_run.xueqiu_cookie_health._has_gui_display",
+        return_value=True,
+    ), patch(
+        "agent_reach.daily_run.xueqiu_cookie_health._find_chrome_binary",
+        return_value="/usr/bin/google-chrome",
+    ), patch(
+        "agent_reach.daily_run.xueqiu_cookie_health._is_chrome_running",
+        return_value=False,
+    ), patch(
+        "agent_reach.daily_run.xueqiu_cookie_health.subprocess.Popen",
+        return_value=proc,
+    ) as mock_popen, patch(
+        "agent_reach.daily_run.xueqiu_cookie_health._terminate_process_tree"
+    ) as mock_kill, patch(
+        "agent_reach.daily_run.xueqiu_cookie_health._browser_xueqiu_cookie_string",
+        side_effect=["", "xq_a_token=abc; u=1"],
+    ), patch("agent_reach.daily_run.xueqiu_cookie_health.time.sleep"):
+        result = ensure_xueqiu_browser_session(
+            settings={
+                "week_forecast": {
+                    "xueqiu_cookie_browser_login_timeout_sec": 30,
+                    "xueqiu_cookie_browser_login_poll_sec": 1,
+                }
+            }
+        )
+    assert result["success"] is True
+    assert result["token_seen_in_browser"] is True
+    mock_popen.assert_called_once()
+    mock_kill.assert_called_once_with(proc)
+
+
+def test_refresh_calls_browser_login_before_extract():
+    with patch(
+        "agent_reach.daily_run.xueqiu_cookie_health.ensure_xueqiu_browser_session",
+        return_value={"skipped": True, "success": True, "reason": "already_healthy"},
+    ) as mock_ensure, patch("agent_reach.cookie_extract.configure_from_browser") as mock_cfg, patch(
+        "agent_reach.daily_run.xueqiu_cookie_health._reset_xueqiu_channel_cookies"
+    ), patch("agent_reach.config.Config"):
+        mock_cfg.return_value = [("Xueqiu", True, "ok")]
+        refresh_xueqiu_cookie_from_browser(settings={"week_forecast": {}})
+    mock_ensure.assert_called_once()
 
 
 def test_run_forecast_calls_cookie_refresh():

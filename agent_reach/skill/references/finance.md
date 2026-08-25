@@ -26,6 +26,9 @@ Cookie 只能通过 `--from-browser` 自动提取写入 `xueqiu_cookie` 配置�
 - Cookie 失效时，**周日下周预测**首卡会展示 🍪 雪球 Cookie 预警（含重新导出步骤）
 - `daily-run` 会在 forecast 工作流中自动做 Cookie 健康检查/浏览器刷新
   （`xueqiu_cookie_health.py`），无需手工干预
+- **周日 forecast 前**（本机有桌面 DISPLAY 时）：会先 **headed Chrome 打开
+  [xueqiu.com](https://xueqiu.com)** 续期登录态或等待人工登录，再
+  `configure --from-browser chrome` 写入配置；无 DISPLAY 的 cron 主机则跳过打开浏览器
 - 深入用法见 [daily_run skill](../daily_run_skill.md)，不要在这里重复造轮子
 
 ## 何时直接用 xueqiu 渠道（而非走 daily-run）

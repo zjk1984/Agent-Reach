@@ -1,11 +1,23 @@
-# -*- coding: utf-8
+# -*- coding: utf-8 -*-
 """Xueqiu cookie health probe for Sunday forecast alerts."""
 
 from __future__ import annotations
 
+import os
+import shutil
+import signal
+import subprocess
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
+
+_CHROME_BINARIES = (
+    "google-chrome",
+    "google-chrome-stable",
+    "chromium-browser",
+    "chromium",
+)
 
 
 def _cookie_from_config(config=None) -> tuple[str, str]:
@@ -195,6 +207,261 @@ def _reset_xueqiu_channel_cookies() -> None:
         pass
 
 
+def _week_forecast_settings(settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    return dict((settings or {}).get("week_forecast") or {})
+
+
+def _has_gui_display() -> bool:
+    return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+
+
+def _find_chrome_binary() -> Optional[str]:
+    for name in _CHROME_BINARIES:
+        path = shutil.which(name)
+        if path:
+            return path
+    return None
+
+
+def _chrome_profile_dir() -> Path:
+    return Path.home() / ".config" / "google-chrome"
+
+
+def _is_chrome_running() -> bool:
+    try:
+        proc = subprocess.run(
+            ["pgrep", "-f", r"google-chrome|chromium"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        return proc.returncode == 0 and bool((proc.stdout or "").strip())
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return False
+
+
+def _browser_xueqiu_cookie_string(browser: str) -> str:
+    """Best-effort read of xueqiu cookies from a local browser profile."""
+    try:
+        from agent_reach.cookie_extract import extract_all
+
+        extracted = extract_all(browser)
+    except Exception:
+        return ""
+    return str((extracted.get("xueqiu") or {}).get("cookie_string") or "")
+
+
+def _cookie_needs_browser_login(
+    *,
+    settings: Optional[dict[str, Any]] = None,
+    config=None,
+) -> bool:
+    """Return True when opening xueqiu.com in Chrome may help refresh/login."""
+    wf = _week_forecast_settings(settings)
+    if wf.get("xueqiu_cookie_browser_login_skip_when_healthy", True) is False:
+        return True
+    health = check_xueqiu_cookie_health(config=config, settings=settings)
+    status = str(health.get("status") or "ok")
+    return status in {"missing", "expired", "expiring", "degraded"}
+
+
+def _terminate_process_tree(proc: subprocess.Popen[Any]) -> None:
+    if proc.poll() is not None:
+        return
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+    except (ProcessLookupError, PermissionError, OSError):
+        try:
+            proc.terminate()
+        except OSError:
+            pass
+    try:
+        proc.wait(timeout=15)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            try:
+                proc.kill()
+            except OSError:
+                pass
+
+
+def ensure_xueqiu_browser_session(
+    *,
+    settings: Optional[dict[str, Any]] = None,
+    config=None,
+    browser: Optional[str] = None,
+) -> dict[str, Any]:
+    """
+    Open Chrome on xueqiu.com before cookie extraction so an existing login can
+    refresh session cookies or the operator can sign in manually (headed desktop).
+
+    Skips on headless cron hosts (no DISPLAY), when disabled in settings, or when
+    cookie health is already OK and ``xueqiu_cookie_browser_login_skip_when_healthy``
+    is true (default).
+    """
+    wf = _week_forecast_settings(settings)
+    browser_name = str(browser or wf.get("xueqiu_cookie_refresh_browser") or "chrome").strip().lower()
+    url = str(wf.get("xueqiu_cookie_browser_login_url") or "https://xueqiu.com").strip()
+    headed = wf.get("xueqiu_cookie_browser_login_headed", True) is not False
+    try:
+        timeout_sec = max(10, int(wf.get("xueqiu_cookie_browser_login_timeout_sec", 120)))
+    except (TypeError, ValueError):
+        timeout_sec = 120
+    try:
+        poll_sec = max(2, int(wf.get("xueqiu_cookie_browser_login_poll_sec", 5)))
+    except (TypeError, ValueError):
+        poll_sec = 5
+
+    base = {
+        "job": "xueqiu_cookie_browser_login",
+        "browser": browser_name,
+        "url": url,
+        "waited_sec": 0,
+        "token_seen_in_browser": False,
+        "chrome_was_running": False,
+    }
+
+    if wf.get("xueqiu_cookie_browser_login_enabled", True) is False:
+        return {**base, "skipped": True, "success": False, "reason": "disabled", "message": "browser login disabled"}
+
+    if headed and not _has_gui_display():
+        return {
+            **base,
+            "skipped": True,
+            "success": False,
+            "reason": "no_display",
+            "message": "无 DISPLAY/WAYLAND，跳过 headed Chrome 登录",
+        }
+
+    if browser_name != "chrome":
+        return {
+            **base,
+            "skipped": True,
+            "success": False,
+            "reason": "unsupported_browser",
+            "message": f"browser login 目前仅支持 chrome，当前={browser_name}",
+        }
+
+    if not _cookie_needs_browser_login(settings=settings, config=config):
+        return {
+            **base,
+            "skipped": True,
+            "success": True,
+            "reason": "already_healthy",
+            "message": "雪球 Cookie 健康，跳过 Chrome 打开",
+        }
+
+    chrome_bin = _find_chrome_binary()
+    if not chrome_bin:
+        return {
+            **base,
+            "skipped": True,
+            "success": False,
+            "reason": "chrome_not_found",
+            "message": "未找到 google-chrome/chromium 可执行文件",
+        }
+
+    chrome_was_running = _is_chrome_running()
+    launched_proc: subprocess.Popen[Any] | None = None
+    if chrome_was_running:
+        try:
+            subprocess.run(
+                [chrome_bin, "--new-window", url],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=15,
+                check=False,
+            )
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            return {
+                **base,
+                "skipped": False,
+                "success": False,
+                "reason": "open_failed",
+                "chrome_was_running": True,
+                "message": f"Chrome 已在运行，打开新窗口失败: {exc}",
+            }
+    else:
+        profile_dir = _chrome_profile_dir()
+        cmd = [chrome_bin, f"--user-data-dir={profile_dir}", "--profile-directory=Default", url]
+        try:
+            launched_proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        except OSError as exc:
+            return {
+                **base,
+                "skipped": False,
+                "success": False,
+                "reason": "launch_failed",
+                "message": f"启动 Chrome 失败: {exc}",
+            }
+
+    token_seen = False
+    started = time.monotonic()
+    while time.monotonic() - started < timeout_sec:
+        cookie_str = _browser_xueqiu_cookie_string(browser_name)
+        if _has_xq_a_token(cookie_str):
+            token_seen = True
+            # Brief dwell so session cookies settle before we close Chrome.
+            time.sleep(min(3, poll_sec))
+            break
+        time.sleep(poll_sec)
+
+    waited_sec = int(time.monotonic() - started)
+    if launched_proc is not None:
+        _terminate_process_tree(launched_proc)
+        time.sleep(2)
+    elif chrome_was_running:
+        return {
+            **base,
+            "skipped": False,
+            "success": token_seen,
+            "reason": "chrome_running",
+            "chrome_was_running": True,
+            "waited_sec": waited_sec,
+            "token_seen_in_browser": token_seen,
+            "message": (
+                "Chrome 已在运行：已打开 xueqiu.com 窗口；请关闭 Chrome 后重试 cookie 提取"
+                if not token_seen
+                else "Chrome 已在运行：检测到 xq_a_token，请关闭 Chrome 以便提取 Cookie"
+            ),
+        }
+
+    if token_seen:
+        message = f"Chrome 已打开 {url} 并检测到 xq_a_token（等待 {waited_sec}s）"
+        return {
+            **base,
+            "skipped": False,
+            "success": True,
+            "reason": "token_ready",
+            "waited_sec": waited_sec,
+            "token_seen_in_browser": True,
+            "chrome_was_running": False,
+            "message": message,
+        }
+
+    return {
+        **base,
+        "skipped": False,
+        "success": False,
+        "reason": "timeout",
+        "waited_sec": waited_sec,
+        "token_seen_in_browser": False,
+        "chrome_was_running": False,
+        "message": (
+            f"Chrome 已打开 {url} 但在 {timeout_sec}s 内未检测到 xq_a_token；"
+            "请在窗口中手动登录后重跑 forecast"
+        ),
+    }
+
+
 def refresh_xueqiu_cookie_from_browser(
     *,
     settings: Optional[dict[str, Any]] = None,
@@ -205,13 +472,31 @@ def refresh_xueqiu_cookie_from_browser(
     Sync Xueqiu cookie from a logged-in local browser into agent-reach config.
 
     Used before Sunday forecast when ``week_forecast.xueqiu_cookie_auto_refresh_from_browser``
-    is enabled. Does not perform interactive login — Chrome must already be signed in.
+    is enabled. When ``xueqiu_cookie_browser_login_enabled`` is true and a desktop display
+    is available, opens Chrome on xueqiu.com first so an existing profile can refresh its
+    session or the operator can sign in manually, then extracts cookies via rookiepy /
+    browser_cookie3 (Chrome should be closed for a reliable extract).
     """
-    wf = (settings or {}).get("week_forecast") or {}
+    wf = _week_forecast_settings(settings)
     if wf.get("xueqiu_cookie_auto_refresh_from_browser", True) is False:
         return {"skipped": True, "reason": "disabled", "job": "xueqiu_cookie_refresh"}
 
     browser_name = str(browser or wf.get("xueqiu_cookie_refresh_browser") or "chrome").strip().lower()
+    browser_login = ensure_xueqiu_browser_session(
+        settings=settings,
+        config=config,
+        browser=browser_name,
+    )
+    if browser_login.get("chrome_was_running") and browser_login.get("token_seen_in_browser"):
+        return {
+            "skipped": False,
+            "success": False,
+            "browser": browser_name,
+            "browser_login": browser_login,
+            "message": browser_login.get("message", "请关闭 Chrome 后重试"),
+            "job": "xueqiu_cookie_refresh",
+        }
+
     try:
         from agent_reach.config import Config
         from agent_reach.cookie_extract import configure_from_browser
@@ -223,6 +508,7 @@ def refresh_xueqiu_cookie_from_browser(
             "skipped": False,
             "success": False,
             "browser": browser_name,
+            "browser_login": browser_login,
             "message": str(exc),
             "job": "xueqiu_cookie_refresh",
         }
@@ -234,6 +520,7 @@ def refresh_xueqiu_cookie_from_browser(
             "skipped": False,
             "success": True,
             "browser": browser_name,
+            "browser_login": browser_login,
             "message": xueqiu_row[2],
             "job": "xueqiu_cookie_refresh",
         }
@@ -243,6 +530,7 @@ def refresh_xueqiu_cookie_from_browser(
             "skipped": False,
             "success": False,
             "browser": browser_name,
+            "browser_login": browser_login,
             "message": xueqiu_row[2],
             "job": "xueqiu_cookie_refresh",
         }
@@ -252,6 +540,7 @@ def refresh_xueqiu_cookie_from_browser(
         "skipped": False,
         "success": False,
         "browser": browser_name,
+        "browser_login": browser_login,
         "message": detail,
         "job": "xueqiu_cookie_refresh",
     }
