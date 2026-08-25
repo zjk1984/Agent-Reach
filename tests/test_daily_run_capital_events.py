@@ -9,6 +9,7 @@ import pytest
 
 from agent_reach.daily_run.capital_events import (
     append_capital_event,
+    apply_capital_event_to_portfolio,
     load_capital_events,
     net_capital_flow,
 )
@@ -44,6 +45,40 @@ class TestCapitalEvents:
             append_capital_event("transfer", 100, path=path)
         with pytest.raises(ValueError, match="amount"):
             append_capital_event("deposit", -1, path=path)
+
+    def test_apply_deposit_shifts_cash_and_total_in_lockstep(self):
+        """M3: applying a deposit must move `cash` and `total` by the same
+        delta (a capital event doesn't change any holding's market value), so
+        `cash_ratio` stays internally consistent without a fresh quote fetch."""
+        portfolio = {"cash": 50000.0, "total": 120000.0, "cash_ratio": round(50000 / 120000, 4)}
+        updated = apply_capital_event_to_portfolio(portfolio, "deposit", 30000)
+
+        assert updated["cash"] == 80000.0
+        assert updated["total"] == 150000.0
+        assert updated["cash_ratio"] == round(80000.0 / 150000.0, 4)
+        # Original dict must not be mutated.
+        assert portfolio["cash"] == 50000.0
+
+    def test_apply_withdraw_shifts_cash_and_total_down(self):
+        portfolio = {"cash": 50000.0, "total": 120000.0, "cash_ratio": round(50000 / 120000, 4)}
+        updated = apply_capital_event_to_portfolio(portfolio, "withdraw", 10000)
+
+        assert updated["cash"] == 40000.0
+        assert updated["total"] == 110000.0
+        assert updated["cash_ratio"] == round(40000.0 / 110000.0, 4)
+
+    def test_apply_capital_event_without_total_only_updates_cash(self):
+        portfolio = {"cash": 50000.0}
+        updated = apply_capital_event_to_portfolio(portfolio, "deposit", 1000)
+
+        assert updated["cash"] == 51000.0
+        assert "total" not in updated
+
+    def test_apply_capital_event_invalid_kind_or_amount(self):
+        with pytest.raises(ValueError, match="kind"):
+            apply_capital_event_to_portfolio({"cash": 0}, "transfer", 100)
+        with pytest.raises(ValueError, match="amount"):
+            apply_capital_event_to_portfolio({"cash": 0}, "deposit", 0)
 
     def test_daily_pnl_excludes_deposit(self, monkeypatch):
         day = date(2026, 8, 17)

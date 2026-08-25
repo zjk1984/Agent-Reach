@@ -129,6 +129,32 @@ class TestTradeLimitHelpers:
         assert "落账已达上限" in md
 
 
+class TestSessionGate:
+    """M2/M6: pre-open/lunch/post-close scans must not trigger trade evaluation."""
+
+    def _st(self):
+        return IntradayState(
+            date="2026-08-18",
+            scans=[_scan(56, f"S{i}") for i in range(1, 4)],
+            trades=[],
+        )
+
+    def test_outside_session_blocks_evaluation(self, settings_trade_limits, monkeypatch):
+        monkeypatch.setattr("agent_reach.daily_run.intraday.is_continuous_session", lambda dt=None: False)
+        assert should_evaluate_trade(self._st(), settings_trade_limits) is False
+        reason = explain_trade_skip_reason(self._st(), settings_trade_limits)
+        assert "连续竞价" in reason
+
+    def test_inside_session_allows_evaluation(self, settings_trade_limits, monkeypatch):
+        monkeypatch.setattr("agent_reach.daily_run.intraday.is_continuous_session", lambda dt=None: True)
+        assert should_evaluate_trade(self._st(), settings_trade_limits) is True
+
+    def test_gate_disabled_ignores_session(self, settings_trade_limits, monkeypatch):
+        monkeypatch.setattr("agent_reach.daily_run.intraday.is_continuous_session", lambda dt=None: False)
+        settings_trade_limits["schedule"]["intraday_session_gate_enabled"] = False
+        assert should_evaluate_trade(self._st(), settings_trade_limits) is True
+
+
 class TestBuyPreferSignalCode:
     def test_buy_prefers_snapshot_code(self, portfolio, settings_trade_limits):
         snapshot = {

@@ -82,6 +82,7 @@ metadata:
 | GitHub/代码 | dev | [references/dev.md](references/dev.md) |
 | 网页/文章/RSS | web | [references/web.md](references/web.md) |
 | YouTube/B站/播客字幕 | video | [references/video.md](references/video.md) |
+| 雪球/股票行情/finance | finance | [references/finance.md](references/finance.md) |
 
 ## 零配置快速命令
 
@@ -167,6 +168,7 @@ agent-reach doctor --json
 - [开发工具](references/dev.md) — GitHub CLI
 - [网页阅读](references/web.md) — Jina Reader, RSS
 - [视频播客](references/video.md) — YouTube, B站, 小宇宙
+- [金融行情](references/finance.md) — 雪球（xueqiu）；持仓级复盘见 daily_run skill
 
 ## 配置渠道
 

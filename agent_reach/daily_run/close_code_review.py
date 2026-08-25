@@ -134,6 +134,7 @@ def run_close_code_review(
     _review_harness_evolution(out, settings, trades=trades or [])
     _review_intraday_state(out, scans or [], trades or [], settings)
     _review_today_manifests(out)
+    _review_pnl_history(out, settings)
     if cfg.get("walk_on_close", False) is True:
         _walk_source_modules(out, settings)
 
@@ -275,12 +276,28 @@ def _review_portfolio(
                 )
             )
         elif acquired is None and stored is not None:
+            fix_note = ""
+            fixed = False
+            if auto_fix:
+                try:
+                    from agent_reach.daily_run.trade_calendar import today_shanghai, trading_day_before
+
+                    backfilled = trading_day_before(today_shanghai(), int(stored), settings=settings)
+                    h["acquired_date"] = backfilled.isoformat()
+                    out.portfolio_changed = True
+                    fixed = True
+                    fix_note = f"acquired_date ← {backfilled.isoformat()}（由 days_held={stored} 反推，交易日历）"
+                except Exception:
+                    fixed = False
             out.findings.append(
                 CodeFinding(
                     "portfolio",
                     "medium",
                     f"持仓 {code} 仅有 days_held 计数器",
-                    "缺少 acquired_date，跨假期/停盘后计数可能失真；建议补写买入日",
+                    "缺少 acquired_date，跨假期/停盘后计数可能失真；建议补写买入日"
+                    + ("" if not fixed else "（已按 days_held 反推补写）"),
+                    fixed=fixed,
+                    fix_note=fix_note,
                 )
             )
         elif stored is None and acquired:
@@ -446,7 +463,11 @@ def _review_portfolio(
 
     try:
         from agent_reach.daily_run.capital_events import net_capital_flow
-        from agent_reach.daily_run.close_portfolio_summary import expected_end_cash_from_ledger
+        from agent_reach.daily_run.close_portfolio_summary import (
+            apply_portfolio_cash_reconcile,
+            expected_end_cash_from_ledger,
+        )
+        from agent_reach.daily_run.symbols import build_enriched_symbols
         from agent_reach.daily_run.trade_calendar import today_shanghai
         from agent_reach.daily_run.weekly_report import _load_trade_ledger_range
         from agent_reach.daily_run.workflows import load_morning_baseline
@@ -456,24 +477,33 @@ def _review_portfolio(
         day = today_shanghai()
         ledger = _load_trade_ledger_range(day, day)
         capital_flow = net_capital_flow(day)
-        expected = expected_end_cash_from_ledger(
-            morning_cash,
-            ledger,
-            capital_flow=capital_flow,
-        )
         if cash is not None:
+            expected = expected_end_cash_from_ledger(
+                morning_cash,
+                ledger,
+                capital_flow=capital_flow,
+            )
             drift = round(float(cash) - expected, 2)
             if abs(drift) > 1.0:
                 detail = (
                     f"记录 ¥{float(cash):,.0f} vs ledger 推算 ¥{expected:,.0f}（偏差 ¥{drift:+,.0f}）"
                 )
                 if auto_fix:
-                    pf["cash"] = expected
-                    if total is not None and float(total) > 0:
-                        pf["cash_ratio"] = round(expected / float(total), 4)
+                    # Reuse the shared reconcile helper so `total`/`cash_ratio` are
+                    # recomputed from the corrected cash (cash alone would leave
+                    # `total` stale by exactly `drift`, since total = cash + MV).
+                    enriched = build_enriched_symbols(snapshot)
+                    pf, _changed, _note = apply_portfolio_cash_reconcile(
+                        pf,
+                        morning_cash=morning_cash,
+                        ledger_trades=ledger,
+                        capital_flow=capital_flow,
+                        enriched=enriched,
+                        tolerance=1.0,
+                    )
                     out.portfolio = pf
                     out.portfolio_changed = True
-                    msg = f"已按 ledger 修正现金：{detail}"
+                    msg = f"已按 ledger 修正现金（并重算 total/cash_ratio）：{detail}"
                     out.fixes_applied.append(msg)
                     out.findings.append(
                         CodeFinding(
@@ -747,6 +777,43 @@ def _review_today_manifests(out: CodeReviewResult) -> None:
                     "可能运行了旧版代码；确认 GHA checkout 为 main 最新",
                 )
             )
+
+
+def _review_pnl_history(out: CodeReviewResult, settings: dict[str, Any], *, lookback_days: int = 10) -> None:
+    """Flag missing `pnl_history.jsonl` rows for recent trading days.
+
+    `daily_pnl_history.cumulative_pnl` is a running sum over recorded rows only
+    (see `attach_cumulative_pnl`); a day that never got a close record (crashed
+    cron, manual skip) silently drops out of that running total with no signal.
+    This is read-only visibility — it does not fabricate a missing day's P&L.
+    """
+    from datetime import timedelta
+
+    from agent_reach.daily_run.daily_pnl_history import (
+        detect_pnl_history_gaps,
+        load_daily_pnl_history,
+    )
+    from agent_reach.daily_run.trade_calendar import today_shanghai
+
+    today = today_shanghai()
+    start = today - timedelta(days=lookback_days * 2)
+    yesterday = today - timedelta(days=1)
+    rows = load_daily_pnl_history(start=start, end=yesterday)
+    gaps = detect_pnl_history_gaps(rows, start=start, end=yesterday, settings=settings)
+    # Only recent gaps are actionable noise; older ones are likely pre-dating
+    # this feature and covered by `daily-run pnl history --backfill` docs.
+    recent_gaps = [g for g in gaps if g >= (today - timedelta(days=lookback_days)).isoformat()]
+    if recent_gaps:
+        out.findings.append(
+            CodeFinding(
+                "pnl_history",
+                "medium",
+                "每日盈亏历史存在缺口",
+                f"最近 {lookback_days} 个自然日内缺失 {len(recent_gaps)} 个交易日："
+                f"{', '.join(recent_gaps[:6])}{'…' if len(recent_gaps) > 6 else ''}；"
+                "累计盈亏（净值口径）已跳过这些日期，可用 `daily-run pnl history --backfill` 补录",
+            )
+        )
 
 
 def _walk_source_modules(out: CodeReviewResult, settings: dict[str, Any]) -> None:

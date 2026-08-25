@@ -73,6 +73,7 @@ CRON="${REPO}/scripts/daily-run-local-cron.sh"
 
 # 等价 CLI（手动调试）
 ${PY} -m agent_reach.cli daily-run schedule run morning
+${PY} -m agent_reach.cli daily-run schedule run midday
 ${PY} -m agent_reach.cli daily-run schedule run intraday
 ${PY} -m agent_reach.cli daily-run schedule run close
 ${PY} -m agent_reach.cli daily-run schedule run weekly
@@ -96,7 +97,7 @@ ${PY} -m agent_reach.cli doctor --json
 
 | 层级 | 触发 | 作用 |
 |------|------|------|
-| **Layer A** | 每次 `close` / `weekly` / `forecast` 结束 | 确定性写入 memory / policy / playbook / **plan** |
+| **Layer A** | 每次 `midday` / `close` / `weekly` / `forecast` 结束 | 确定性写入 memory / policy / playbook / **plan** |
 | **Layer B** | review gate 通过后 | 合并重复、提炼流程改进（DeepSeek / Groq / OpenAI，否则规则 planner） |
 
 **周日 forecast 分工：** Kronos+MC 负责数值路径；DeepSeek 生成飞书「AI解读」末卡（`llm_narrative`）。

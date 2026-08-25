@@ -12,7 +12,7 @@ description: >-
 
 | 入口 | 场景 |
 |------|------|
-| 收盘自动 | `close_code_review.run_close_code_review()` → `harness_evolve_on_walk` |
+| 收盘自动 | `close_code_review.run_close_code_review()` → `close_code_review.harness_evolve_on_walk` |
 | Agent/Skill | `scripts/run_walk.py` 或 `run_agent_code_walk()` |
 
 详细键表：[references/harness-evolution.md](references/harness-evolution.md)

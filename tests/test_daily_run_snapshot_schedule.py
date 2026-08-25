@@ -333,6 +333,47 @@ class TestSchedule:
     def test_default_entries_count(self):
         assert len(default_entries()) == 19  # premarket + morning + midday + 13 scans + close + weekly + forecast
 
+    @patch("agent_reach.daily_run.midday_harness.apply_midday_harness_refinement")
+    @patch("agent_reach.daily_run.midday.run_midday")
+    @patch("agent_reach.daily_run.snapshot_builder.build_and_save")
+    @patch("agent_reach.daily_run.intraday.load_state")
+    @patch("agent_reach.daily_run.midday.midday_cfg")
+    @patch("agent_reach.daily_run.snapshot_builder.load_portfolio")
+    @patch("agent_reach.daily_run.schedule._uses_per_symbol_jobs", return_value=False)
+    def test_run_scheduled_midday_applies_harness(
+        self,
+        mock_per_symbol,
+        mock_load,
+        mock_midday_cfg,
+        mock_load_state,
+        mock_build,
+        mock_run_midday,
+        mock_midday_harness,
+        portfolio,
+        tmp_path,
+    ):
+        """Regression: midday previously had zero harness integration (self-evolution blind spot)."""
+        from agent_reach.daily_run.intraday import IntradayState
+
+        mock_load.return_value = portfolio
+        mock_midday_cfg.return_value = {"enabled": True, "macro_refresh": True, "mss_experts": False}
+        mock_load_state.return_value = IntradayState(date="2026-08-18")
+        mock_build.return_value = ({"code": "688008"}, tmp_path / "snap.json")
+        mock_run_midday.return_value = {
+            "snapshot": {"code": "688008"},
+            "evaluation": {"report": {}},
+            "scan": {"scan_id": "S10", "mss_final": 44},
+            "feishu": None,
+        }
+        mock_midday_harness.return_value = {"changes": 1, "skipped": False, "job": "midday"}
+
+        from agent_reach.daily_run.schedule import run_scheduled
+
+        result = run_scheduled("midday", push=False)
+        assert result["job"] == "midday"
+        mock_midday_harness.assert_called_once()
+        assert result["harness_midday"] == {"changes": 1, "skipped": False, "job": "midday"}
+
     @patch("agent_reach.daily_run.intraday.record_morning_scan", return_value={"scan": {"scan_id": "S1"}})
     @patch("agent_reach.daily_run.trade_calendar.is_trading_day", return_value=(True, ""))
     @patch("agent_reach.daily_run.workflows.save_morning_baseline")

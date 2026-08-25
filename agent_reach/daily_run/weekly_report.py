@@ -1335,7 +1335,9 @@ def build_weekly_pnl_source_attribution_lines(report: WeeklyReport | dict[str, A
         lines.append(
             "  - _现持仓=周末仍持有标的的周初→周末价差；"
             "已清仓=本周卖出 FIFO 已实现；"
-            "换仓及其它=组合净值变动扣除前两项（含买卖换仓、已卖标的浮亏兑现等）_"
+            "换仓及其它=组合净值变动扣除前两项，"
+            "包含本周内买入又卖出（非跨周持有）标的的全部价格波动、买卖摩擦成本等，"
+            "并非单纯的\"调仓操作损益\"_"
         )
 
     cash_pnl = attr.get("cash_pnl", data.get("cash_pnl"))

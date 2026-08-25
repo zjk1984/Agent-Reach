@@ -716,6 +716,159 @@ class TestApplyAutoAdjust:
         assert result.applied is False
 
 
+class TestRoundLot:
+    """M5: STAR (688) board partial-sell must round UP to a lot, not down to 0."""
+
+    def test_main_board_below_lot_no_total_shares_returns_zero(self):
+        from agent_reach.daily_run.portfolio_manager import _round_lot
+
+        assert _round_lot("600584", 50) == 0
+
+    def test_main_board_partial_sell_below_lot_rounds_up(self):
+        from agent_reach.daily_run.portfolio_manager import _round_lot
+
+        # 175/350: below one 100-share lot, but the position holds several lots.
+        assert _round_lot("600584", 40, total_shares=350) == 100
+
+    def test_star_board_partial_sell_below_lot_rounds_up(self):
+        from agent_reach.daily_run.portfolio_manager import _round_lot
+
+        # 35% of 350 = 122, below the 200-share STAR lot but position has >=1 lot.
+        assert _round_lot("688008", 122, total_shares=350) == 200
+
+    def test_star_board_odd_lot_position_sells_in_full(self):
+        from agent_reach.daily_run.portfolio_manager import _round_lot
+
+        # Holding itself (100 shares) is below the 200-share lot: only a full
+        # odd-lot exit is valid, never 0.
+        assert _round_lot("688008", 35, total_shares=100) == 100
+
+    def test_full_exit_bypasses_lot_rounding(self):
+        from agent_reach.daily_run.portfolio_manager import _round_lot
+
+        assert _round_lot("688008", 350, total_shares=350) == 350
+
+    def test_buy_sizing_unaffected_rounds_down(self):
+        """Buy-sizing calls (no total_shares) must keep rounding DOWN, never up."""
+        from agent_reach.daily_run.portfolio_manager import _round_lot
+
+        assert _round_lot("688008", 350) == 200
+        assert _round_lot("600584", 150) == 100
+
+
+class TestTradabilityGate:
+    """H1/M3/M4: auto paper trades must not fill through limit-up/down or suspension."""
+
+    def test_sell_blocked_at_limit_down(self, portfolio, snapshot, settings_enabled, monkeypatch):
+        settings_enabled["harness_runtime"] = {
+            "deep_loss_policy": {
+                "loss_cny_threshold": 5000,
+                "loss_pct_threshold": 10,
+                "cover_ratio": 0.0,
+                "sell_ratio": 1.0,
+                "non_deep_loss_sell_ratio": 1.0,
+            }
+        }
+        monkeypatch.setattr("agent_reach.daily_run.portfolio_manager.effective_settings", lambda s: s)
+        snapshot = dict(snapshot)
+        snapshot["code"] = "002273"
+        snapshot["portfolio"] = dict(snapshot["portfolio"])
+        holdings = [dict(h) for h in snapshot["portfolio"]["holdings"]]
+        for h in holdings:
+            if h["code"] == "002273":
+                h["change_pct"] = -9.95  # main board 10% limit
+        snapshot["portfolio"]["holdings"] = holdings
+
+        decision = TradeDecision(
+            action="sell",
+            trade_id="T1",
+            lookback_mss=35.0,
+            lookback_detail=[],
+            trend="falling",
+            reasoning="宏观避险",
+        )
+        result = apply_auto_adjust(portfolio, decision, snapshot, settings_enabled)
+        assert result.applied is False
+        assert "跌停" in result.message
+        assert len(result.portfolio["holdings"]) == 2
+
+    def test_sell_allowed_when_not_at_limit(self, portfolio, snapshot, settings_enabled, monkeypatch):
+        settings_enabled["harness_runtime"] = {
+            "deep_loss_policy": {
+                "loss_cny_threshold": 5000,
+                "loss_pct_threshold": 10,
+                "cover_ratio": 0.0,
+                "sell_ratio": 1.0,
+                "non_deep_loss_sell_ratio": 1.0,
+            }
+        }
+        monkeypatch.setattr("agent_reach.daily_run.portfolio_manager.effective_settings", lambda s: s)
+        snapshot = dict(snapshot)
+        snapshot["code"] = "002273"
+        decision = TradeDecision(
+            action="sell",
+            trade_id="T1",
+            lookback_mss=35.0,
+            lookback_detail=[],
+            trend="falling",
+            reasoning="宏观避险",
+        )
+        result = apply_auto_adjust(portfolio, decision, snapshot, settings_enabled)
+        assert result.applied is True
+
+    def test_buy_blocked_at_limit_up(self, portfolio, snapshot, settings_enabled):
+        snapshot = dict(snapshot)
+        snapshot["code"] = "000725"
+        snapshot["price"] = 7.63
+        snapshot["change_pct"] = 9.95  # main board 10% limit
+        decision = TradeDecision(
+            action="buy",
+            trade_id="T1",
+            lookback_mss=55.0,
+            lookback_detail=[],
+            trend="rising",
+            reasoning="MSS 达阈值",
+        )
+        result = apply_auto_adjust(portfolio, decision, snapshot, settings_enabled, cash_limit_bypass=True)
+        assert result.applied is False
+        assert "涨停" in result.message
+        assert len(result.portfolio["holdings"]) == 2
+
+    def test_buy_blocked_when_suspended(self, portfolio, snapshot, settings_enabled):
+        snapshot = dict(snapshot)
+        snapshot["code"] = "000725"
+        snapshot["price"] = 7.63
+        snapshot["change_pct"] = 0.0
+        snapshot["volume"] = 0
+        decision = TradeDecision(
+            action="buy",
+            trade_id="T1",
+            lookback_mss=55.0,
+            lookback_detail=[],
+            trend="rising",
+            reasoning="MSS 达阈值",
+        )
+        result = apply_auto_adjust(portfolio, decision, snapshot, settings_enabled, cash_limit_bypass=True)
+        assert result.applied is False
+        assert "停牌" in result.message
+
+    def test_buy_allowed_when_not_at_limit(self, portfolio, snapshot, settings_enabled):
+        snapshot = dict(snapshot)
+        snapshot["code"] = "000725"
+        snapshot["price"] = 7.63
+        snapshot["change_pct"] = 0.66
+        decision = TradeDecision(
+            action="buy",
+            trade_id="T1",
+            lookback_mss=55.0,
+            lookback_detail=[],
+            trend="rising",
+            reasoning="MSS 达阈值",
+        )
+        result = apply_auto_adjust(portfolio, decision, snapshot, settings_enabled, cash_limit_bypass=True)
+        assert result.applied is True
+
+
 class TestIncrementDays:
     def test_sync_without_acquired_date_keeps_counter(self, portfolio):
         updated = increment_holding_days(portfolio)
@@ -847,3 +1000,110 @@ class TestTradeLedgerDedup:
         assert register_applied_trade([action]) is True
         assert register_applied_trade([action]) is False
         assert len(load_daily_trade_state()["fingerprints"]) == 1
+
+
+class TestAppliedTradesTodayScope:
+    """M7: schedule.max_applied_trades_per_day_scope opt-in per-symbol cap."""
+
+    def _register(self, code: str, n: int = 1) -> None:
+        from agent_reach.daily_run.portfolio_manager import TradeAction, register_applied_trade
+
+        for i in range(n):
+            register_applied_trade(
+                [
+                    TradeAction(
+                        side="buy",
+                        code=code,
+                        name=code,
+                        shares=100 + i,
+                        price=10.0,
+                        amount=1000.0 + i,
+                        commission=1.0,
+                        reasoning="test",
+                    )
+                ]
+            )
+
+    def test_global_scope_counts_across_symbols(self):
+        from agent_reach.daily_run.portfolio_manager import applied_trades_today_for
+
+        self._register("000725", 2)
+        self._register("600584", 1)
+        settings = {"schedule": {"max_applied_trades_per_day_scope": "global"}}
+        assert applied_trades_today_for("000725", settings) == 3
+        assert applied_trades_today_for("600584", settings) == 3
+
+    def test_default_scope_is_global(self):
+        from agent_reach.daily_run.portfolio_manager import applied_trades_today_for
+
+        self._register("000725", 2)
+        self._register("600584", 1)
+        assert applied_trades_today_for("000725", {}) == 3
+
+    def test_per_symbol_scope_isolates_counts(self):
+        from agent_reach.daily_run.portfolio_manager import applied_trades_today_for
+
+        self._register("000725", 2)
+        self._register("600584", 1)
+        settings = {"schedule": {"max_applied_trades_per_day_scope": "per_symbol"}}
+        assert applied_trades_today_for("000725", settings) == 2
+        assert applied_trades_today_for("600584", settings) == 1
+        assert applied_trades_today_for("002273", settings) == 0
+
+    def test_symbol_trades_today_direct(self):
+        from agent_reach.daily_run.portfolio_manager import symbol_trades_today
+
+        self._register("000725", 3)
+        assert symbol_trades_today("000725") == 3
+        assert symbol_trades_today("600584") == 0
+
+
+class TestRecalcTotalsPricePrecedence:
+    """H2: `_recalc_totals` must mark to the freshest `enriched` quote, not a
+    holding's own possibly-stale embedded `price` (e.g. snapshot_builder's
+    `enrich_holding` stamps a holding's `price` earlier in the same close run,
+    before close_portfolio_summary re-fetches a fresher quote into `enriched`).
+    This mirrors the precedence `_holding_unrealized_pnl` already uses via its
+    `{**holding, **enriched.get(code, {})}` merge, so total/cash_ratio mark to
+    the same price as per-holding P&L rows elsewhere in the same close card."""
+
+    def test_prefers_enriched_price_over_stale_holding_price(self):
+        from agent_reach.daily_run.portfolio_manager import _recalc_totals
+
+        pf = {
+            "cash": 10000.0,
+            "holdings": [
+                {"code": "000725", "name": "京东方A", "shares": 1000, "price": 5.0, "cost": 4.0},
+            ],
+        }
+        # enriched carries a fresher quote (8.0) than the holding's own stale
+        # embedded price (5.0, captured earlier in the same run).
+        enriched = {"000725": {"price": 8.0}}
+        _recalc_totals(pf, enriched)
+
+        assert pf["total"] == 18000.0  # 10000 cash + 1000 * 8.0, not 5.0
+        assert round(pf["cash_ratio"], 4) == round(10000.0 / 18000.0, 4)
+
+    def test_falls_back_to_holding_price_when_enriched_missing(self):
+        from agent_reach.daily_run.portfolio_manager import _recalc_totals
+
+        pf = {
+            "cash": 10000.0,
+            "holdings": [
+                {"code": "000725", "name": "京东方A", "shares": 1000, "price": 5.0, "cost": 4.0},
+            ],
+        }
+        _recalc_totals(pf, {})
+
+        assert pf["total"] == 15000.0  # 10000 cash + 1000 * 5.0 (own price)
+
+    def test_falls_back_to_cost_when_no_price_anywhere(self):
+        from agent_reach.daily_run.portfolio_manager import _recalc_totals
+
+        pf = {
+            "cash": 10000.0,
+            "holdings": [{"code": "000725", "name": "京东方A", "shares": 1000, "cost": 4.0}],
+        }
+        _recalc_totals(pf, {})
+
+        assert pf["total"] == 14000.0  # 10000 cash + 1000 * 4.0 (cost fallback)

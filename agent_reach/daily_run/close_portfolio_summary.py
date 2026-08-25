@@ -982,15 +982,25 @@ def build_close_portfolio_summary(
             capital_flow=capital_flow,
         )
         drift = round(end_cash - expected_end_cash, 2)
-        if abs(drift) > 1.0:
+        # Delegate to the shared reconcile helper (same one used by the merged
+        # per-symbol close path and close_code_review) so total/cash_ratio stay
+        # in lockstep with the corrected cash instead of drifting separately.
+        close_pf, cash_fixed, _reconcile_note = apply_portfolio_cash_reconcile(
+            close_pf,
+            morning_cash=morning_cash,
+            ledger_trades=ledger_trades,
+            capital_flow=capital_flow,
+            enriched=enriched,
+            tolerance=1.0,
+        )
+        if cash_fixed:
             cash_reconcile_drift = drift
             notes.append(
                 (
                     f"portfolio 现金 ¥{end_cash:,.0f} 与 ledger 推算 ¥{expected_end_cash:,.0f} "
-                    f"偏差 ¥{drift:+,.0f}，当日盈亏已按 ledger 重算"
+                    f"偏差 ¥{drift:+,.0f}，当日盈亏已按 ledger 重算（total/cash_ratio 已同步）"
                 )
             )
-            close_pf["cash"] = expected_end_cash
             end_cash = expected_end_cash
 
     holdings = _holding_pnl_rows(close_pf, enriched, morning_prices, close_prices)

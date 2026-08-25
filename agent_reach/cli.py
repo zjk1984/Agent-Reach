@@ -347,10 +347,20 @@ def main():
     p_dr_cap_dep.add_argument("--amount", type=float, required=True, help="Deposit amount (CNY)")
     p_dr_cap_dep.add_argument("--note", default="", help="Optional note")
     p_dr_cap_dep.add_argument("--date", default="", help="Event date YYYY-MM-DD (default: today)")
+    p_dr_cap_dep.add_argument(
+        "--no-adjust-cash",
+        action="store_true",
+        help="Only log the event; don't touch portfolio.json cash (default: adjusts cash/total too)",
+    )
     p_dr_cap_wd = p_dr_capital_sub.add_parser("withdraw", help="Record a capital withdrawal")
     p_dr_cap_wd.add_argument("--amount", type=float, required=True, help="Withdrawal amount (CNY)")
     p_dr_cap_wd.add_argument("--note", default="", help="Optional note")
     p_dr_cap_wd.add_argument("--date", default="", help="Event date YYYY-MM-DD (default: today)")
+    p_dr_cap_wd.add_argument(
+        "--no-adjust-cash",
+        action="store_true",
+        help="Only log the event; don't touch portfolio.json cash (default: adjusts cash/total too)",
+    )
     p_dr_cap_list = p_dr_capital_sub.add_parser("list", help="List capital events")
     p_dr_cap_list.add_argument("--date", default="", help="Filter by date YYYY-MM-DD")
     p_dr_cap_list.add_argument("--json", action="store_true", help="JSON output")
@@ -2424,6 +2434,23 @@ def _cmd_daily_run(args):
             net = net_capital_flow(event_date)
             if abs(net) >= 0.01:
                 print(f"   当日净入出金: {net:+,.2f}")
+
+            if getattr(args, "no_adjust_cash", False):
+                print("   （--no-adjust-cash：未同步 portfolio.json 现金，请自行核对）")
+            else:
+                from agent_reach.daily_run.capital_events import (
+                    apply_capital_event_to_portfolio,
+                )
+                from agent_reach.daily_run.snapshot_builder import (
+                    load_portfolio,
+                    save_portfolio,
+                )
+
+                pf = load_portfolio()
+                old_cash = float(pf.get("cash") or 0)
+                pf = apply_capital_event_to_portfolio(pf, action, args.amount)
+                save_portfolio(pf)
+                print(f"   portfolio 现金已同步：¥{old_cash:,.2f} → ¥{float(pf['cash']):,.2f}")
             return
 
         if action == "list":

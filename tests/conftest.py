@@ -79,3 +79,58 @@ def isolate_daily_run_state(monkeypatch, tmp_path):
         "agent_reach.daily_run.portfolio_manager.daily_trade_state_path",
         lambda: tmp_path / "daily_trade_state.json",
     )
+
+    # is_continuous_session() gates should_evaluate_trade() on real wall-clock
+    # time (A-share continuous trading hours), which would otherwise make the
+    # whole suite flaky/order-dependent depending on when tests happen to run.
+    # Default to "always in session" so existing tests stay deterministic;
+    # tests that specifically exercise the session gate monkeypatch this back.
+    # intraday.py does ``from trade_calendar import is_continuous_session`` (a
+    # frozen name binding), so both the defining module and that import site
+    # need patching.
+    monkeypatch.setattr("agent_reach.daily_run.trade_calendar.is_continuous_session", lambda dt=None: True)
+    monkeypatch.setattr("agent_reach.daily_run.intraday.is_continuous_session", lambda dt=None: True)
+
+    # Morning baseline / capital events / daily P&L history: same real-file leak
+    # as harness state and the trade ledger above. This machine also runs the
+    # live daily-run cron, so ~/.agent-reach/daily_run/last_morning.json,
+    # capital_events.jsonl, and pnl_history.jsonl all have real, non-empty
+    # content that would otherwise silently feed close_code_review's
+    # cash-vs-ledger check / pnl-history-gap check during tests.
+    monkeypatch.setattr(
+        "agent_reach.daily_run.workflows._default_baseline_path",
+        lambda: tmp_path / "last_morning.json",
+    )
+    monkeypatch.setattr(
+        "agent_reach.daily_run.capital_events.default_capital_events_path",
+        lambda: tmp_path / "capital_events.jsonl",
+    )
+    monkeypatch.setattr(
+        "agent_reach.daily_run.daily_pnl_history.default_pnl_history_path",
+        lambda: tmp_path / "pnl_history.jsonl",
+    )
+
+    # Skill fragments (external playbook.md / experience_latest.md / fragments.json
+    # + archives) are the "Agent 优先顺序" entry point the daily_run_skill tells
+    # every agent to read first. A test that forgets its own isolation and calls
+    # write_fragments() directly (as test_gates_pass_on_canonical_skill once did)
+    # silently overwrites this real file with dummy fixture content and no
+    # recovery path (the archive-before-overwrite step no-ops if a same-named
+    # archive already exists). Default everything to tmp_path as defense in
+    # depth; tests that specifically exercise skill_fragments still use their
+    # own local fragments_tmp fixture, which simply re-patches the same names.
+    skill_frag_dir = tmp_path / "skill_fragments"
+    monkeypatch.setattr("agent_reach.daily_run.skill_fragments.FRAGMENTS_DIR", skill_frag_dir)
+    monkeypatch.setattr("agent_reach.daily_run.skill_fragments.PLAYBOOK_FRAGMENT", skill_frag_dir / "playbook.md")
+    monkeypatch.setattr(
+        "agent_reach.daily_run.skill_fragments.EXPERIENCE_FRAGMENT",
+        skill_frag_dir / "experience_latest.md",
+    )
+    monkeypatch.setattr(
+        "agent_reach.daily_run.skill_fragments.FRAGMENTS_MANIFEST",
+        skill_frag_dir / "fragments.json",
+    )
+    monkeypatch.setattr(
+        "agent_reach.daily_run.skill_fragments.ARCHIVE_DIR",
+        tmp_path / "archives" / "skill",
+    )

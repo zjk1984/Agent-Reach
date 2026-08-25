@@ -113,6 +113,25 @@ class TestSkillWriteback:
         assert (tmp_path / ".cursor" / "skills" / "daily-run-harness-skills" / "SKILL.md").is_file()
         assert (tmp_path / ".cursor" / "skills" / "daily-run-code-walk" / "SKILL.md").is_file()
 
+    def test_sync_cursor_agent_skills_mirrors_scripts_and_references(self, tmp_path, monkeypatch):
+        # Skill bodies tell agents to run e.g. scripts/run_close_harness.py or
+        # read references/*.md relative to the skill dir; the global install
+        # (what agents actually load once this repo isn't their cwd) must ship
+        # those alongside SKILL.md, not just the manual text.
+        monkeypatch.setenv("HOME", str(tmp_path))
+        sync_cursor_agent_skills_to_local()
+        for name in ("daily-run-code-walk", "daily-run-pnl-overview"):
+            source_dir = Path(__file__).resolve().parents[1] / ".cursor" / "skills" / name
+            dest_dir = tmp_path / ".cursor" / "skills" / name
+            for subdir_name in ("scripts", "references"):
+                src_subdir = source_dir / subdir_name
+                if src_subdir.is_dir():
+                    dest_subdir = dest_dir / subdir_name
+                    assert dest_subdir.is_dir(), f"{dest_subdir} missing"
+                    src_files = {p.name for p in src_subdir.iterdir()}
+                    dest_files = {p.name for p in dest_subdir.iterdir()}
+                    assert src_files == dest_files
+
     @patch("agent_reach.daily_run.skill_improvements_apply.sync_cursor_agent_skills_to_local", return_value=["/tmp/cursor/SKILL.md"])
     def test_sync_canonical_includes_cursor_skills(self, mock_cursor_sync, tmp_path, monkeypatch):
         from agent_reach.daily_run.skill_improvements_apply import sync_canonical_skill_to_local

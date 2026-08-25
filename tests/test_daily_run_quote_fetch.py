@@ -1,10 +1,14 @@
 # -*- coding: utf-8
 """Tests for multi-source quote fetch helpers."""
 
+from unittest.mock import MagicMock, patch
+
 from agent_reach.daily_run.quote_fetch import (
+    _fetch_xueqiu,
     _merge_valuation_fields,
     _parse_eastmoney_change_pct,
     _parse_eastmoney_market_cap,
+    _parse_eastmoney_nonneg,
     _parse_eastmoney_pe_ttm,
     _parse_eastmoney_turnover,
     _parse_eastmoney_valuation,
@@ -53,3 +57,73 @@ class TestEastmoneyValuation:
         )
         assert merged["pe_ttm"] == 35.2
         assert merged["price"] == 58.1
+
+    def test_merge_valuation_fields_backfills_volume_turnover(self):
+        """M4: suspension detection needs volume/turnover gap-filled across sources."""
+        merged = _merge_valuation_fields(
+            {"code": "600584", "price": 30.0, "source": "eastmoney"},
+            {"volume": 0.0, "turnover": 0.0},
+        )
+        assert merged["volume"] == 0.0
+        assert merged["turnover"] == 0.0
+
+    def test_merge_valuation_fields_does_not_overwrite_zero(self):
+        """A genuine 0 from the primary source must not be masked by a fallback value."""
+        merged = _merge_valuation_fields(
+            {"code": "600584", "price": 30.0, "volume": 0.0},
+            {"volume": 12345.0},
+        )
+        assert merged["volume"] == 0.0
+
+
+class TestEastmoneyNonneg:
+    """M4: suspension detection needs 0 volume/turnover preserved, unlike
+    _optional_float which treats 0 as invalid/missing for valuation fields."""
+
+    def test_zero_is_preserved(self):
+        assert _parse_eastmoney_nonneg(0) == 0.0
+        assert _parse_eastmoney_nonneg("0") == 0.0
+
+    def test_positive_value(self):
+        assert _parse_eastmoney_nonneg(12345) == 12345.0
+
+    def test_none_and_invalid(self):
+        assert _parse_eastmoney_nonneg(None) is None
+        assert _parse_eastmoney_nonneg("not-a-number") is None
+
+    def test_negative_rejected(self):
+        assert _parse_eastmoney_nonneg(-5) is None
+
+
+class TestFetchXueqiuVolume:
+    def test_volume_and_amount_captured(self):
+        mock_channel = MagicMock()
+        mock_channel.get_stock_quote.return_value = {
+            "current": 30.0,
+            "name": "长电科技",
+            "percent": 1.2,
+            "last_close": 29.6,
+            "volume": 0,
+            "amount": 0,
+        }
+        with patch("agent_reach.channels.xueqiu.XueqiuChannel", return_value=mock_channel), patch(
+            "agent_reach.channels.xueqiu._ensure_cookies",
+        ):
+            out = _fetch_xueqiu(["600584"], max_retries=0)
+        assert out["600584"]["volume"] == 0.0
+        assert out["600584"]["turnover"] == 0.0
+
+    def test_missing_volume_omitted(self):
+        mock_channel = MagicMock()
+        mock_channel.get_stock_quote.return_value = {
+            "current": 30.0,
+            "name": "长电科技",
+            "percent": 1.2,
+            "last_close": 29.6,
+        }
+        with patch("agent_reach.channels.xueqiu.XueqiuChannel", return_value=mock_channel), patch(
+            "agent_reach.channels.xueqiu._ensure_cookies",
+        ):
+            out = _fetch_xueqiu(["600584"], max_retries=0)
+        assert "volume" not in out["600584"]
+        assert "turnover" not in out["600584"]

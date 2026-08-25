@@ -363,6 +363,10 @@ def _harness_push_summary_enabled(settings: dict[str, Any], *, report_kind: str)
         if "push_summary_on_intraday" in harness_cfg:
             return bool(harness_cfg.get("push_summary_on_intraday"))
         return False
+    if report_kind == "midday":
+        if "push_summary_on_midday" in harness_cfg:
+            return bool(harness_cfg.get("push_summary_on_midday"))
+        return False
     return False
 
 
@@ -731,6 +735,7 @@ def run_close(
         research_md = render_research_markdown(enriched, research_results=research_results, settings=cfg) or ""
 
     extra_parts: list[str] = []
+    wl_md = ""
     if watchlist_adjust is not None:
         from agent_reach.daily_run.watchlist_manager import (
             WatchlistAdjustResult,
@@ -751,6 +756,7 @@ def run_close(
         if wl_md:
             extra_parts.append(wl_md)
 
+    cr_md = ""
     if code_review is not None:
         from agent_reach.daily_run.close_code_review import CodeReviewResult
 
@@ -1011,32 +1017,53 @@ def run_close(
     curve_payload = curve.to_dict() if curve is not None and hasattr(curve, "to_dict") else curve
     close_narrative: dict[str, Any] = {"skipped": True, "reason": "deferred"}
 
+    # Harness layer A/B always runs before narrative/push (regardless of
+    # push_summary_on_close), mirroring morning/weekly/forecast: the flag only
+    # controls whether the harness summary is *embedded in the main card*,
+    # not whether/when the refinement itself executes.
     push_harness_summary = _harness_push_summary_enabled(cfg, report_kind="close")
     harness_result: dict[str, Any] = {}
     harness_md = ""
-    if push_harness_summary:
-        try:
-            harness_result = _run_close_harness_layer_ab(
-                enriched=enriched,
-                verify_dict=verify_dict,
-                curve=curve,
-                forecast_review=forecast_review,
-                portfolio_summary_obj=portfolio_summary_obj,
-                settings=cfg,
-                harness_skills_report=harness_skills_report,
-                experience_harness=experience_harness,
-                skip_layer_b=skip_harness_layer_b,
-            )
-            if not skip_harness_layer_b:
+    try:
+        harness_result = _run_close_harness_layer_ab(
+            enriched=enriched,
+            verify_dict=verify_dict,
+            curve=curve,
+            forecast_review=forecast_review,
+            portfolio_summary_obj=portfolio_summary_obj,
+            settings=cfg,
+            harness_skills_report=harness_skills_report,
+            experience_harness=experience_harness,
+            skip_layer_b=skip_harness_layer_b,
+        )
+        if not skip_harness_layer_b:
+            if push_harness_summary:
                 harness_md = _finalize_close_harness(
                     harness_result,
                     portfolio_summary_obj=portfolio_summary_obj,
                     settings=cfg,
                     harness_errors=harness_errors,
                 )
-        except Exception as exc:
-            _workflow_harness_error(harness_errors, "close_harness_layer_ab", exc)
-            harness_result = {"skipped": True, "error": str(exc)}
+            else:
+                # Not embedded in the main card, but auto-rollback safety
+                # must not depend on push_summary_on_close.
+                from agent_reach.daily_run.harness import auto_rollback_on_bad_trade
+
+                rollback = None
+                try:
+                    rollback = auto_rollback_on_bad_trade(
+                        portfolio_summary=portfolio_summary_obj.to_dict() if portfolio_summary_obj else None,
+                        harness_result=harness_result,
+                        settings=cfg,
+                        job="close",
+                    )
+                except Exception as exc:
+                    _workflow_harness_error(harness_errors, "close_harness_auto_rollback", exc)
+                if rollback and rollback.get("triggered"):
+                    harness_result["auto_rollback"] = rollback
+    except Exception as exc:
+        _workflow_harness_error(harness_errors, "close_harness_layer_ab", exc)
+        harness_result = {"skipped": True, "error": str(exc)}
 
     if not skip_narrative:
         from agent_reach.daily_run.report_narrative import generate_close_narrative
@@ -1073,6 +1100,10 @@ def run_close(
             verify_markdown=verify_md,
             portfolio_markdown=portfolio_md,
             harness_markdown=harness_md,
+            watchlist_adjust_markdown=wl_md,
+            code_review_markdown=cr_md,
+            forecast_review_markdown=forecast_review_md,
+            close_improvements_markdown=improvements_md,
             narrative=close_narrative,
             macro_signals=enriched.get("macro_signals"),
         )
@@ -1089,39 +1120,6 @@ def run_close(
     from agent_reach.daily_run.prior_close import save_close_baseline
 
     close_baseline_path = save_close_baseline(snapshot=enriched, verify=verify_dict)
-
-    if not push_harness_summary:
-        try:
-            harness_result = _run_close_harness_layer_ab(
-                enriched=enriched,
-                verify_dict=verify_dict,
-                curve=curve,
-                forecast_review=forecast_review,
-                portfolio_summary_obj=portfolio_summary_obj,
-                settings=cfg,
-                harness_skills_report=harness_skills_report,
-                experience_harness=experience_harness,
-                skip_layer_b=skip_harness_layer_b,
-            )
-        except Exception as exc:
-            _workflow_harness_error(harness_errors, "close_harness_layer_ab", exc)
-            harness_result = {"skipped": True, "error": str(exc)}
-        else:
-            if not skip_harness_layer_b:
-                rollback = None
-                try:
-                    from agent_reach.daily_run.harness import auto_rollback_on_bad_trade
-
-                    rollback = auto_rollback_on_bad_trade(
-                        portfolio_summary=portfolio_summary_obj.to_dict() if portfolio_summary_obj else None,
-                        harness_result=harness_result,
-                        settings=cfg,
-                        job="close",
-                    )
-                except Exception as exc:
-                    _workflow_harness_error(harness_errors, "close_harness_auto_rollback", exc)
-                if rollback and rollback.get("triggered"):
-                    harness_result["auto_rollback"] = rollback
 
     followup_steps = push_harness_followups(
         settings=cfg,
@@ -1146,6 +1144,10 @@ def run_close(
         "market_review": market_review_obj,
         "portfolio_markdown": portfolio_md,
         "portfolio_summary": portfolio_summary_obj.to_dict() if portfolio_summary_obj else None,
+        "watchlist_adjust_markdown": wl_md,
+        "code_review_markdown": cr_md,
+        "forecast_review_markdown": forecast_review_md,
+        "close_improvements_markdown": improvements_md,
         "llm_narrative": close_narrative,
         "research": research_results,
         "experience_path": str(exp_path),

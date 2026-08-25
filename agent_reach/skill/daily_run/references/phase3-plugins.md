@@ -77,7 +77,7 @@ python3 -m agent_reach.cli daily-run plugins run -i snapshot.json --names macro,
     "close_team_first": true,
     "intraday_team_first": true,
     "intraday_experts": true,
-    "counter_thesis_downgrade": true,
+    "counter_thesis_downgrade": true
   }
 }
 ```
@@ -187,5 +187,12 @@ agent-reach daily-run intraday -i snapshot.json --scan --dry-run
 
 Lookback 权重（默认 50%/30%/20%）来自 `config/daily_run_settings.json` 的 `lookback_weights`。
 状态持久化：`~/.agent-reach/daily_run/intraday_state.json`（按日自动重置）。
+
+**午盘（12:30 轻分析：宏观/舆情 refresh + Lookback 锚点）：**
+```bash
+agent-reach daily-run schedule run midday
+```
+无独立顶层 `daily-run midday` 子命令，仅可通过 `schedule run midday` 触发（cron 每交易日 12:30）；
+内部写入 intraday 扫描记录（`source=midday`）并跑 midday harness（`midday_harness.py` → Layer A）。
 
 ---

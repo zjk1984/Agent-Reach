@@ -36,6 +36,10 @@ _CATEGORY_LABELS: dict[str, str] = {
     "forecast_news": "新闻热点",
     "harness": "Harness 进化",
     "xueqiu_hot": "雪球热门",
+    "watchlist_adjust": "观察池调整",
+    "code_review": "代码走读",
+    "forecast_review": "预测回顾",
+    "close_improvements": "改进建议",
 }
 
 
@@ -147,6 +151,10 @@ def render_close_sections(
     portfolio_markdown: str = "",
     market_markdown: str = "",
     harness_markdown: str = "",
+    watchlist_adjust_markdown: str = "",
+    code_review_markdown: str = "",
+    forecast_review_markdown: str = "",
+    close_improvements_markdown: str = "",
     narrative: Optional[dict[str, Any]] = None,
     macro_signals: Optional[dict[str, Any]] = None,
 ) -> list[ReportSection]:
@@ -167,6 +175,20 @@ def render_close_sections(
         sections.append(ReportSection(category="intraday", title="", body=curve_markdown.strip()))
     if research_markdown.strip():
         sections.append(ReportSection(category="research", title="", body=research_markdown.strip()))
+    if watchlist_adjust_markdown.strip():
+        sections.append(
+            ReportSection(category="watchlist_adjust", title="", body=watchlist_adjust_markdown.strip())
+        )
+    if code_review_markdown.strip():
+        sections.append(ReportSection(category="code_review", title="", body=code_review_markdown.strip()))
+    if forecast_review_markdown.strip():
+        sections.append(
+            ReportSection(category="forecast_review", title="", body=forecast_review_markdown.strip())
+        )
+    if close_improvements_markdown.strip():
+        sections.append(
+            ReportSection(category="close_improvements", title="", body=close_improvements_markdown.strip())
+        )
     if experience_markdown.strip():
         sections.append(ReportSection(category="experience", title="", body=experience_markdown.strip()))
     if verify_markdown.strip():
@@ -539,6 +561,10 @@ def close_sections_from_run(
         experience_markdown=run_result.get("experience_markdown") or "",
         verify_markdown=run_result.get("verify_markdown") or "",
         portfolio_markdown=run_result.get("portfolio_markdown") or "",
+        watchlist_adjust_markdown=run_result.get("watchlist_adjust_markdown") or "",
+        code_review_markdown=run_result.get("code_review_markdown") or "",
+        forecast_review_markdown=run_result.get("forecast_review_markdown") or "",
+        close_improvements_markdown=run_result.get("close_improvements_markdown") or "",
         narrative=run_result.get("llm_narrative"),
         macro_signals=macro_signals,
     )

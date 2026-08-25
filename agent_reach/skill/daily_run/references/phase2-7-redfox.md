@@ -35,7 +35,7 @@ python3 ~/redfox-community/skills/trending-hub/scripts/fetch_hotspot.py --source
 | **stock-analysis** | 5 大V 蒸馏 · 质量审计 | close `cross_validate_emotion` + `quality_gate` | 🟡 方法论 |
 | **investor-distiller** | 七维 DNA 画像 | weekly `experience.jsonl` / skill 审视 | 🟡 方法论 |
 | **weibo-hot-search** | 微博热搜榜 | 60s `/v2/weibo` | ✅ 60s 覆盖 |
-| **weibo-realtime-search** | 微博实时关键词搜索 | — | ❌ 未集成 |
+| **weibo-realtime-search** | 微博实时关键词搜索 | `redfox_client.fetch_weibo_search`（intraday/close） | ✅ |
 | **weibo-comment-search** | 微博评论舆情 | — | ❌ 未集成 |
 
 ### 双路径策略（免费 vs RedFox API）
@@ -161,7 +161,7 @@ python3 ~/redfox-community/skills/trending-hub/scripts/fetch_hotspot.py --source
 - [x] supervisor 反面检验 — `team._build_counter_thesis`（共识「可做」时）
 - [x] supervisor 反面检验 LLM — `supervisor_counter_llm.enrich_counter_thesis_llm`（`team.counter_thesis_llm.enabled`）
 
-**待增强：**
+**已完成（近期批次）：**
 
 - [x] gzh 订阅 CLI 管理命令 — `daily-run redfox gzh list|add|remove`
 - [x] stock-analysis 反面检验 enrich supervisor LLM prompt — `supervisor_counter_llm.py`（Batch 12）

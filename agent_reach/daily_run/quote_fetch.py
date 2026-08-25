@@ -41,7 +41,7 @@ def code_to_eastmoney_secid(code: str) -> str:
     return f"{market}.{text}"
 
 
-_EASTMONEY_FIELDS = "f43,f58,f60,f169,f170,f162,f168,f116"
+_EASTMONEY_FIELDS = "f43,f47,f48,f58,f60,f169,f170,f162,f168,f116"
 _EASTMONEY_UA = "Mozilla/5.0 (compatible; AgentReach/1.0)"
 _EASTMONEY_REFERER = "https://quote.eastmoney.com/"
 
@@ -69,6 +69,19 @@ def _optional_float(value: Any) -> Optional[float]:
     except (TypeError, ValueError):
         return None
     if parsed <= 0 or parsed != parsed:
+        return None
+    return parsed
+
+
+def _parse_eastmoney_nonneg(value: Any) -> Optional[float]:
+    """Like _optional_float but keeps 0 (needed for volume/turnover suspension checks)."""
+    if value is None:
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed < 0 or parsed != parsed:
         return None
     return parsed
 
@@ -151,6 +164,12 @@ def _fetch_eastmoney(codes: list[str], *, max_retries: int) -> dict[str, dict[st
             "reference_price": prev_close,
             "source": "eastmoney",
         }
+        volume_lots = _parse_eastmoney_nonneg(data.get("f47"))
+        if volume_lots is not None:
+            row["volume"] = volume_lots * 100  # 手 -> 股
+        amount = _parse_eastmoney_nonneg(data.get("f48"))
+        if amount is not None:
+            row["turnover"] = amount
         row.update(_parse_eastmoney_valuation(data))
         return row
 
@@ -168,7 +187,7 @@ def _fetch_eastmoney(codes: list[str], *, max_retries: int) -> dict[str, dict[st
             out[norm] = row
     return out
 
-_VALUATION_KEYS = ("pe_ttm", "turnover_rate", "market_capital")
+_VALUATION_KEYS = ("pe_ttm", "turnover_rate", "market_capital", "volume", "turnover")
 
 
 def _merge_valuation_fields(base: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
@@ -227,6 +246,18 @@ def _fetch_xueqiu(codes: list[str], *, max_retries: int) -> dict[str, dict[str, 
                 "reference_price": float(q.get("last_close") or price),
                 "source": "xueqiu",
             }
+            volume = q.get("volume")
+            if volume is not None:
+                try:
+                    out[code]["volume"] = float(volume)
+                except (TypeError, ValueError):
+                    pass
+            amount = q.get("amount")
+            if amount is not None:
+                try:
+                    out[code]["turnover"] = float(amount)
+                except (TypeError, ValueError):
+                    pass
             pe = q.get("pe_ttm")
             if pe is not None:
                 try:

@@ -96,7 +96,7 @@ class TestSkillGates:
         assert result["skipped"] is True
         assert gates_enabled({"weekly_report": {"skill_gates": {"enabled": False}}}) is False
 
-    def test_gates_pass_on_canonical_skill(self):
+    def test_gates_pass_on_canonical_skill(self, fragments_tmp):
         from agent_reach.daily_run.skill_improvements_apply import (
             build_next_week_playbook_block,
             canonical_skill_path,
