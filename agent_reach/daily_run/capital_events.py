@@ -71,6 +71,12 @@ def append_capital_event(
     p.parent.mkdir(parents=True, exist_ok=True)
     with open(p, "a", encoding="utf-8") as f:
         f.write(json.dumps(event.to_dict(), ensure_ascii=False) + "\n")
+    try:
+        from agent_reach.daily_run.storage.hooks import on_capital_event
+
+        on_capital_event(event.to_dict(), source_path=str(p))
+    except Exception:
+        pass
     return event
 
 

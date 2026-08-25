@@ -594,6 +594,12 @@ def record_apply_audit(
     from agent_reach.daily_run.jsonl_log import append_jsonl_capped
 
     append_jsonl_capped(_audit_path(), event)
+    try:
+        from agent_reach.daily_run.storage.hooks import on_apply_audit
+
+        on_apply_audit(event, source_path=str(_audit_path()))
+    except Exception:
+        pass
     return event
 
 

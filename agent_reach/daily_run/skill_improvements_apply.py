@@ -607,6 +607,12 @@ def append_skill_changelog(event: dict[str, Any]) -> None:
     row = {"at": datetime.now(timezone.utc).isoformat(), **event}
     with open(SKILL_CHANGELOG, "a", encoding="utf-8") as f:
         f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    try:
+        from agent_reach.daily_run.storage.hooks import on_skill_changelog
+
+        on_skill_changelog(row, source_path=str(SKILL_CHANGELOG))
+    except Exception:
+        pass
 
 
 def annotate_weekly_harness_audit(

@@ -47,6 +47,12 @@ def save_market_review(review: dict[str, Any], review_date: Optional[str] = None
     out = market_review_path(ds)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(review, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    try:
+        from agent_reach.daily_run.storage.hooks import on_market_review
+
+        on_market_review(review, review_date=ds, source_path=str(out))
+    except Exception:
+        pass
     return out
 
 

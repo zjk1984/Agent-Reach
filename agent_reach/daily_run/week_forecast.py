@@ -86,6 +86,19 @@ def save_calibration(data: dict[str, Any]) -> Path:
     forecasts_dir().mkdir(parents=True, exist_ok=True)
     path = calibration_path()
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    try:
+        from agent_reach.daily_run.storage import get_store, storage_enabled
+
+        if storage_enabled():
+            get_store().upsert_l2_scenario(
+                "forecast_calibration",
+                "calibration",
+                data,
+                source_path=str(path),
+                dedupe_key="l2:forecast_calibration",
+            )
+    except Exception:
+        pass
     return path
 
 
@@ -98,6 +111,12 @@ def save_forecast(forecast: dict[str, Any]) -> Path:
     week_start = date.fromisoformat(str(forecast["week_start"]))
     path = _forecast_path(week_start)
     path.write_text(json.dumps(forecast, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    try:
+        from agent_reach.daily_run.storage.hooks import on_forecast
+
+        on_forecast(forecast, source_path=str(path))
+    except Exception:
+        pass
     return path
 
 

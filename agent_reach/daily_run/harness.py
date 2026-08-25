@@ -176,6 +176,12 @@ class HarnessState:
         }
         p.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         try:
+            from agent_reach.daily_run.storage.hooks import on_harness_state_save
+
+            on_harness_state_save(payload)
+        except Exception:
+            pass
+        try:
             from agent_reach.daily_run.context_store import sync_harness_sidecars
 
             sync_harness_sidecars(self)
@@ -291,6 +297,12 @@ class HarnessState:
         from agent_reach.daily_run.jsonl_log import append_jsonl_capped
 
         append_jsonl_capped(_refinements_path(), event.to_dict())
+        try:
+            from agent_reach.daily_run.storage.hooks import on_harness_refinement
+
+            on_harness_refinement(event.to_dict(), source_path=str(_refinements_path()))
+        except Exception:
+            pass
         return event
 
     def overview(self, *, entry_limit: int = 6) -> str:

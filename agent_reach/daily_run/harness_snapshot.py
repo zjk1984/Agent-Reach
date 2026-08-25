@@ -66,6 +66,12 @@ def save_pre_apply_snapshot(
     }
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     _rotate_snapshots(cfg["max_keep"])
+    try:
+        from agent_reach.daily_run.storage.hooks import on_harness_snapshot
+
+        on_harness_snapshot(payload, snapshot_path=str(path))
+    except Exception:
+        pass
     return path
 
 

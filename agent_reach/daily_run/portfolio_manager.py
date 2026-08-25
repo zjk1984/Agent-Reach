@@ -151,6 +151,12 @@ def save_daily_trade_state(state: dict[str, Any]) -> None:
     path = daily_trade_state_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    try:
+        from agent_reach.daily_run.storage.hooks import on_l1_state
+
+        on_l1_state("daily_trade_state", "daily_trade_state", state)
+    except Exception:
+        pass
 
 
 def global_trades_today() -> int:
@@ -306,6 +312,12 @@ def append_trade_ledger(
     }
     with open(p, "a", encoding="utf-8") as f:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    try:
+        from agent_reach.daily_run.storage.hooks import on_trade_ledger
+
+        on_trade_ledger(entry, source_path=str(p))
+    except Exception:
+        pass
     return enriched
 
 

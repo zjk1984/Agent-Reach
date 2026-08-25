@@ -85,6 +85,12 @@ def save_last_runtime_overlay(meta: dict[str, Any]) -> None:
         json.dumps(_overlay_snapshot(meta), ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
+    try:
+        from agent_reach.daily_run.storage.hooks import on_runtime_overlay
+
+        on_runtime_overlay(_overlay_snapshot(meta), source_path=str(path))
+    except Exception:
+        pass
 
 
 def _overlay_block_diff(
@@ -171,6 +177,16 @@ def record_runtime_overlay_diff(
     from agent_reach.daily_run.jsonl_log import append_jsonl_capped
 
     append_jsonl_capped(_harness_root() / "overlay_diff.jsonl", diff)
+    try:
+        from agent_reach.daily_run.storage.hooks import on_harness_diff
+
+        on_harness_diff(
+            diff,
+            kind="harness_overlay_diff",
+            source_path=str(_harness_root() / "overlay_diff.jsonl"),
+        )
+    except Exception:
+        pass
     return diff
 
 
@@ -209,6 +225,16 @@ def record_harness_entry_diff(
     from agent_reach.daily_run.jsonl_log import append_jsonl_capped
 
     append_jsonl_capped(_harness_root() / "memory_diff.jsonl", diff)
+    try:
+        from agent_reach.daily_run.storage.hooks import on_harness_diff
+
+        on_harness_diff(
+            diff,
+            kind="harness_memory_diff",
+            source_path=str(_harness_root() / "memory_diff.jsonl"),
+        )
+    except Exception:
+        pass
     return diff
 
 

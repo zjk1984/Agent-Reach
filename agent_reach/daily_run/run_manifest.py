@@ -82,6 +82,7 @@ def save_run_manifest(
     path = out_dir / f"{job}_{ts}.json"
     record = {
         "job": job,
+        "date": today,
         "at": datetime.now(timezone.utc).isoformat(),
         "duration_ms": duration_ms,
         "feishu": feishu,
@@ -91,6 +92,12 @@ def save_run_manifest(
         json.dumps(_json_safe(record), ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
+    try:
+        from agent_reach.daily_run.storage.hooks import on_job_run
+
+        on_job_run(record, source_path=str(path))
+    except Exception:
+        pass
     logger.info("daily-run manifest saved: {}", path)
     return path
 

@@ -835,6 +835,21 @@
     "max_entries": 200
   },
 
+  "storage": {
+    "enabled": false,
+    "backend": "sqlite",
+    "sqlite_path": "",
+    "dual_write": true,
+    "distill": {
+      "enabled": true,
+      "auto_after_close": false
+    },
+    "postgres": {
+      "dsn": "",
+      "schema": "daily_run"
+    }
+  },
+
   "rejected_strategies": {
     "harness_evolve": true
   },
@@ -868,6 +883,9 @@
     "runtime_overlay_sources": ["policy", "memory", "playbook"],
     "runtime_rejected_guard": true,
     "min_cash_ratio_mode": "harness",
+    "trade_min_scans_mode": "harness",
+    "trade_every_n_scans_mode": "harness",
+    "eval_trends_mode": "harness",
     "threshold_evolution_mode": "harness",
     "lookback_weights_mode": "harness",
     "mss_weights_mode": "harness",

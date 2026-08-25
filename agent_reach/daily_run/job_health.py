@@ -56,6 +56,12 @@ def record_job_outcome(
 
     jobs[job] = entry
     _save(data)
+    try:
+        from agent_reach.daily_run.storage.hooks import on_l1_state
+
+        on_l1_state("job_health", "job_health", data)
+    except Exception:
+        pass
     return 0 if success else int(entry["consecutive_failures"])
 
 

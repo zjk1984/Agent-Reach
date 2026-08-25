@@ -100,6 +100,13 @@ def write_fragments(
         "sidecars": sidecars,
     }
     FRAGMENTS_MANIFEST.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    try:
+        from agent_reach.daily_run.storage.hooks import on_skill_fragment
+
+        on_skill_fragment("playbook", playbook_block, source_path=str(PLAYBOOK_FRAGMENT))
+        on_skill_fragment("experience_latest", experience_block, source_path=str(EXPERIENCE_FRAGMENT))
+    except Exception:
+        pass
     return manifest
 
 
