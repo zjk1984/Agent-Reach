@@ -825,48 +825,20 @@ def _apply_buy(
         return budget_ctx
     total, cash, deployable, min_deploy, min_cash_ratio, commission_rate = budget_ctx
 
-    target: Optional[dict[str, Any]] = None
-    if prefer:
-        prefer_row = _resolve_buy_row(prefer, pf, enriched)
-        if prefer_row is not None:
-            prefer_price = float(_price_for(prefer_row, enriched))
-            min_lot = _min_lot(prefer)
-            min_cost = min_lot * prefer_price * (1 + commission_rate)
-            if cash_limit_bypass and cash >= min_cost:
-                target = prefer_row
-            elif _can_afford_min_lot(
-                prefer,
-                prefer_price,
-                deployable=deployable,
-                commission_rate=commission_rate,
-                min_deploy=min_deploy,
-                total=total,
-                settings=settings,
-            ):
-                target = prefer_row
-
-    if target is None:
-        candidates = _watchlist_buy_candidates(pf, enriched, held_codes)
-        if not candidates:
-            max_t = max_total_symbols(settings)
-            if unique_symbol_count(pf) >= max_t:
-                return ApplyResult(
-                    applied=False,
-                    portfolio=pf,
-                    message=f"持仓+观察池已达合计上限 {max_t} 只，且无观察池可买标的",
-                )
-            if prefer:
-                return ApplyResult(
-                    applied=False,
-                    portfolio=pf,
-                    message=f"决策标的 {prefer} 资金不足一手，且观察池无可买入标的（或缺少报价）",
-                )
-            return ApplyResult(applied=False, portfolio=pf, message="观察池无可买入标的（或缺少报价）")
-
-        candidates.sort(key=lambda x: _symbol_score(x, None, settings), reverse=True)
-        target = candidates[0]
+    target, resolve_err = _resolve_single_buy_target(prefer, pf, enriched)
+    if resolve_err:
+        return ApplyResult(applied=False, portfolio=pf, message=resolve_err)
+    assert target is not None
 
     code = _normalize_code(str(target["code"]))
+
+    if code not in held_codes and unique_symbol_count(pf) >= max_total_symbols(settings):
+        max_t = max_total_symbols(settings)
+        return ApplyResult(
+            applied=False,
+            portfolio=pf,
+            message=f"持仓+观察池已达合计上限 {max_t} 只",
+        )
 
     from agent_reach.daily_run.tradability import tradability_block_reason
 
@@ -977,7 +949,6 @@ def simulate_buy_analysis(
     from agent_reach.daily_run.harness_policy import _position_policy
 
     holdings = list(pf.get("holdings") or [])
-    held_codes = {_normalize_code(str(h.get("code", ""))) for h in holdings}
     prefer = _normalize_code(str(prefer_code or ""))
     position = _position_policy(settings)
 
@@ -993,34 +964,16 @@ def simulate_buy_analysis(
 
     total, cash, deployable, _min_deploy, _min_cash_ratio, commission_rate = budget_ctx
 
-    target: Optional[dict[str, Any]] = None
-    if prefer:
-        prefer_row = _resolve_buy_row(prefer, pf, enriched)
-        if prefer_row is not None:
-            prefer_price = float(_price_for(prefer_row, enriched))
-            if _can_afford_min_lot(
-                prefer,
-                prefer_price,
-                deployable=deployable,
-                commission_rate=commission_rate,
-                min_deploy=_min_deploy,
-                total=total,
-                settings=settings,
-            ):
-                target = prefer_row
-
-    if target is None:
-        candidates = _watchlist_buy_candidates(pf, enriched, held_codes)
-        if not candidates:
-            return {
-                "allowed": False,
-                "buy_shares": 0,
-                "block_reason": "观察池无可买入标的（或缺少报价）",
-                "deploy_ratio": float(position.get("deploy_ratio", 1.0)),
-                "max_position_pct": float(position.get("max_position_pct", 35.0)),
-            }
-        candidates.sort(key=lambda x: _symbol_score(x, None, settings), reverse=True)
-        target = candidates[0]
+    target, resolve_err = _resolve_single_buy_target(prefer, pf, enriched)
+    if resolve_err:
+        return {
+            "allowed": False,
+            "buy_shares": 0,
+            "block_reason": resolve_err,
+            "deploy_ratio": float(position.get("deploy_ratio", 1.0)),
+            "max_position_pct": float(position.get("max_position_pct", 35.0)),
+        }
+    assert target is not None
 
     code = _normalize_code(str(target["code"]))
 
@@ -1161,6 +1114,21 @@ def _resolve_buy_row(
     if _price_for(row, enriched) is None:
         return None
     return row
+
+
+def _resolve_single_buy_target(
+    prefer_code: Optional[str],
+    pf: dict[str, Any],
+    enriched: dict[str, dict[str, Any]],
+) -> tuple[Optional[dict[str, Any]], Optional[str]]:
+    """Resolve one buy target from the decision symbol only (no watchlist ranking)."""
+    prefer = _normalize_code(str(prefer_code or ""))
+    if not prefer:
+        return None, "买入决策缺少标的代码"
+    row = _resolve_buy_row(prefer, pf, enriched)
+    if row is None:
+        return None, f"{prefer} 不在持仓/观察池或缺少报价"
+    return row, None
 
 
 def _watchlist_buy_candidates(
