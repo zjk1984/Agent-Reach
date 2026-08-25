@@ -598,10 +598,25 @@ def generate_week_forecast(
         watchlist_intel=watchlist_intel,
         xueqiu_cookie_health=xueqiu_health,
     )
+    # Narrative is attached by the caller (run_forecast) after harness refinements
+    # run, so the 规则解读 card can reflect the same-day forecast_calibrate evidence
+    # (mirrors run_weekly, which generates its narrative after harness). Callers that
+    # only need the numeric forecast (tests, review_active_forecast) are unaffected
+    # since llm_narrative defaults to {}.
+    return forecast
+
+
+def attach_forecast_narrative(
+    forecast: WeekForecast,
+    *,
+    settings: Optional[dict[str, Any]] = None,
+    harness_result: Optional[dict[str, Any]] = None,
+) -> WeekForecast:
     from agent_reach.daily_run.report_narrative import generate_forecast_narrative
 
-    narrative = generate_forecast_narrative(forecast.to_dict(), settings=settings)
-    forecast.llm_narrative = narrative
+    forecast.llm_narrative = generate_forecast_narrative(
+        forecast.to_dict(), settings=settings, harness_result=harness_result
+    )
     return forecast
 
 

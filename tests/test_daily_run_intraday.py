@@ -403,6 +403,15 @@ class TestDeepLossConsecutiveBuy:
     def _deep_loss_settings(self) -> dict:
         return {
             "intraday": {"deep_loss_consecutive_buy": 3},
+            # Force fixed (non-harness-evolved) macro_veto/aggressive_entry so
+            # this test doesn't depend on whatever harness_state.json happens
+            # to hold on disk: harness_runtime.threshold_overlay below is
+            # narrative-only metadata and has no effect on the actual
+            # threshold resolution used by _decide_trade().
+            "harness": {
+                "threshold_modes": {"macro_veto": "fixed", "aggressive_entry": "fixed"},
+            },
+            "thresholds": {"macro_veto": 30, "aggressive_entry": 45},
             "harness_runtime": {
                 "deep_loss_policy": {
                     "loss_cny_threshold": 1000,

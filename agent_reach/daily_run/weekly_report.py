@@ -110,10 +110,10 @@ class WeeklyReport:
 def trading_week_range(as_of: Optional[date] = None) -> tuple[date, date]:
     """Mon–Fri of the trading week ending on the most recent Friday (Saturday report = just-finished week)."""
     d = as_of or today_shanghai()
-    if d.weekday() >= 5:
+    if d.weekday() >= 5:  # Sat/Sun -> most recently finished week
         friday = d - timedelta(days=d.weekday() - 4)
-    else:
-        friday = d - timedelta(days=d.weekday() - 4) if d.weekday() <= 4 else d
+    else:  # Mon-Fri (manual/backfill run) -> this week's Friday
+        friday = d + timedelta(days=4 - d.weekday())
     monday = friday - timedelta(days=4)
     return monday, friday
 

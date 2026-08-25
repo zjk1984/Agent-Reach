@@ -586,6 +586,12 @@ class TestApplyAutoAdjust:
         assert result.actions[0].code == "002583"
 
     def test_buy_from_watchlist(self, portfolio, snapshot, settings_enabled):
+        # snapshot["code"] must NOT resolve to a held/watchlisted symbol here,
+        # otherwise apply_auto_adjust's "prefer_code" path (add to / open that
+        # exact decision symbol) resolves the buy directly and short-circuits
+        # the watchlist candidate scoring this test is meant to exercise.
+        snapshot = dict(snapshot)
+        snapshot["code"] = ""
         decision = TradeDecision(
             action="buy",
             trade_id="T1",
@@ -653,7 +659,11 @@ class TestApplyAutoAdjust:
         assert result.actions[0].code != "688008"
 
     def test_max_total_blocks_buy_when_full(self, portfolio, snapshot, settings_enabled):
+        # apply_auto_adjust only ever gates new buys via max_total_symbols
+        # (portfolio.max_holdings is evolved/reported but not enforced here),
+        # so the cap under test must be max_total_symbols.
         settings_enabled["portfolio"]["max_holdings"] = 4
+        settings_enabled["portfolio"]["max_total_symbols"] = 4
         portfolio["holdings"] = [
             {"code": "688008", "name": "澜起科技", "shares": 100, "cost": 255.87, "days_held": 5},
             {"code": "002273", "name": "水晶光电", "shares": 300, "cost": 33.81, "days_held": 5},
@@ -661,6 +671,11 @@ class TestApplyAutoAdjust:
             {"code": "000725", "name": "京东方A", "shares": 1000, "cost": 7.5, "days_held": 5},
         ]
         portfolio["watchlist"] = []
+        # snapshot["code"] must not be one of the (now-full) held symbols,
+        # otherwise the buy resolves as "add to existing position" and never
+        # reaches the max_total_symbols capacity check at all.
+        snapshot = dict(snapshot)
+        snapshot["code"] = ""
         decision = TradeDecision(
             action="buy",
             trade_id="T1",

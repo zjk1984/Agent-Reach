@@ -161,4 +161,26 @@ python3 -m agent_reach.cli daily-run kronos backtest --code 688008 --holdout 5 -
 - [x] 飞书个股路径卡片附 Kronos 方向箭头 / 简易虚 K 线摘要（`render_kronos_path_markdown`）
 - [x] 可选：AKShare 历史 hold-out 回测 helper（`kronos_holdout_backtest.py` + `daily-run kronos backtest`）
 
+### 本机（daily-run 生产机）启用状态
+
+- **已启用**：`~/.agent-reach/daily_run_settings.json`（用户覆盖层，非仓库默认）里
+  `kronos.enabled=true`，`tokenizer_model`/`predictor_model` 指向本机已下载好的
+  **ModelScope** 本地快照目录（`~/.agent-reach/models/modelscope/...`），而非 HuggingFace repo id。
+- **网络约束**：本机出网可达 `pypi.org`/`hf-mirror.com`，**不可达** `huggingface.co` /
+  `github.com`。因此模型来源固定为 ModelScope 本地路径；`kronos_predictor._is_local_model_path()`
+  会自动识别本地目录并走 `local_files_only=True`，不发起任何网络请求。
+- **运行时依赖**：`agent-reach[daily-run-kronos]`（`torch` CPU wheel +
+  `safetensors`/`huggingface_hub`/`einops`/`tqdm`）已通过
+  `pip install --break-system-packages` 装进 `~/.local`（不在仓库 `dev` extra 里，属于本机专属的
+  重量级可选依赖）。**这是此前"配置已开启但预测从未真正混合"的根因**——settings/模型文件早就就绪，
+  但 `torch` 未安装，`is_kronos_runtime_available()` 一直返回 False，`predict_symbol_paths()`
+  静默走 `KronosError` 早退（`week_forecast` 里不会抛异常，只是 `kronos_paths` 全空、MC 路径未混合）。
+- **崩溃防护**：`torch` 自带的 MKL/OpenMP 运行时与 `numpy`/`pandas`（daily-run 到处用）自己的 MKL
+  在同一进程里共存时，观测到过一次偶发 segfault（MKL kernel 崩溃，非 Python 异常，无法被
+  try/except 捕获）。已在 `kronos_predictor.py` 模块顶部设置
+  `KMP_DUPLICATE_LIB_OK=TRUE`/`OMP_NUM_THREADS=1`/`MKL_NUM_THREADS=1`，并在
+  `scripts/daily-run-local-cron.sh` 里于 Python 启动前同步设置，双重兜底。
+- **性能**：CPU 单标的 `predict_window=10, sample_count=5` 约 30–50s；周日 forecast 持仓+观察池
+  合计 ~10 只标的，Kronos 部分预计增加数分钟耗时（含 `daily_cache` 同日复用）。
+
 ---

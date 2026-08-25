@@ -1727,6 +1727,7 @@ def run_forecast(
 ) -> dict[str, Any]:
     """Sunday next-week forecast: MSS paths, symbols, news → Feishu."""
     from agent_reach.daily_run.week_forecast import (
+        attach_forecast_narrative,
         forecast_title,
         generate_week_forecast,
         persist_week_forecast,
@@ -1748,6 +1749,36 @@ def run_forecast(
 
     steps.append("generate")
     forecast = generate_week_forecast(snapshot, cfg, portfolio=portfolio)
+
+    # Harness refinements run before narrative/push (mirrors run_weekly) so the
+    # 规则解读 card and harness-summary followup reflect the same-day forecast_calibrate
+    # evidence instead of arriving after the user already saw the main forecast card.
+    harness_result: dict[str, Any] = {}
+    try:
+        from agent_reach.daily_run.forecast_harness_skills import (
+            run_forecast_harness_refinements,
+            run_forecast_layer_a_refinement,
+        )
+        from agent_reach.daily_run.harness import refine_after_job_llm
+
+        forecast_dict = forecast.to_dict()
+        skills_report = run_forecast_harness_refinements(forecast_dict, settings=cfg)
+        forecast_evidence = {"forecast": forecast_dict}
+        layer_a = run_forecast_layer_a_refinement(forecast_evidence, settings=cfg)
+        layer_b = refine_after_job_llm("forecast", evidence=forecast_evidence, settings=cfg)
+        harness_result = {
+            "forecast_calibrate": skills_report.forecast_calibrate,
+            "layer_a": layer_a,
+            "layer_b": layer_b,
+            "forecast_skills": skills_report.to_dict(),
+        }
+    except Exception as exc:
+        _workflow_harness_error(harness_errors, "forecast_harness", exc)
+        harness_result = {"skipped": True, "error": str(exc)}
+
+    attach_forecast_narrative(forecast, settings=cfg, harness_result=harness_result)
+    steps.append("llm_narrative")
+
     path = persist_week_forecast(forecast)
     steps.append("persist")
 
@@ -1778,29 +1809,6 @@ def run_forecast(
         steps.append("push")
         if feishu_result.get("mode") == "split":
             steps.append(f"push_split_{feishu_result.get('count', 0)}")
-
-    harness_result: dict[str, Any] = {}
-    try:
-        from agent_reach.daily_run.forecast_harness_skills import (
-            run_forecast_harness_refinements,
-            run_forecast_layer_a_refinement,
-        )
-        from agent_reach.daily_run.harness import refine_after_job_llm
-
-        forecast_dict = forecast.to_dict()
-        skills_report = run_forecast_harness_refinements(forecast_dict, settings=cfg)
-        forecast_evidence = {"forecast": forecast_dict}
-        layer_a = run_forecast_layer_a_refinement(forecast_evidence, settings=cfg)
-        layer_b = refine_after_job_llm("forecast", evidence=forecast_evidence, settings=cfg)
-        harness_result = {
-            "forecast_calibrate": skills_report.forecast_calibrate,
-            "layer_a": layer_a,
-            "layer_b": layer_b,
-            "forecast_skills": skills_report.to_dict(),
-        }
-    except Exception as exc:
-        _workflow_harness_error(harness_errors, "forecast_harness", exc)
-        harness_result = {"skipped": True, "error": str(exc)}
 
     if push:
         from agent_reach.config import Config

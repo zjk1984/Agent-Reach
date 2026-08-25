@@ -427,4 +427,12 @@ def build_context_trace(
     _append_recent_diff_lines(lines, max_items=max_items)
     _append_case_lines(lines, ctx, max_items=max_items)
 
+    if is_intraday and not lines:
+        scan_id = str(ctx.get("scan_id") or "").strip()
+        if scan_id:
+            lines.append(layer0(f"扫描 {scan_id}"))
+        symbol_count = int(ctx.get("symbol_count") or len(ctx.get("symbols") or []))
+        if symbol_count:
+            lines.append(layer0(f"覆盖 {symbol_count} 只标的"))
+
     return lines[:max_items]

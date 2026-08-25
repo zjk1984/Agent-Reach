@@ -16,6 +16,18 @@ def test_coherence_warns_on_unlisted_code_in_buy_verdict():
     assert any("603986" in w for w in warnings)
 
 
+def test_coherence_ok_for_avoid_verdict_with_prohibition_wording():
+    """verdict.py's standard macro-veto reasoning contains "买入" inside "禁止
+    买入" (buy PROHIBITED) — this must not be misread as bullish contradiction."""
+    report = {
+        "code": "688008",
+        "verdict": "回避",
+        "reasoning": "MSS 30 低于宏观一票否决线 40，禁止买入",
+    }
+    warnings = validate_report_coherence(report, report, settings={"verdict_labels": {"avoid": "回避"}})
+    assert not warnings
+
+
 def test_coherence_ok_when_code_in_watchlist():
     report = {
         "code": "688008",

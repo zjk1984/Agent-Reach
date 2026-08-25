@@ -187,7 +187,19 @@ class TestVerdict:
 
 
 class TestQualityGate:
-    def test_gate_passes_complete_report(self, settings, base_snapshot):
+    def test_gate_passes_complete_report(self, settings, base_snapshot, monkeypatch):
+        from agent_reach.daily_run.harness import HarnessState
+
+        # Neutral harness overlay (see TestVerdict tests above): without this,
+        # verdict/threshold resolution reads live harness_state.json, which
+        # can tip base_snapshot's MSS breakdown into a different verdict
+        # label than the recommendation narrative, tripping the quality gate.
+        monkeypatch.setattr(
+            "agent_reach.daily_run.harness.load_harness",
+            lambda: HarnessState(),
+        )
+        settings = dict(settings)
+        settings.setdefault("harness", {})["runtime_overlay"] = False
         ev = evaluate_snapshot(base_snapshot, settings)
         gate = ev["gate"]
         assert gate.passed is True

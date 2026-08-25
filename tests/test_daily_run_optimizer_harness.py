@@ -8,7 +8,27 @@ import agent_reach.daily_run.harness as harness_mod
 from agent_reach.daily_run.harness import refine_after_job
 from agent_reach.daily_run.optimizer import grid_search_optimize, save_optimized_settings
 from agent_reach.daily_run.optimizer_harness import optimize_to_harness_evidence
+from agent_reach.daily_run.harness_git import resolve_harness_state_path
 from agent_reach.daily_run.settings import load_settings
+
+
+def _optimizer_harness_test_settings(**overrides) -> dict:
+    """Repo-neutral harness settings: CI has no user override and forge may block refine."""
+    settings = load_settings()
+    settings.setdefault("harness", {})
+    settings["harness"]["enabled"] = True
+    settings["harness"]["threshold_evolution_mode"] = "harness"
+    settings["harness"]["jobs"] = {"optimize": True}
+    settings["harness"].setdefault("forge_gates", {})["enabled"] = False
+    settings.setdefault("optimizer", {})["harness_evolve"] = True
+    for key, value in overrides.items():
+        if isinstance(value, dict) and isinstance(settings.get(key), dict):
+            block = dict(settings[key])
+            block.update(value)
+            settings[key] = block
+        else:
+            settings[key] = value
+    return settings
 
 
 def test_optimize_to_harness_evidence_has_policy():
@@ -22,50 +42,39 @@ def test_optimize_to_harness_evidence_has_policy():
     assert ev["playbook"]
 
 
-def test_save_optimized_settings_harness_mode_skips_thresholds(tmp_path, monkeypatch):
-    monkeypatch.setattr(harness_mod, "_state_path", lambda: tmp_path / "harness_state.json")
+def test_save_optimized_settings_harness_mode_skips_thresholds(tmp_path):
     history = json.loads(
         Path("config/daily_run_history.example.json").read_text(encoding="utf-8")
     )
-    settings = load_settings()
-    settings.setdefault("harness", {})
-    settings["harness"]["enabled"] = True
-    settings["harness"]["threshold_evolution_mode"] = "harness"
-    settings["harness"]["jobs"] = {"optimize": True}
-    settings.setdefault("optimizer", {})["harness_evolve"] = True
-    settings.setdefault("thresholds", {})
-    settings["thresholds"]["macro_veto"] = 99
+    settings = _optimizer_harness_test_settings(thresholds={"macro_veto": 99})
 
     result = grid_search_optimize(history, settings)
     out = save_optimized_settings(result, settings, path=tmp_path / "opt.json")
     saved = json.loads(out.read_text(encoding="utf-8"))
     assert saved["thresholds"].get("macro_veto") == 99
     assert saved["optimizer"]["last_run"]["harness_mode"] is True
-    state = json.loads((tmp_path / "harness_state.json").read_text(encoding="utf-8"))
+    state_path = resolve_harness_state_path(settings)
+    assert state_path.is_file(), f"missing harness state at {state_path}"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
     policy_blob = json.dumps(state.get("entries", {}).get("policy", {}), ensure_ascii=False)
     assert "macro_veto=" in policy_blob
 
 
-def test_save_optimized_settings_harness_mode_strips_stale_backtest_keys(tmp_path, monkeypatch):
+def test_save_optimized_settings_harness_mode_strips_stale_backtest_keys(tmp_path):
     """Regression: a prior fixed-mode run may have left static backtest.macro_veto /
     aggressive_entry in the persisted file. Harness mode must self-heal (remove) them
     instead of silently re-persisting the pollution on every optimizer run."""
-    monkeypatch.setattr(harness_mod, "_state_path", lambda: tmp_path / "harness_state.json")
     history = json.loads(
         Path("config/daily_run_history.example.json").read_text(encoding="utf-8")
     )
-    settings = load_settings()
-    settings.setdefault("harness", {})
-    settings["harness"]["enabled"] = True
-    settings["harness"]["threshold_evolution_mode"] = "harness"
-    settings["harness"]["jobs"] = {"optimize": True}
-    settings.setdefault("optimizer", {})["harness_evolve"] = True
-    settings["backtest"] = {
-        "default_initial_capital": 100000,
-        "commission_rate": 0.0015,
-        "macro_veto": 40,
-        "aggressive_entry": 50,
-    }
+    settings = _optimizer_harness_test_settings(
+        backtest={
+            "default_initial_capital": 100000,
+            "commission_rate": 0.0015,
+            "macro_veto": 40,
+            "aggressive_entry": 50,
+        }
+    )
 
     result = grid_search_optimize(history, settings)
     out = save_optimized_settings(result, settings, path=tmp_path / "opt.json")

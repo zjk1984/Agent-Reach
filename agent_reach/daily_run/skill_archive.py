@@ -67,14 +67,20 @@ def _rule_summarize_block(block: str) -> str:
         raw = line.strip().lstrip("*").strip()
         if not raw or raw.startswith("#"):
             continue
+        if _WEEKLY_HEADER_RE.match(raw):
+            continue
         if any(k in raw for k in ("情况说明", "流程改进", "盈亏", "任务覆盖", "强势", "备注")):
             picks.append(raw[:100])
         if len(picks) >= 3:
             break
     if picks:
         return "；".join(picks)[:280]
-    compact = block.strip()
-    return compact[:120] if compact else "（无摘要）"
+    for line in block.splitlines():
+        raw = line.strip().lstrip("*").strip()
+        if not raw or raw.startswith("#") or _WEEKLY_HEADER_RE.match(raw):
+            continue
+        return raw[:120]
+    return "（无摘要）"
 
 
 def _archive_summary_cfg(settings: Optional[dict[str, Any]]) -> dict[str, Any]:
