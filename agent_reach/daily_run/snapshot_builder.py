@@ -82,6 +82,12 @@ def save_portfolio(portfolio: dict[str, Any], path: Optional[Path] = None) -> Pa
         p = path or default_portfolio_path()
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(json.dumps(portfolio, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        try:
+            from agent_reach.daily_run.storage.hooks import on_portfolio_save
+
+            on_portfolio_save(portfolio, source="save")
+        except Exception:
+            pass
         return p
 
 

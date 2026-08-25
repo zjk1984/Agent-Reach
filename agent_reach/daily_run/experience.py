@@ -120,6 +120,13 @@ def append_experience_entry(
     with open(jsonl_path, "a", encoding="utf-8") as f:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
+    try:
+        from agent_reach.daily_run.storage.hooks import on_experience_entry
+
+        on_experience_entry(entry, source_path=str(jsonl_path))
+    except Exception:
+        pass
+
     if not consolidated:
         _update_rules_summary(out_dir / "rules_summary.json", rules, cfg)
     return ExperienceAppendResult(path=jsonl_path, harness=harness_result)

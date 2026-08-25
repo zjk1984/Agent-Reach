@@ -1164,6 +1164,14 @@ def run_close(
     }
     if harness_errors:
         result["harness_errors"] = harness_errors
+    try:
+        from agent_reach.daily_run.storage.hooks import maybe_auto_distill
+
+        storage_distill = maybe_auto_distill(cfg)
+        if storage_distill and not storage_distill.get("skipped"):
+            result["storage_distill"] = storage_distill
+    except Exception as exc:
+        _workflow_harness_error(harness_errors, "storage_distill", exc)
     return result
 
 

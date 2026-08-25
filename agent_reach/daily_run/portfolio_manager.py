@@ -306,6 +306,12 @@ def append_trade_ledger(
     }
     with open(p, "a", encoding="utf-8") as f:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    try:
+        from agent_reach.daily_run.storage.hooks import on_trade_ledger
+
+        on_trade_ledger(entry, source_path=str(p))
+    except Exception:
+        pass
     return enriched
 
 

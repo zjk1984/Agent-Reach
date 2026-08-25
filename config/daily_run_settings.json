@@ -835,6 +835,21 @@
     "max_entries": 200
   },
 
+  "storage": {
+    "enabled": false,
+    "backend": "sqlite",
+    "sqlite_path": "",
+    "dual_write": true,
+    "distill": {
+      "enabled": true,
+      "auto_after_close": false
+    },
+    "postgres": {
+      "dsn": "",
+      "schema": "daily_run"
+    }
+  },
+
   "rejected_strategies": {
     "harness_evolve": true
   },

@@ -450,8 +450,10 @@ def main():
     sub.add_parser("version", help="Show version")
 
     from agent_reach.daily_run.context_cli import add_context_subparser
+    from agent_reach.daily_run.storage_cli import add_storage_subparser
 
     add_context_subparser(sub)
+    add_storage_subparser(p_daily_sub)
 
     args = parser.parse_args()
 
@@ -2610,10 +2612,16 @@ def _cmd_daily_run(args):
         print("Usage: agent-reach daily-run pnl {overview|backfill|history|target}")
         sys.exit(1)
 
+    if args.daily_action == "storage":
+        from agent_reach.daily_run.storage_cli import cmd_storage
+
+        cmd_storage(args)
+        return
+
     if args.daily_action not in ("evaluate", "push"):
         print(
             "Usage: agent-reach daily-run "
-            "{morning|close|intraday|build-snapshot|schedule|hot-news|configure|redfox|kronos|harness|capital|pnl|evaluate|push|fetch|verify|backtest|optimize|plugins|sample} ..."
+            "{morning|close|intraday|build-snapshot|schedule|hot-news|configure|redfox|kronos|harness|capital|pnl|storage|evaluate|push|fetch|verify|backtest|optimize|plugins|sample} ..."
         )
         sys.exit(1)
 
