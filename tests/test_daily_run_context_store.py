@@ -155,6 +155,20 @@ def test_context_cli_find_json(capsys, tmp_path, monkeypatch):
     assert data[0]["code"] == "600584"
 
 
+def test_should_record_buy_budget_precheck_case():
+    rec = {
+        "code": "603986",
+        "trade_id": "T4",
+        "action": "buy",
+        "blocked": True,
+        "block_kind": "buy_budget",
+        "portfolio_applied": False,
+        "reasoning": "603986 可部署买入预算 ¥1,712 不足一手（100 股 @ ¥388.77 ≈ ¥39,000）",
+    }
+    assert should_record_trade_case(rec) is True
+    assert trade_case_id(rec) == "603986-T4-buy-budget-precheck"
+
+
 def test_should_not_record_applied_buy():
     assert should_record_trade_case({"action": "buy", "portfolio_applied": True}) is False
     assert should_record_trade_case({"action": "hold", "portfolio_applied": False}) is False

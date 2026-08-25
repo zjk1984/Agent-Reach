@@ -604,7 +604,7 @@ class TestClosePortfolioSummary:
         from agent_reach.daily_run.close_portfolio_summary import format_intraday_trade_narrative_line
 
         trade = {
-            "action": "hold",
+            "action": "buy",
             "trade_id": "T4",
             "name": "兆易创新",
             "code": "603986",
@@ -628,6 +628,46 @@ class TestClosePortfolioSummary:
         assert "T4" in md
         assert "预算阻断" in md
         assert "预算预检阻断" in md
+
+    def test_render_includes_watchlist_affordability_hints(self):
+        settings = {
+            "thresholds": {"min_cash_ratio": 0.5},
+            "portfolio": {"min_deploy_cash": 1000},
+            "harness_runtime": {
+                "position_policy": {"deploy_ratio": 0.25, "max_position_pct": 25.0},
+            },
+        }
+        close = {
+            "code": "688008",
+            "name": "澜起科技",
+            "price": 260.0,
+            "portfolio": {
+                "total": 98561.92,
+                "cash": 56130.92,
+                "cash_ratio": 0.5695,
+                "holdings": [
+                    {"code": "688008", "name": "澜起科技", "shares": 100, "cost": 255.87, "price": 260.0},
+                ],
+            },
+            "watchlist": [
+                {"code": "603986", "name": "兆易创新", "price": 388.77, "sector": "存储"},
+                {"code": "000725", "name": "京东方A", "price": 4.1, "sector": "面板"},
+            ],
+        }
+        morning = {
+            "portfolio": {
+                "total": 98000.0,
+                "cash": 56000.0,
+                "holdings": [
+                    {"code": "688008", "name": "澜起科技", "shares": 100, "cost": 255.87, "price": 250.0},
+                ],
+            }
+        }
+        summary = _build_summary(close, morning, settings=settings)
+        assert summary.watchlist_affordability_lines
+        md = render_close_portfolio_markdown(summary)
+        assert "预算不可达观察标的" in md
+        assert "603986" in md
 
 
 class TestHoldingLine:

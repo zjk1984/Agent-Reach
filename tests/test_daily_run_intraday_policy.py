@@ -132,7 +132,7 @@ class TestIntradayHarnessEvidence:
                 "lookback_mss": 52,
                 "trade": {
                     "decision": {
-                        "action": "hold",
+                        "action": "buy",
                         "trend": "rising",
                         "lookback_mss": 52,
                         "blocked": True,
@@ -146,6 +146,7 @@ class TestIntradayHarnessEvidence:
             }
         )
         assert not any("达进攻阈值未落账" in item for item in ev["memory"] + ev["policy"])
+        assert not any("可部署现金不足" in item for item in ev["policy"])
 
     def test_friction_and_trend_policy_phrases(self):
         ev = intraday_to_harness_evidence(
@@ -372,7 +373,11 @@ class TestTradeBlockMessages:
         assert "不允许卖出" not in message
 
     def test_buy_budget_block_shows_deploy_footer(self):
-        from agent_reach.daily_run.intraday import TradeDecision, render_intraday_trade_markdown
+        from agent_reach.daily_run.intraday import (
+            TradeDecision,
+            format_trade_block_message,
+            render_intraday_trade_markdown,
+        )
         from agent_reach.daily_run.portfolio_manager import ApplyResult, render_apply_markdown
 
         settings = {
@@ -399,7 +404,7 @@ class TestTradeBlockMessages:
             "watchlist": [{"code": "603986", "name": "兆易创新", "price": 388.77}],
         }
         decision = TradeDecision(
-            action="hold",
+            action="buy",
             trade_id="T4",
             lookback_mss=48.0,
             lookback_detail=[],
@@ -420,6 +425,11 @@ class TestTradeBlockMessages:
         assert "deploy_ratio 25%" in markdown
         assert "本笔预算" in markdown
         assert "一手约" in markdown
+
+        message = format_trade_block_message(decision)
+        assert message is not None
+        assert "本笔预算 ¥1,712" in message
+        assert "约 ¥39,000" in message
 
         apply_md = render_apply_markdown(
             ApplyResult(applied=False, portfolio=snapshot["portfolio"], message="决策 hold，不调仓"),

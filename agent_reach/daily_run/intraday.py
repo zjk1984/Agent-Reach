@@ -654,6 +654,8 @@ def evaluate_trade(
         1 if decision.action == "buy" else 0
     )
 
+    from agent_reach.daily_run.portfolio_manager import ApplyResult, trade_buy_budget_blocked
+
     trade_record = {
         **decision.to_dict(),
         "as_of": datetime.now(timezone.utc).isoformat(),
@@ -664,12 +666,20 @@ def evaluate_trade(
         "consecutive_buy_streak": consecutive_buy_streak if decision.action == "buy" else None,
         "cash_limit_bypass": cash_limit_bypass or None,
     }
-    apply_result = apply_paper_trade(
-        decision,
-        enriched,
-        settings=cfg,
-        cash_limit_bypass=cash_limit_bypass,
-    )
+    if trade_buy_budget_blocked(decision.to_dict()) and decision.blocked:
+        pf = enriched.get("portfolio") or {}
+        apply_result = ApplyResult(
+            applied=False,
+            portfolio=pf,
+            message=str(decision.reasoning or "决策层预算预检阻断"),
+        )
+    else:
+        apply_result = apply_paper_trade(
+            decision,
+            enriched,
+            settings=cfg,
+            cash_limit_bypass=cash_limit_bypass,
+        )
     trade_record["portfolio_applied"] = apply_result.applied
     trade_record["portfolio_message"] = apply_result.message
     if apply_result.applied:
@@ -931,10 +941,30 @@ def infer_trade_block_kind(decision: TradeDecision | dict[str, Any]) -> Optional
     return "buy_verdict"
 
 
+def format_buy_budget_block_message(decision: TradeDecision | dict[str, Any]) -> str:
+    reasoning = (
+        str(decision.get("reasoning") or "")
+        if isinstance(decision, dict)
+        else str(decision.reasoning or "")
+    )
+    import re
+
+    budget_m = re.search(r"可部署买入预算 ¥([\d,]+)", reasoning)
+    lot_m = re.search(r"≈ ¥([\d,]+)", reasoning)
+    if budget_m and lot_m:
+        return (
+            f"⚠️ **风控阻断：** 本笔预算 ¥{budget_m.group(1)} 不足一手"
+            f"（约 ¥{lot_m.group(1)}），维持观望"
+        )
+    return TRADE_BLOCK_MESSAGES["buy_budget"]
+
+
 def format_trade_block_message(decision: TradeDecision | dict[str, Any]) -> Optional[str]:
     block_kind = infer_trade_block_kind(decision)
     if not block_kind:
         return None
+    if block_kind == "buy_budget":
+        return format_buy_budget_block_message(decision)
     return TRADE_BLOCK_MESSAGES.get(block_kind, TRADE_BLOCK_MESSAGES["buy_verdict"])
 
 
@@ -1215,20 +1245,28 @@ def _decide_trade(
         from agent_reach.daily_run.portfolio_manager import buy_budget_precheck_reason
         from agent_reach.daily_run.symbols import build_enriched_symbols
 
+        cash_limit_bypass = should_apply_consecutive_buy_cash_bypass(
+            prior_trades,
+            symbol_code,
+            current_action="buy",
+            settings=settings,
+        )
         budget_block = buy_budget_precheck_reason(
             portfolio,
             build_enriched_symbols(snapshot),
             settings,
             prefer_code=symbol_code,
+            cash_limit_bypass=cash_limit_bypass,
         )
         if budget_block:
+            bypass_note = "；连续买入建议，临时突破 deploy/现金限制" if cash_limit_bypass else ""
             return TradeDecision(
-                action="hold",
+                action="buy",
                 trade_id=trade_id,
                 lookback_mss=lookback_mss,
                 lookback_detail=[],
                 trend=trend,
-                reasoning=f"{budget_block}{overlay_note}",
+                reasoning=f"{budget_block}{bypass_note}{overlay_note}",
                 blocked=True,
                 block_kind="buy_budget",
                 friction_blocked=False,

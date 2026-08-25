@@ -59,7 +59,10 @@ def trade_case_id(trade_record: dict[str, Any]) -> str:
     code = _normalize_code(str(trade_record.get("code") or "UNK"))
     trade_id = str(trade_record.get("trade_id") or "T")
     msg = str(trade_record.get("portfolio_message") or trade_record.get("reasoning") or "")
-    if "最小单位" in msg or "一手" in msg or "资金不足" in msg or "可部署买入预算" in msg:
+    block_kind = str(trade_record.get("block_kind") or "").strip()
+    if block_kind == "buy_budget":
+        reason = "buy-budget-precheck"
+    elif "最小单位" in msg or "一手" in msg or "资金不足" in msg or "可部署买入预算" in msg:
         reason = "cash-lot-fail"
     elif trade_record.get("cash_limit_bypass"):
         reason = "cash-bypass"
@@ -74,15 +77,17 @@ def trade_case_id(trade_record: dict[str, Any]) -> str:
 
 def should_record_trade_case(trade_record: dict[str, Any]) -> bool:
     action = str(trade_record.get("action") or "").strip().lower()
-    if action not in ("buy", "sell"):
-        return False
     if trade_record.get("portfolio_applied"):
         return False
-    return bool(
-        trade_record.get("portfolio_message")
-        or trade_record.get("blocked")
-        or trade_record.get("cash_limit_bypass")
-    )
+    if action in ("buy", "sell"):
+        return bool(
+            trade_record.get("portfolio_message")
+            or trade_record.get("blocked")
+            or trade_record.get("cash_limit_bypass")
+        )
+    if action in ("hold", "skip") and str(trade_record.get("block_kind") or "") == "buy_budget":
+        return True
+    return False
 
 
 def _build_case_overview(
@@ -105,6 +110,8 @@ def _build_case_overview(
     if trade_record.get("cash_limit_bypass"):
         streak = trade_record.get("consecutive_buy_streak")
         lines.append(f"- **连续买入突破：** 是（{streak or '?'} 次）")
+    if str(trade_record.get("block_kind") or "") == "buy_budget":
+        lines.append("- **预算预检：** 决策层阻断（部署预算不足一手，非执行失败）")
     pf = portfolio_snapshot or {}
     if pf.get("cash") is not None:
         lines.append(f"- **现金：** ¥{float(pf['cash']):,.0f}")

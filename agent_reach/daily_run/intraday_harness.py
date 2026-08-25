@@ -100,7 +100,10 @@ def intraday_to_harness_evidence(payload: dict[str, Any]) -> dict[str, Any]:
                 action == "buy" and "条件性建仓" in reasoning and "≥" in reasoning
             ):
                 playbook.append(f"Kronos 偏多放宽进攻阈值：{name}({scan.get('code') or '?'})")
-            if "最低部署" in portfolio_msg or "可部署现金" in portfolio_msg:
+            if (
+                ("最低部署" in portfolio_msg or "可部署现金" in portfolio_msg)
+                and not _decision_buy_budget_blocked(decision)
+            ):
                 policy.append("可部署现金不足：提高 min_deploy_cash 或降低 deploy_ratio")
             if "数据审计未通过" in reasoning or "行情覆盖率不足" in reasoning:
                 policy.append("数据审计未通过：盘中 block_on_audit_fail 生效")

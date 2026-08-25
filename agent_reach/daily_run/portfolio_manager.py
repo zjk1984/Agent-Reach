@@ -955,6 +955,7 @@ def simulate_buy_analysis(
     settings: dict[str, Any],
     *,
     prefer_code: Optional[str] = None,
+    cash_limit_bypass: bool = False,
 ) -> dict[str, Any]:
     """Dry-run buy sizing under current harness rules (no portfolio mutation)."""
     from agent_reach.daily_run.harness_policy import _position_policy
@@ -963,7 +964,13 @@ def simulate_buy_analysis(
     prefer = _normalize_code(str(prefer_code or ""))
     position = _position_policy(settings)
 
-    budget_ctx = _buy_budget_context(pf, enriched, settings, holdings)
+    budget_ctx = _buy_budget_context(
+        pf,
+        enriched,
+        settings,
+        holdings,
+        cash_limit_bypass=cash_limit_bypass,
+    )
     if isinstance(budget_ctx, ApplyResult):
         return {
             "allowed": False,
@@ -1026,9 +1033,25 @@ def simulate_buy_analysis(
         }
 
     price = float(_price_for(target, enriched))
-    budget_gross = harness_buy_budget(total=total, deployable=deployable, settings=settings)
+    budget_kwargs: dict[str, Any] = {}
+    if cash_limit_bypass:
+        budget_kwargs = {
+            "deploy_ratio_override": 1.0,
+            "max_position_pct_override": 100.0,
+        }
+    budget_gross = harness_buy_budget(
+        total=total,
+        deployable=deployable,
+        settings=settings,
+        **budget_kwargs,
+    )
     budget = budget_gross / (1 + commission_rate)
     shares = _round_lot(code, int(budget // price))
+    if shares <= 0 and cash_limit_bypass:
+        min_lot = _min_lot(code)
+        min_cost = min_lot * price * (1 + commission_rate)
+        if cash >= min_cost:
+            shares = min_lot
     if shares <= 0:
         min_lot = _min_lot(code)
         return {
@@ -1148,13 +1171,76 @@ def buy_budget_precheck_reason(
     settings: dict[str, Any],
     *,
     prefer_code: str,
+    cash_limit_bypass: bool = False,
 ) -> Optional[str]:
     """Return a block reason when the decision symbol cannot afford one lot."""
-    analysis = simulate_buy_analysis(pf, enriched, settings, prefer_code=prefer_code)
+    analysis = simulate_buy_analysis(
+        pf,
+        enriched,
+        settings,
+        prefer_code=prefer_code,
+        cash_limit_bypass=cash_limit_bypass,
+    )
     if analysis.get("allowed"):
         return None
     reason = str(analysis.get("block_reason") or "").strip()
     return reason or "买入预算不足"
+
+
+def watchlist_affordability_markdown(
+    pf: dict[str, Any],
+    enriched: dict[str, dict[str, Any]],
+    settings: dict[str, Any],
+    watchlist: list[dict[str, Any]],
+) -> list[str]:
+    """Flag watchlist names whose min lot exceeds the current per-trade deploy budget."""
+    if not watchlist:
+        return []
+
+    from agent_reach.daily_run.harness_policy import _position_policy
+
+    holdings = list(pf.get("holdings") or [])
+    budget_ctx = _buy_budget_context(pf, enriched, settings, holdings)
+    if isinstance(budget_ctx, ApplyResult):
+        return []
+
+    total, _cash, deployable, _min_deploy, min_cash_ratio, commission_rate = budget_ctx
+    position = _position_policy(settings)
+    deploy_ratio = float(position.get("deploy_ratio", 1.0))
+    budget_gross = harness_buy_budget(total=total, deployable=deployable, settings=settings)
+    per_budget = budget_gross / (1 + commission_rate)
+
+    unaffordable: list[str] = []
+    for row in watchlist:
+        code = _normalize_code(str(row.get("code", "")))
+        if not code:
+            continue
+        target = _resolve_buy_row(code, pf, enriched)
+        if target is None:
+            continue
+        price = _price_for(target, enriched)
+        if price is None or price <= 0:
+            continue
+        min_lot = _min_lot(code)
+        min_cost = min_lot * float(price) * (1 + commission_rate)
+        if min_cost <= per_budget + 0.01:
+            continue
+        name = str(target.get("name") or code)
+        unaffordable.append(
+            f"**{name}** ({code}) 一手约 ¥{min_cost:,.0f} > 单笔预算 ¥{per_budget:,.0f}"
+        )
+
+    if not unaffordable:
+        return []
+
+    lines = [
+        (
+            f"- ⚠️ **预算不可达观察标的**"
+            f"（min_cash {min_cash_ratio:.0%} · deploy {deploy_ratio:.0%} · 单笔约 ¥{per_budget:,.0f}）："
+        )
+    ]
+    lines.extend(f"  · {item}" for item in unaffordable[:5])
+    return lines
 
 
 def portfolio_deploy_budget_markdown(

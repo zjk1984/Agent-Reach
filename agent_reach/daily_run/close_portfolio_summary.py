@@ -72,6 +72,7 @@ class ClosePortfolioSummary:
     intraday_sell_whatif: Optional[dict[str, Any]] = None
     pnl_attribution: dict[str, Any] = field(default_factory=dict)
     deploy_budget_line: Optional[str] = None
+    watchlist_affordability_lines: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -120,6 +121,7 @@ class ClosePortfolioSummary:
             "intraday_sell_whatif": self.intraday_sell_whatif,
             "pnl_attribution": self.pnl_attribution,
             "deploy_budget_line": self.deploy_budget_line,
+            "watchlist_affordability_lines": self.watchlist_affordability_lines,
         }
 
 
@@ -1173,6 +1175,14 @@ def build_close_portfolio_summary(
             enriched,
             settings,
         )
+        from agent_reach.daily_run.portfolio_manager import watchlist_affordability_markdown
+
+        summary.watchlist_affordability_lines = watchlist_affordability_markdown(
+            close_pf,
+            enriched,
+            settings,
+            watchlist,
+        )
     from agent_reach.daily_run.backtest_attributor import build_close_pnl_attribution
 
     close_cfg = (settings or {}).get("close_portfolio") or {}
@@ -1340,6 +1350,9 @@ def render_close_portfolio_markdown(
         lines.append(shortfall)
     elif fill_adds:
         lines.append(f"- 本次按最新热点刷新，新增 **{len(fill_adds)}** 只观察标的")
+
+    for hint in data.get("watchlist_affordability_lines") or []:
+        lines.append(hint)
 
     if watchlist:
         intel_by_code = data.get("watchlist_intel") or {}

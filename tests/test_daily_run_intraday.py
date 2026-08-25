@@ -597,11 +597,77 @@ class TestDeepLossConsecutiveBuy:
             expected_return_pct=0.02,
             prior_trades=[],
         )
-        assert decision.action == "hold"
+        assert decision.action == "buy"
         assert decision.blocked is True
         assert decision.block_kind == "buy_budget"
         assert "可部署买入预算" in decision.reasoning
         assert "603986" in decision.reasoning
+
+    def test_third_consecutive_buy_bypasses_budget_precheck_for_expensive_symbol(self):
+        from agent_reach.daily_run.intraday import _decide_trade
+
+        class Verdict:
+            blocked = False
+            verdict = "观察"
+            mss_final = 48.0
+
+        settings = self._deep_loss_settings()
+        settings.setdefault("thresholds", {})["min_cash_ratio"] = 0.5
+        settings.setdefault("harness", {})["threshold_modes"] = {
+            "macro_veto": "fixed",
+            "aggressive_entry": "fixed",
+            "min_cash_ratio": "fixed",
+        }
+        settings.setdefault("harness_runtime", {})["position_policy"] = {
+            "deploy_ratio": 0.25,
+            "max_position_pct": 25.0,
+        }
+        settings.setdefault("intraday", {})["consecutive_buy_cash_bypass"] = 3
+        snapshot = {
+            "code": "603986",
+            "name": "兆易创新",
+            "price": 388.77,
+            "portfolio": {
+                "total": 98561.92,
+                "cash": 56130.92,
+                "cash_ratio": 0.5695,
+                "holdings": [
+                    {"code": "688008", "name": "澜起科技", "shares": 100, "cost": 255.87, "days_held": 5},
+                ],
+                "watchlist": [{"code": "603986", "name": "兆易创新"}],
+            },
+            "watchlist": [{"code": "603986", "name": "兆易创新", "price": 388.77}],
+        }
+        prior = [
+            {
+                "code": "603986",
+                "action": "buy",
+                "blocked": True,
+                "block_kind": "buy_budget",
+                "reasoning": "603986 可部署买入预算 ¥1,712 不足一手（100 股 @ ¥388.77 ≈ ¥39,000）",
+            },
+            {
+                "code": "603986",
+                "action": "buy",
+                "blocked": True,
+                "block_kind": "buy_budget",
+                "reasoning": "603986 可部署买入预算 ¥1,712 不足一手（100 股 @ ¥388.77 ≈ ¥39,000）",
+            },
+        ]
+        decision = _decide_trade(
+            lookback_mss=48.0,
+            trend="rising",
+            verdict=Verdict(),
+            report={"code": "603986", "name": "兆易创新", "blocked": False, "audit_passed": True},
+            snapshot=snapshot,
+            settings=settings,
+            trade_index=4,
+            expected_return_pct=0.02,
+            prior_trades=prior,
+        )
+        assert decision.action == "buy"
+        assert decision.blocked is False
+        assert "条件性建仓" in decision.reasoning or "Lookback MSS" in decision.reasoning
 
     def test_apply_buy_with_cash_limit_bypass(self, tmp_path, monkeypatch):
         from agent_reach.daily_run.intraday import TradeDecision, apply_paper_trade
