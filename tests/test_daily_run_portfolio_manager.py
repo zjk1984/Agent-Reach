@@ -586,12 +586,10 @@ class TestApplyAutoAdjust:
         assert result.actions[0].code == "002583"
 
     def test_buy_from_watchlist(self, portfolio, snapshot, settings_enabled):
-        # snapshot["code"] must NOT resolve to a held/watchlisted symbol here,
-        # otherwise apply_auto_adjust's "prefer_code" path (add to / open that
-        # exact decision symbol) resolves the buy directly and short-circuits
-        # the watchlist candidate scoring this test is meant to exercise.
         snapshot = dict(snapshot)
-        snapshot["code"] = ""
+        snapshot["code"] = "000725"
+        snapshot["price"] = 7.63
+        snapshot["name"] = "京东方A"
         decision = TradeDecision(
             action="buy",
             trade_id="T1",
@@ -603,7 +601,7 @@ class TestApplyAutoAdjust:
         result = apply_auto_adjust(portfolio, decision, snapshot, settings_enabled)
         assert result.applied is True
         assert result.actions[0].side == "buy"
-        assert result.actions[0].code in ("603986", "000725")
+        assert result.actions[0].code == "000725"
         assert len(result.portfolio["holdings"]) == 3
         assert result.portfolio["cash"] < portfolio["cash"]
 
@@ -630,10 +628,10 @@ class TestApplyAutoAdjust:
         assert held["shares"] > before_shares
         assert len(result.portfolio["holdings"]) == 2
 
-    def test_buy_falls_back_to_watchlist_when_decision_symbol_unaffordable(
+    def test_buy_does_not_fallback_when_decision_symbol_unaffordable(
         self, portfolio, snapshot, settings_enabled
     ):
-        """When cash cannot cover one lot of the decision symbol, pick top watchlist score."""
+        """When the decision symbol cannot afford one lot, do not buy another watchlist name."""
         portfolio = dict(portfolio)
         portfolio["cash"] = 52000
         portfolio["cash_ratio"] = 0.52
@@ -654,9 +652,9 @@ class TestApplyAutoAdjust:
             reasoning="MSS 达阈值",
         )
         result = apply_auto_adjust(portfolio, decision, snapshot, settings_enabled)
-        assert result.applied is True
-        assert result.actions[0].code in ("603986", "000725")
-        assert result.actions[0].code != "688008"
+        assert result.applied is False
+        assert "688008" in result.message
+        assert "最小单位" in result.message
 
     def test_max_total_blocks_buy_when_full(self, portfolio, snapshot, settings_enabled):
         # apply_auto_adjust only ever gates new buys via max_total_symbols
@@ -670,12 +668,13 @@ class TestApplyAutoAdjust:
             {"code": "603986", "name": "兆易创新", "shares": 100, "cost": 600.0, "days_held": 5},
             {"code": "000725", "name": "京东方A", "shares": 1000, "cost": 7.5, "days_held": 5},
         ]
-        portfolio["watchlist"] = []
-        # snapshot["code"] must not be one of the (now-full) held symbols,
-        # otherwise the buy resolves as "add to existing position" and never
-        # reaches the max_total_symbols capacity check at all.
+        portfolio["watchlist"] = [{"code": "300308", "name": "中际旭创"}]
         snapshot = dict(snapshot)
-        snapshot["code"] = ""
+        snapshot["code"] = "300308"
+        snapshot["price"] = 320.0
+        snapshot["name"] = "中际旭创"
+        snapshot["watchlist"] = portfolio["watchlist"]
+        snapshot["portfolio"] = dict(portfolio)
         decision = TradeDecision(
             action="buy",
             trade_id="T1",
@@ -686,7 +685,7 @@ class TestApplyAutoAdjust:
         )
         result = apply_auto_adjust(portfolio, decision, snapshot, settings_enabled)
         assert result.applied is False
-        assert "合计上限" in result.message or "观察池" in result.message
+        assert "合计上限" in result.message
 
     def test_buy_blocked_by_friction(self, portfolio, snapshot, settings_enabled):
         decision = TradeDecision(
