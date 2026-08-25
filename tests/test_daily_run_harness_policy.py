@@ -16,6 +16,7 @@ from agent_reach.daily_run.harness_policy import (
     resolve_harness_kronos_bias,
     resolve_harness_lookback_weights,
     resolve_harness_mss_weights,
+    resolve_harness_trend_policy,
     resolve_harness_threshold_overrides,
     resolve_harness_trade_signals,
     friction_min_return_default,
@@ -404,6 +405,92 @@ class TestHarnessPolicyOverlay:
         )
         assert flat["aggressive_entry"] == 49.0
         assert flat["trade_min_scans"] == 2.0
+        assert flat["trade_every_n_scans"] == 1.0
+
+    def test_trade_every_n_scans_defensive_evolution(self):
+        state = HarnessState()
+        state.entries["memory"]["dev"] = HarnessEntry(
+            id="dev",
+            kind="memory",
+            title="偏差",
+            content="偏差：价格变动 23.7% 超过锚点阈值 8.0%",
+            source="deterministic",
+            job="forecast",
+            evidence="forecast",
+            created_at="2026-08-17T00:00:00+00:00",
+            updated_at="2026-08-17T00:00:00+00:00",
+        )
+        flat = resolve_harness_flat_overrides(
+            state,
+            {"max_snapshot_age_hours": 24},
+            settings=_harness_settings(),
+        )
+        assert flat["trade_every_n_scans"] == 3.0
+
+    def test_eval_trends_fixed_mode_keeps_config(self):
+        state = HarnessState()
+        state.entries["memory"]["miss"] = HarnessEntry(
+            id="miss",
+            kind="memory",
+            title="未落账",
+            content="达进攻阈值未落账：MSS 达标但未成交",
+            source="deterministic",
+            job="intraday",
+            evidence="intraday",
+            created_at="2026-08-17T00:00:00+00:00",
+            updated_at="2026-08-17T00:00:00+00:00",
+        )
+        settings = _harness_settings()
+        settings["intraday"] = {
+            "eval_trends": ["turning_up", "turning_down", "rising", "falling"],
+        }
+        settings["harness"]["eval_trends_mode"] = "fixed"
+
+        trend = resolve_harness_trend_policy(state, settings=settings)
+        assert trend["eval_trends"] == [
+            "turning_up",
+            "turning_down",
+            "rising",
+            "falling",
+        ]
+
+    def test_eval_trends_harness_adds_mixed_on_miss(self):
+        state = HarnessState()
+        state.entries["memory"]["miss"] = HarnessEntry(
+            id="miss",
+            kind="memory",
+            title="未落账",
+            content="达进攻阈值未落账：MSS 达标但未成交",
+            source="deterministic",
+            job="intraday",
+            evidence="intraday",
+            created_at="2026-08-17T00:00:00+00:00",
+            updated_at="2026-08-17T00:00:00+00:00",
+        )
+        trend = resolve_harness_trend_policy(state, settings=_harness_settings())
+        assert "mixed" in trend["eval_trends"]
+
+    def test_apply_overlay_writes_schedule_and_eval_trends(self, monkeypatch):
+        state = HarnessState()
+        state.entries["memory"]["dev"] = HarnessEntry(
+            id="dev",
+            kind="memory",
+            title="偏差",
+            content="偏差：价格变动 23.7% 超过锚点阈值 8.0%",
+            source="deterministic",
+            job="forecast",
+            evidence="forecast",
+            created_at="2026-08-17T00:00:00+00:00",
+            updated_at="2026-08-17T00:00:00+00:00",
+        )
+        monkeypatch.setattr(
+            "agent_reach.daily_run.harness.load_harness",
+            lambda: state,
+        )
+        cfg = apply_harness_policy_overlay(_harness_settings())
+        assert cfg["schedule"]["trade_min_scans"] == 2
+        assert cfg["schedule"]["trade_every_n_scans"] == 3
+        assert "mixed" not in cfg["intraday"]["eval_trends"]
 
     def test_aggressive_entry_default_helper(self, monkeypatch):
         monkeypatch.setattr(

@@ -291,6 +291,7 @@ EVOLVED_CONFIG_KEYS_BY_SECTION: dict[str, tuple[str, ...]] = {
         "max_applied_trades_per_day",
         "max_trade_evaluations_per_symbol",
     ),
+    "intraday": ("eval_trends",),
     "portfolio": ("max_holdings", "max_total_symbols"),
     "trading": ("holding_lock_days", "stop_loss_ma20_pct", "friction_min_return_pct"),
     "mss_forecast": _EVOLVED_FORECAST_KEYS,
@@ -478,7 +479,7 @@ _MEMORY_MSS_NUDGES: tuple[tuple[str, dict[str, float]], ...] = (
 _MEMORY_RUNTIME_NUDGES: tuple[tuple[str, dict[str, float]], ...] = (
     ("缩窄仓位", {"max_holdings": 5.0, "max_total_symbols": 10.0}),
     ("扫描偏少", {"trade_min_scans": 2.0}),
-    ("盘中扫描偏少", {"trade_min_scans": 2.0}),
+    ("盘中扫描偏少", {"trade_min_scans": 2.0, "trade_every_n_scans": 2.0}),
     (
         "进攻期",
         {
@@ -492,11 +493,15 @@ _MEMORY_RUNTIME_NUDGES: tuple[tuple[str, dict[str, float]], ...] = (
     ("维持高现金", {"holding_lock_days": 2.0}),
     (
         "减少频繁调仓",
-        {"friction_min_return_pct": 0.008, "max_applied_trades_per_day": 3.0},
+        {
+            "friction_min_return_pct": 0.008,
+            "max_applied_trades_per_day": 3.0,
+            "trade_every_n_scans": 3.0,
+        },
     ),
     ("落账已达上限", {"max_applied_trades_per_day": 3.0}),
     ("评估已达上限", {"max_trade_evaluations_per_symbol": 10.0}),
-    ("达进攻阈值未落账", {"trade_min_scans": 2.0}),
+    ("达进攻阈值未落账", {"trade_min_scans": 2.0, "trade_every_n_scans": 1.0}),
 )
 
 _MEMORY_FORECAST_NUDGES: tuple[tuple[str, dict[str, float]], ...] = (
@@ -609,6 +614,14 @@ def flat_base(settings: dict[str, Any], key: str, config: dict[str, Any]) -> flo
 
 def runtime_int_default(settings: dict[str, Any], section: str, key: str) -> int:
     block = settings.get(section) or {}
+    if key in _EVOLVED_RUNTIME_KEYS and evolution_mode(settings, key) == "harness":
+        runtime_overlay = (settings.get("harness_runtime") or {}).get("runtime_overlay") or {}
+        meta = runtime_overlay.get(key)
+        if isinstance(meta, dict) and "effective" in meta:
+            return int(meta["effective"])
+        if key in block:
+            return int(block[key])
+        return int(flat_base(settings, key, settings.get("thresholds") or {}))
     if key in block:
         return int(block[key])
     return int(flat_base(settings, key, settings.get("thresholds") or {}))
@@ -1042,6 +1055,8 @@ def _apply_runtime_signal_evolution(
         merged["holding_lock_days"] = max(float(merged.get("holding_lock_days", 1.0)), 2.0)
     if evolution_mode(settings, "trade_min_scans") == "harness":
         merged["trade_min_scans"] = min(float(merged.get("trade_min_scans", 3.0)), 2.0)
+    if evolution_mode(settings, "trade_every_n_scans") == "harness":
+        merged["trade_every_n_scans"] = max(float(merged.get("trade_every_n_scans", 2.0)), 3.0)
     if evolution_mode(settings, "max_applied_trades_per_day") == "harness":
         merged["max_applied_trades_per_day"] = min(
             float(merged.get("max_applied_trades_per_day", 5.0)),
@@ -1195,6 +1210,8 @@ def _apply_pnl_target_signal_evolution(
             merged["macro_veto"] = max(float(merged.get("macro_veto", 40.0)), 38.0)
         if evolution_mode(settings, "trade_min_scans") == "harness":
             merged["trade_min_scans"] = min(float(merged.get("trade_min_scans", 3.0)), 2.0)
+        if evolution_mode(settings, "trade_every_n_scans") == "harness":
+            merged["trade_every_n_scans"] = min(float(merged.get("trade_every_n_scans", 2.0)), 1.0)
         if evolution_mode(settings, "max_applied_trades_per_day") == "harness":
             merged["max_applied_trades_per_day"] = max(
                 float(merged.get("max_applied_trades_per_day", 5.0)),
@@ -1217,6 +1234,8 @@ def _apply_pnl_target_signal_evolution(
                 float(merged.get("max_applied_trades_per_day", 5.0)),
                 3.0,
             )
+        if evolution_mode(settings, "trade_every_n_scans") == "harness":
+            merged["trade_every_n_scans"] = max(float(merged.get("trade_every_n_scans", 2.0)), 3.0)
     return merged
 
 
@@ -1617,6 +1636,9 @@ def apply_harness_policy_overlay(settings: dict[str, Any]) -> dict[str, Any]:
     trend_meta = harness_trend_overlay_meta(base_trend, effective_trend)
     if trend_meta:
         harness_meta["trend_overlay"] = trend_meta
+    intraday = dict(cfg.get("intraday") or {})
+    intraday["eval_trends"] = list(effective_trend.get("eval_trends") or _DEFAULT_EVAL_TRENDS)
+    cfg["intraday"] = intraday
     base_exp_return = resolve_harness_base_expected_return_policy(cfg)
     effective_exp_return = resolve_harness_expected_return_policy(state, settings=cfg)
     harness_meta["expected_return_policy"] = effective_exp_return
@@ -2426,8 +2448,12 @@ def _apply_trend_policy_evolution(
     if _overlay_has_phrase(state, "达进攻阈值未落账", settings=settings):
         merged["trend_delta_threshold"] = min(float(merged.get("trend_delta_threshold", 1.0)), 0.9)
     eval_trends = list(merged.get("eval_trends") or _DEFAULT_EVAL_TRENDS)
-    if signals.get("defensive_trim"):
+    if _overlay_has_phrase(state, "达进攻阈值未落账", settings=settings):
         eval_trends = list(dict.fromkeys([*eval_trends, "mixed"]))
+    elif _overlay_has_phrase(state, "减少频繁调仓", settings=settings):
+        eval_trends = [t for t in eval_trends if t != "mixed"] or list(_DEFAULT_EVAL_TRENDS)
+    elif signals.get("pnl_target_hit"):
+        eval_trends = [t for t in eval_trends if t != "mixed"] or list(_DEFAULT_EVAL_TRENDS)
     merged["eval_trends"] = eval_trends
     merged["buy_trends"] = buy_trends
     merged["sell_trends"] = sell_trends
@@ -2442,6 +2468,7 @@ def resolve_harness_trend_policy(
     merged = resolve_harness_base_trend_policy(settings)
     if not _overlay_enabled(settings):
         return merged
+    base_eval_trends = list(merged.get("eval_trends") or _DEFAULT_EVAL_TRENDS)
     merged = _apply_trend_policy_evolution(merged, state, settings=settings)
     from agent_reach.daily_run.intraday_whatif_optimizer import apply_intraday_friction_llm_optimal_to_trend
     from agent_reach.daily_run.intraday_trends_optimizer import apply_intraday_trends_llm_optimal_to_trend
@@ -2452,7 +2479,10 @@ def resolve_harness_trend_policy(
     merged["trend_delta_threshold"] = max(0.5, min(3.0, float(merged.get("trend_delta_threshold", 1.0))))
     merged["buy_trends"] = list(merged.get("buy_trends") or _DEFAULT_BUY_TRENDS)
     merged["sell_trends"] = list(merged.get("sell_trends") or _DEFAULT_SELL_TRENDS)
-    merged["eval_trends"] = list(merged.get("eval_trends") or _DEFAULT_EVAL_TRENDS)
+    if evolution_mode(settings, "eval_trends") == "fixed":
+        merged["eval_trends"] = base_eval_trends
+    else:
+        merged["eval_trends"] = list(merged.get("eval_trends") or _DEFAULT_EVAL_TRENDS)
     return merged
 
 
