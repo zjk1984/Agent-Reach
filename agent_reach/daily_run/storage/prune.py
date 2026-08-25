@@ -8,8 +8,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from agent_reach.daily_run.storage.config import storage_settings
-
 
 def _dir_size(path: Path) -> int:
     if not path.exists():
@@ -238,3 +236,118 @@ def run_prune(
         dry_run=dry_run,
     )
     return {"files": files, "database": db}
+
+
+def run_scheduled_prune(
+    *,
+    settings: Optional[dict[str, Any]] = None,
+    root: Optional[Path] = None,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Run retention cleanup using storage.prune settings."""
+    from agent_reach.daily_run.storage.config import prune_settings
+
+    cfg = prune_settings(settings)
+    if not cfg.get("enabled", True):
+        return {"skipped": True, "reason": "prune_disabled", "settings": cfg}
+
+    return run_prune(
+        settings=settings,
+        root=root,
+        runs_keep_days=int(cfg["runs_keep_days"]),
+        cache_keep_days=int(cfg["cache_keep_days"]),
+        log_keep_days=int(cfg["log_keep_days"]),
+        l0_keep_days=int(cfg["l0_keep_days"]),
+        vacuum=bool(cfg.get("vacuum")),
+        dry_run=dry_run,
+    )
+
+
+def render_prune_markdown(result: dict[str, Any], *, settings: Optional[dict[str, Any]] = None) -> str:
+    from agent_reach.daily_run.storage.config import prune_settings
+
+    if result.get("skipped"):
+        return f"存储清理已跳过：{result.get('reason') or 'disabled'}"
+
+    cfg = prune_settings(settings)
+    files = result.get("files") or {}
+    db = result.get("database") or {}
+    deleted = list(files.get("deleted") or [])
+
+    phase_totals: dict[str, dict[str, float]] = {}
+    for item in deleted:
+        phase = str(item.get("phase") or "?")
+        bucket = phase_totals.setdefault(phase, {"items": 0, "bytes": 0.0})
+        bucket["items"] += 1
+        bucket["bytes"] += float(item.get("bytes") or 0)
+
+    lines = [
+        "**周日存储维护完成**",
+        "",
+        "**保留策略**",
+        f"- runs manifest：{cfg['runs_keep_days']} 天",
+        f"- 日缓存 / 子缓存：{cfg['cache_keep_days']} 天",
+        f"- cron 日志：{cfg['log_keep_days']} 天",
+        f"- 已蒸馏 L0：{cfg['l0_keep_days']} 天",
+        "",
+        "**文件清理**",
+        f"- 删除 **{files.get('items', 0)}** 项，释放 **{files.get('mb_freed', 0)} MB**",
+    ]
+    phase_labels = {"0": "Phase 0（bak/缓存/日志）", "1": "Phase 1（cache/intraday/forecast）", "2": "Phase 2（runs/）"}
+    for phase in sorted(phase_totals.keys()):
+        bucket = phase_totals[phase]
+        label = phase_labels.get(phase, f"Phase {phase}")
+        lines.append(f"- {label}：{int(bucket['items'])} 项 · {bucket['bytes'] / 1024 / 1024:.2f} MB")
+
+    lines.extend(["", "**数据库**"])
+    if db.get("skipped"):
+        lines.append(f"- 跳过：{db.get('reason') or 'storage_disabled'}")
+    else:
+        rows = db.get("deleted_rows", db.get("would_delete_rows", 0))
+        mb = round((db.get("bytes_estimate") or 0) / 1024 / 1024, 2)
+        lines.append(f"- 删除已蒸馏 L0：**{rows}** 行（约 **{mb} MB**）")
+        if db.get("vacuum_bytes_freed") is not None:
+            lines.append(f"- VACUUM 释放：**{db['vacuum_bytes_freed'] / 1024 / 1024:.2f} MB**")
+
+    total_mb = float(files.get("mb_freed") or 0)
+    if db.get("vacuum_bytes_freed"):
+        total_mb += float(db["vacuum_bytes_freed"]) / 1024 / 1024
+    lines.extend(["", f"**合计释放约 {total_mb:.2f} MB**"])
+
+    if deleted:
+        lines.extend(["", "**明细（前 10 项）**"])
+        for item in deleted[:10]:
+            rel = item.get("path") or "?"
+            size_mb = float(item.get("bytes") or 0) / 1024 / 1024
+            reason = item.get("reason") or ""
+            lines.append(f"- `{rel}` · {size_mb:.2f} MB · {reason}")
+        if len(deleted) > 10:
+            lines.append(f"- … 另有 {len(deleted) - 10} 项")
+
+    return "\n".join(lines)
+
+
+def push_prune_result_card(
+    result: dict[str, Any],
+    *,
+    settings: Optional[dict[str, Any]] = None,
+    config=None,
+    title: str = "🧹 存储清理 · 周日维护",
+) -> Optional[dict[str, Any]]:
+    from agent_reach.config import Config
+    from agent_reach.integrations.feishu import send_card
+
+    if result.get("skipped"):
+        return None
+
+    markdown = render_prune_markdown(result, settings=settings)
+    files = result.get("files") or {}
+    db = result.get("database") or {}
+    total_freed = float(files.get("bytes_freed") or 0)
+    if db.get("vacuum_bytes_freed"):
+        total_freed += float(db["vacuum_bytes_freed"])
+    template = "green" if total_freed > 0 else "blue"
+    cfg_obj = config or Config()
+    report_cfg = (settings or {}).get("report") or {}
+    template = report_cfg.get("feishu_template_storage_prune", template)
+    return send_card(cfg_obj, title, markdown, template=template)

@@ -131,17 +131,19 @@ def cmd_storage(args: argparse.Namespace) -> None:
     if action == "prune":
         from pathlib import Path
 
+        from agent_reach.daily_run.storage.config import prune_settings
         from agent_reach.daily_run.storage.prune import run_prune
 
         root = Path(args.root).expanduser() if args.root else None
+        pcfg = prune_settings(settings)
         result = run_prune(
             settings=settings,
             root=root,
-            runs_keep_days=max(1, int(args.runs_keep_days)),
-            cache_keep_days=max(1, int(args.cache_keep_days)),
-            log_keep_days=max(1, int(args.log_keep_days)),
-            l0_keep_days=max(1, int(args.l0_keep_days)),
-            vacuum=bool(args.vacuum),
+            runs_keep_days=max(1, int(getattr(args, "runs_keep_days", None) or pcfg["runs_keep_days"])),
+            cache_keep_days=max(1, int(getattr(args, "cache_keep_days", None) or pcfg["cache_keep_days"])),
+            log_keep_days=max(1, int(getattr(args, "log_keep_days", None) or pcfg["log_keep_days"])),
+            l0_keep_days=max(1, int(getattr(args, "l0_keep_days", None) or pcfg["l0_keep_days"])),
+            vacuum=bool(args.vacuum if args.vacuum else pcfg.get("vacuum")),
             dry_run=bool(args.dry_run),
         )
         if args.json:

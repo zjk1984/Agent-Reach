@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -291,3 +292,84 @@ def test_prune_distilled_l0_and_files(storage_env):
 
     db_result = prune_database(settings=settings, l0_keep_days=90, dry_run=True)
     assert db_result.get("skipped") is not True
+
+
+def test_render_prune_markdown_and_forecast_hook(storage_env):
+    from agent_reach.daily_run.storage.prune import render_prune_markdown, run_scheduled_prune
+
+    settings = storage_env["settings"]
+    settings = dict(settings)
+    settings["storage"] = dict(settings["storage"])
+    settings["storage"]["prune"] = {"enabled": True, "vacuum": False}
+
+    result = run_scheduled_prune(settings=settings, root=storage_env["root"], dry_run=True)
+    md = render_prune_markdown(result, settings=settings)
+    assert "周日存储维护完成" in md
+    assert "保留策略" in md
+    assert "runs manifest" in md
+
+
+def test_run_forecast_runs_storage_prune(monkeypatch):
+    from types import SimpleNamespace
+
+    from agent_reach.daily_run.workflows import run_forecast
+
+    snapshot = {"portfolio": {"holdings": [], "watchlist": []}}
+    forecast_obj = SimpleNamespace(to_dict=lambda: {"week_start": "2026-08-24"})
+    prune_called = {"ok": False}
+
+    def _fake_prune(**kwargs):
+        prune_called["ok"] = True
+        return {"files": {"items": 1, "mb_freed": 0.1, "deleted": []}, "database": {"deleted_rows": 0}}
+
+    monkeypatch.setenv("AGENT_REACH_STORAGE", "1")
+    with patch(
+        "agent_reach.daily_run.xueqiu_cookie_health.refresh_xueqiu_cookie_from_browser",
+        return_value={"skipped": True},
+    ), patch(
+        "agent_reach.daily_run.week_forecast.generate_week_forecast",
+        return_value=forecast_obj,
+    ), patch(
+        "agent_reach.daily_run.week_forecast.persist_week_forecast",
+        return_value=__import__("pathlib").Path("/tmp/f.json"),
+    ), patch(
+        "agent_reach.daily_run.week_forecast.render_forecast_markdown",
+        return_value="md",
+    ), patch(
+        "agent_reach.daily_run.week_forecast.attach_forecast_narrative",
+    ), patch(
+        "agent_reach.daily_run.forecast_harness_skills.run_forecast_harness_refinements",
+        side_effect=ImportError("skip harness"),
+    ), patch(
+        "agent_reach.daily_run.report_push.render_forecast_push_sections",
+        return_value=[],
+    ), patch(
+        "agent_reach.daily_run.report_push.push_report_sections",
+        return_value={"mode": "single"},
+    ), patch(
+        "agent_reach.daily_run.storage.prune.run_scheduled_prune",
+        side_effect=_fake_prune,
+    ), patch(
+        "agent_reach.daily_run.storage.prune.push_prune_result_card",
+        return_value={"ok": True},
+    ), patch(
+        "agent_reach.daily_run.week_forecast.forecast_title",
+        return_value="下周预测",
+    ), patch(
+        "agent_reach.daily_run.workflows._harness_push_summary_enabled",
+        return_value=False,
+    ), patch(
+        "agent_reach.daily_run.workflows.push_harness_followups",
+        return_value=[],
+    ):
+        out = run_forecast(
+            snapshot,
+            push=True,
+            settings={
+                "week_forecast": {"enabled": True},
+                "storage": {"enabled": True, "prune": {"auto_on_forecast": True}},
+            },
+        )
+    assert prune_called["ok"] is True
+    assert "storage_prune" in out["steps"]
+    assert "push_storage_prune" in out["steps"]

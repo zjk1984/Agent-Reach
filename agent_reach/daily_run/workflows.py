@@ -1798,6 +1798,31 @@ def run_forecast(
     path = persist_week_forecast(forecast)
     steps.append("persist")
 
+    prune_result = None
+    prune_feishu = None
+    try:
+        from agent_reach.daily_run.storage import storage_enabled
+        from agent_reach.daily_run.storage.config import prune_settings
+        from agent_reach.daily_run.storage.prune import push_prune_result_card, run_scheduled_prune
+
+        prune_cfg = prune_settings(cfg)
+        if storage_enabled(cfg) and prune_cfg.get("auto_on_forecast", True):
+            prune_result = run_scheduled_prune(settings=cfg)
+            steps.append("storage_prune")
+            if push:
+                from agent_reach.config import Config
+
+                cfg_obj = config or Config()
+                prune_feishu = push_prune_result_card(
+                    prune_result,
+                    settings=cfg,
+                    config=cfg_obj,
+                )
+                if prune_feishu:
+                    steps.append("push_storage_prune")
+    except Exception as exc:
+        _workflow_harness_error(harness_errors, "storage_prune", exc)
+
     md = render_forecast_markdown(forecast)
     steps.append("render")
 
@@ -1859,5 +1884,7 @@ def run_forecast(
         "harness": harness_result,
         "markdown": md,
         "feishu": feishu_result,
+        "storage_prune": prune_result,
+        "storage_prune_feishu": prune_feishu,
         **({"harness_errors": harness_errors} if harness_errors else {}),
     }
