@@ -1220,6 +1220,20 @@ def _apply_pnl_target_signal_evolution(
     return merged
 
 
+def _restore_fixed_evolution_keys(
+    merged: dict[str, float],
+    base: dict[str, float],
+    settings: dict[str, Any],
+    keys: tuple[str, ...],
+) -> dict[str, float]:
+    """Keep user-fixed keys from base config when harness overlay is still active."""
+    out = dict(merged)
+    for key in keys:
+        if evolution_mode(settings, key) == "fixed" and key in base:
+            out[key] = base[key]
+    return out
+
+
 def resolve_harness_flat_overrides(
     state: Any,
     base_thresholds: dict[str, Any],
@@ -1259,6 +1273,7 @@ def resolve_harness_flat_overrides(
     from agent_reach.daily_run.intraday_whatif_optimizer import apply_intraday_friction_llm_optimal_to_flat
 
     apply_intraday_friction_llm_optimal_to_flat(merged, state, settings=cfg)
+    merged = _restore_fixed_evolution_keys(merged, base, cfg, _EVOLVED_FLAT_KEYS)
     return _clamp_flat_values(merged)
 
 
@@ -1792,15 +1807,17 @@ def resolve_harness_position_policy(
     *,
     settings: dict[str, Any],
 ) -> dict[str, float]:
-    merged = resolve_harness_base_position_policy(settings)
+    base = resolve_harness_base_position_policy(settings)
+    merged = dict(base)
     if not _overlay_enabled(settings):
         return merged
     merged = _apply_position_signal_evolution(merged, state, settings=settings)
-    merged["deploy_ratio"] = max(0.05, min(1.0, float(merged.get("deploy_ratio", 1.0))))
-    merged["max_position_pct"] = max(5.0, min(100.0, float(merged.get("max_position_pct", 35.0))))
     from agent_reach.daily_run.buy_rules_whatif_optimizer import apply_whatif_buy_llm_optimal_to_policy
 
     apply_whatif_buy_llm_optimal_to_policy(merged, state, settings=settings)
+    merged = _restore_fixed_evolution_keys(merged, base, settings, _EVOLVED_POSITION_KEYS)
+    merged["deploy_ratio"] = max(0.05, min(1.0, float(merged.get("deploy_ratio", 1.0))))
+    merged["max_position_pct"] = max(5.0, min(100.0, float(merged.get("max_position_pct", 35.0))))
     return merged
 
 

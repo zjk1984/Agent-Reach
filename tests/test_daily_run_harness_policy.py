@@ -117,6 +117,32 @@ class TestHarnessPolicyOverlay:
         assert effective["macro_veto"] == 40.0
         assert effective["min_cash_ratio"] == 0.4
 
+    def test_per_key_fixed_mode_survives_policy_overlay(self):
+        state = HarnessState()
+        state.entries["policy"]["cash"] = HarnessEntry(
+            id="cash",
+            kind="policy",
+            title="维持高现金",
+            content="维持高现金：禁止接飞刀，取消一切买入",
+            source="deterministic",
+            job="close_improve",
+            evidence="close",
+            created_at="2026-08-25T00:00:00+00:00",
+            updated_at="2026-08-25T00:00:00+00:00",
+        )
+        effective = resolve_harness_threshold_overrides(
+            state,
+            {"min_cash_ratio": 0.17, "macro_veto": 40, "aggressive_entry": 50},
+            settings={
+                "harness": {
+                    "threshold_evolution_mode": "harness",
+                    "runtime_overlay_sources": ["policy", "memory", "playbook"],
+                    "threshold_modes": {"min_cash_ratio": "fixed"},
+                }
+            },
+        )
+        assert effective["min_cash_ratio"] == 0.17
+
     def test_harness_signal_evolution_sets_defensive_floor(self):
         state = HarnessState()
         state.entries["memory"]["dev"] = HarnessEntry(
