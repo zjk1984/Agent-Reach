@@ -239,3 +239,55 @@ def test_storage_disabled_by_default(monkeypatch):
         settings["storage"] = dict(settings.get("storage") or {})
         settings["storage"]["enabled"] = False
     assert storage_enabled(settings) is False
+
+
+def test_prune_distilled_l0_and_files(storage_env):
+    from agent_reach.daily_run.storage.prune import prune_database, prune_files
+
+    settings = storage_env["settings"]
+    root = storage_env["root"]
+    store = SqliteDailyRunStore(Path(storage_env["db_path"]))
+
+    store.append_l0_event(
+        "job_run",
+        {"at": "2026-01-01T00:00:00+00:00", "job": "morning", "success": True},
+        dedupe_key="job:old",
+    )
+    store.append_l0_event(
+        "job_run",
+        {"at": "2026-08-25T00:00:00+00:00", "job": "close", "success": True},
+        dedupe_key="job:new",
+    )
+    store.mark_l0_distilled([1, 2], job="test")
+
+    dry = store.prune_distilled_l0(
+        cutoff_iso="2026-06-01T00:00:00+00:00",
+        kinds=["job_run"],
+        dry_run=True,
+    )
+    assert dry["would_delete_rows"] == 1
+
+    applied = store.prune_distilled_l0(
+        cutoff_iso="2026-06-01T00:00:00+00:00",
+        kinds=["job_run"],
+        dry_run=False,
+    )
+    assert applied["deleted_rows"] == 1
+    assert store.status()["counts"]["l0_events"] == 1
+
+    cache = root / "cache"
+    cache.mkdir(exist_ok=True)
+    old = cache / "2026-01-01.json"
+    old.write_text("{}", encoding="utf-8")
+    import os
+    import time
+
+    old_time = time.time() - (20 * 86400)
+    os.utime(old, (old_time, old_time))
+
+    result = prune_files(root=root, cache_keep_days=14, dry_run=False)
+    assert result["items"] >= 1
+    assert not old.exists()
+
+    db_result = prune_database(settings=settings, l0_keep_days=90, dry_run=True)
+    assert db_result.get("skipped") is not True

@@ -242,6 +242,23 @@ def distill_l0_event(store, event: dict[str, Any]) -> list[int]:
             title_fn=lambda p: str(p.get("title") or "rejected"),
             content_fn=lambda p: str(p.get("reason") or ""),
         )
+    if kind == "portfolio":
+        payload = event.get("payload") or {}
+        event_id = int(event["id"])
+        at = str(payload.get("at") or event.get("at") or "")
+        cash = payload.get("cash")
+        total = payload.get("total")
+        holdings = payload.get("holdings") or []
+        atom_id = store.upsert_l1_atom(
+            kind="portfolio_snapshot",
+            at=at,
+            title=f"portfolio {len(holdings)} holdings",
+            content=f"cash={cash} total={total} holdings={len(holdings)}",
+            payload={"cash": cash, "total": total, "holdings_count": len(holdings)},
+            source_event_id=event_id,
+            dedupe_key=f"l1:portfolio:{event_id}",
+        )
+        return [atom_id]
     return []
 
 

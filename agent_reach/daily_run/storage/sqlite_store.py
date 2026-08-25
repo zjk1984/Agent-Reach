@@ -653,6 +653,60 @@ class SqliteDailyRunStore:
                 (f"last_{job}_at", stamp),
             )
 
+    def prune_distilled_l0(
+        self,
+        *,
+        cutoff_iso: str,
+        kinds: list[str],
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        kinds_norm = [str(k).strip() for k in kinds if str(k).strip()]
+        if not kinds_norm:
+            return {"deleted_rows": 0, "bytes_estimate": 0, "by_kind": {}}
+        placeholders = ",".join("?" for _ in kinds_norm)
+        params = kinds_norm + [cutoff_iso]
+        with self._conn() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT kind, COUNT(*) AS c, SUM(length(payload_json)) AS bytes
+                FROM l0_events
+                WHERE kind IN ({placeholders})
+                  AND distilled_at IS NOT NULL
+                  AND at < ?
+                GROUP BY kind
+                """,
+                params,
+            ).fetchall()
+            by_kind = {
+                str(row["kind"]): {"rows": int(row["c"]), "bytes": int(row["bytes"] or 0)}
+                for row in rows
+            }
+            total_rows = sum(v["rows"] for v in by_kind.values())
+            total_bytes = sum(v["bytes"] for v in by_kind.values())
+            if not dry_run and total_rows > 0:
+                conn.execute(
+                    f"""
+                    DELETE FROM l0_events
+                    WHERE kind IN ({placeholders})
+                      AND distilled_at IS NOT NULL
+                      AND at < ?
+                    """,
+                    params,
+                )
+        return {
+            "cutoff_iso": cutoff_iso,
+            "kinds": kinds_norm,
+            "dry_run": dry_run,
+            "deleted_rows": 0 if dry_run else total_rows,
+            "would_delete_rows": total_rows,
+            "bytes_estimate": total_bytes,
+            "by_kind": by_kind,
+        }
+
+    def vacuum(self) -> None:
+        with self._conn() as conn:
+            conn.execute("VACUUM")
+
 
 def open_sqlite_store(path: Path) -> DailyRunStore:
     return SqliteDailyRunStore(path)

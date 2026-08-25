@@ -52,6 +52,19 @@ def add_storage_subparser(p_daily_sub: argparse._SubParsersAction) -> None:
     p_query.add_argument("--limit", type=int, default=20)
     p_query.add_argument("--json", action="store_true", help="JSON output")
 
+    p_prune = p_store_sub.add_parser(
+        "prune",
+        help="Retention cleanup for caches/logs/runs and distilled L0 payloads",
+    )
+    p_prune.add_argument("--dry-run", action="store_true", help="Preview deletions only")
+    p_prune.add_argument("--runs-keep-days", type=int, default=60, help="Keep run manifests (default 60)")
+    p_prune.add_argument("--cache-keep-days", type=int, default=14, help="Keep daily cache files (default 14)")
+    p_prune.add_argument("--log-keep-days", type=int, default=30, help="Keep cron logs (default 30)")
+    p_prune.add_argument("--l0-keep-days", type=int, default=90, help="Keep distilled L0 payloads (default 90)")
+    p_prune.add_argument("--vacuum", action="store_true", help="VACUUM SQLite after L0 prune")
+    p_prune.add_argument("--root", default="", help="Override ~/.agent-reach/daily_run root")
+    p_prune.add_argument("--json", action="store_true", help="JSON output")
+
 
 def _print_json(payload: Any) -> None:
     print(json.dumps(payload, ensure_ascii=False, indent=2))
@@ -113,6 +126,39 @@ def cmd_storage(args: argparse.Namespace) -> None:
 
         result = run_distill(limit=max(1, int(args.limit)), settings=settings)
         _print_json(result)
+        return
+
+    if action == "prune":
+        from pathlib import Path
+
+        from agent_reach.daily_run.storage.prune import run_prune
+
+        root = Path(args.root).expanduser() if args.root else None
+        result = run_prune(
+            settings=settings,
+            root=root,
+            runs_keep_days=max(1, int(args.runs_keep_days)),
+            cache_keep_days=max(1, int(args.cache_keep_days)),
+            log_keep_days=max(1, int(args.log_keep_days)),
+            l0_keep_days=max(1, int(args.l0_keep_days)),
+            vacuum=bool(args.vacuum),
+            dry_run=bool(args.dry_run),
+        )
+        if args.json:
+            _print_json(result)
+            return
+        files = result.get("files") or {}
+        db = result.get("database") or {}
+        print(f"files: {files.get('items', 0)} items, {files.get('mb_freed', 0)} MB freed")
+        if db.get("skipped"):
+            print(f"database: skipped ({db.get('reason')})")
+        else:
+            print(
+                f"database: {db.get('deleted_rows', db.get('would_delete_rows', 0))} L0 rows, "
+                f"~{round((db.get('bytes_estimate') or 0) / 1024 / 1024, 2)} MB"
+            )
+            if db.get("vacuum_bytes_freed") is not None:
+                print(f"vacuum: {round(db['vacuum_bytes_freed'] / 1024 / 1024, 2)} MB freed")
         return
 
     if action == "query":
