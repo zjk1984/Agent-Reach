@@ -27,23 +27,22 @@ MARKER_END = "# agent-reach daily-run schedule END"
 BOOT_CATCHUP_SLEEP_SECONDS = 60
 _SH_TZ = ZoneInfo("Asia/Shanghai")
 
-# 15 scans/day: S1 premarket 07:00 + S2 morning 08:00 + S3 09:00 + S4–S15 session (no 08:30 slot)
+# 13 scans/day: S1 07:00 + S2 08:00 + midday 12:30 + S3–S12 session (A-share aligned)
+# Morning T slots: S4 09:45 / S5 10:15 / S6 10:45 / S7 11:20 (inside 09:30–11:30)
+# Afternoon T slots: S8 13:05 / S9 13:35 / S10 14:10 / S11 14:40 (inside 13:00–14:57)
 INTRADAY_SCAN_TIMES: list[tuple[str, str]] = [
-    ("0", "9"),    # 09:00 S3
-    ("30", "9"),   # 09:30 S4
-    ("54", "9"),   # 09:54 S5
-    ("18", "10"),  # 10:18 S6
-    ("42", "10"),  # 10:42 S7
-    ("6", "11"),   # 11:06 S8
-    ("30", "11"),  # 11:30 S9
-    ("0", "13"),   # 13:00 S10
-    ("24", "13"),  # 13:24 S11
-    ("48", "13"),  # 13:48 S12
-    ("12", "14"),  # 14:12 S13
-    ("36", "14"),  # 14:36 S14
-    ("0", "15"),   # 15:00 S15
+    ("0", "9"),    # 09:00 S3 — pre-open / lookback only
+    ("45", "9"),   # 09:45 S4 — post-open confirmation
+    ("15", "10"),  # 10:15 S5 — mid-morning
+    ("45", "10"),  # 10:45 S6 — late morning
+    ("20", "11"),  # 11:20 S7 — last morning eval before lunch
+    ("5", "13"),   # 13:05 S8 — afternoon open confirmation
+    ("35", "13"),  # 13:35 S9 — early afternoon
+    ("10", "14"),  # 14:10 S10 — mid-afternoon
+    ("40", "14"),  # 14:40 S11 — pre-close (before 14:57 auction)
+    ("0", "15"),   # 15:00 S12 — post-close archive, no trade eval
 ]
-# 16 scans/day: S1 premarket 07:00 + S2 morning 08:00 + midday 12:30 + S3–S15 session
+# S1 + S2 + midday + len(INTRADAY_SCAN_TIMES)
 INTRADAY_MAX_SCANS = 1 + 1 + 1 + len(INTRADAY_SCAN_TIMES)
 
 

@@ -49,7 +49,7 @@ def intraday_to_harness_evidence(payload: dict[str, Any]) -> dict[str, Any]:
     if scan_count is not None:
         if int(scan_count) < 3:
             memory.append("盘中扫描偏少：intraday 次数不足，下日 trade_min_scans 可降至 2")
-            plan.append(f"intraday：{name} 扫描仅 {scan_count} 次，确认 cron S3–S15")
+            plan.append(f"intraday：{name} 扫描仅 {scan_count} 次，确认 cron S3–S12")
         elif int(scan_count) >= 13:
             playbook.append(f"盘中扫描充足（{scan_count} 次），Lookback 权重可信")
 
@@ -117,7 +117,7 @@ def intraday_to_harness_evidence(payload: dict[str, Any]) -> dict[str, Any]:
         reason = str(payload.get("reason") or "")
         memory.append(f"intraday skipped：{reason}")
         if "上限" in reason or "MAX" in reason.upper():
-            plan.append("intraday：扫描达上限，确认 S15 是否落在 15:00")
+            plan.append("intraday：扫描达上限，确认 S12 是否落在 15:00")
 
     summary = f"intraday {scan_id} {name} scans={scan_count}"
     return {

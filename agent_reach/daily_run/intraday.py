@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Intraday scan (S1-S15) and trade (T1-T5) workflow with lookback MSS."""
+"""Intraday scan (S1-S12) and trade (T1-T5) workflow with lookback MSS."""
 
 from __future__ import annotations
 
@@ -480,7 +480,7 @@ def should_evaluate_trade(
     if not sched.get("intraday_trade_enabled", True):
         return False
 
-    # Pre-open (S1-S2 ~09:00-09:25) and post-close (S15 ~15:00) scans record
+    # Pre-open (S1-S2 ~07:00-09:00) and post-close (S12 ~15:00) scans record
     # data but must not fire buy/sell — no continuous-matching session exists
     # to fill them. Lunch break (11:30-13:00) is likewise excluded.
     if sched.get("intraday_session_gate_enabled", True) and not is_continuous_session():

@@ -81,7 +81,19 @@ def _morning_session_lines(state: dict[str, Any], baseline: Optional[dict[str, A
     if not scans:
         lines.append("- 上午尚无 intraday 扫描记录")
         return lines
-    am = [s for s in scans if str(s.get("source") or "") in {"morning", ""} or s.get("scan_id", "") <= "S9"]
+
+    def _scan_num(scan_id: object) -> int | None:
+        raw = str(scan_id or "").strip().upper()
+        if raw.startswith("S") and raw[1:].isdigit():
+            return int(raw[1:])
+        return None
+
+    am = [
+        s
+        for s in scans
+        if str(s.get("source") or "") in {"morning", ""}
+        or (_scan_num(s.get("scan_id")) is not None and _scan_num(s.get("scan_id")) <= 7)
+    ]
     if not am:
         am = scans[:-1] if len(scans) > 1 else scans
     if am:

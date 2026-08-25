@@ -13,7 +13,7 @@ from agent_reach.daily_run.schedule import INTRADAY_MAX_SCANS, default_entries
 
 
 def test_intraday_max_scans_includes_midday():
-    assert INTRADAY_MAX_SCANS == 16
+    assert INTRADAY_MAX_SCANS == 13
 
 
 def test_default_crontab_has_midday():

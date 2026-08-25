@@ -98,7 +98,7 @@ def schedule_gaps_to_harness_evidence(
         plan.append("run_guard：确认 09:30–15:00 intraday cron 与 intraday_state 累积")
 
     if not days_with_intraday and not intraday_by_day:
-        memory.append("本周无 intraday manifest：S4–S15 未落盘")
+        memory.append("本周无 intraday manifest：S4–S12 未落盘")
         plan.append("run_guard：排查 intraday cron 与 resolve-job.sh 窗口")
 
     summary = f"schedule_gaps morning_miss={len(missing_morning)} close_miss={len(missing_close)}"
