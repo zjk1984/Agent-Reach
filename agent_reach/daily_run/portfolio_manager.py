@@ -890,7 +890,18 @@ def _apply_buy(
         if cash >= min_cost:
             shares = min_lot
     if shares <= 0:
-        return ApplyResult(applied=False, portfolio=pf, message=f"现金不足以买入 {code} 最小单位")
+        min_lot = _min_lot(code)
+        return ApplyResult(
+            applied=False,
+            portfolio=pf,
+            message=format_min_lot_budget_message(
+                code=code,
+                price=price,
+                buy_budget=budget,
+                min_lot=min_lot,
+                commission_rate=commission_rate,
+            ),
+        )
 
     gross = shares * price
     commission = round(gross * commission_rate, 2)
@@ -1019,10 +1030,22 @@ def simulate_buy_analysis(
     budget = budget_gross / (1 + commission_rate)
     shares = _round_lot(code, int(budget // price))
     if shares <= 0:
+        min_lot = _min_lot(code)
         return {
             "allowed": False,
             "buy_shares": 0,
-            "block_reason": f"现金不足以买入 {code} 最小单位",
+            "block_reason": format_min_lot_budget_message(
+                code=code,
+                price=price,
+                buy_budget=budget,
+                min_lot=min_lot,
+                commission_rate=commission_rate,
+            ),
+            "code": code,
+            "name": str(target.get("name", code)),
+            "price": price,
+            "buy_budget": budget,
+            "min_lot_cost": min_lot * price * (1 + commission_rate),
             "deploy_ratio": float(position.get("deploy_ratio", 1.0)),
             "max_position_pct": float(position.get("max_position_pct", 35.0)),
         }
@@ -1051,6 +1074,41 @@ def simulate_buy_analysis(
         "deploy_ratio": float(position.get("deploy_ratio", 1.0)),
         "max_position_pct": float(position.get("max_position_pct", 35.0)),
     }
+
+
+def format_min_lot_budget_message(
+    *,
+    code: str,
+    price: float,
+    buy_budget: float,
+    min_lot: int,
+    min_lot_cost: Optional[float] = None,
+    commission_rate: float = 0.0015,
+) -> str:
+    lot_cost = (
+        float(min_lot_cost)
+        if min_lot_cost is not None
+        else min_lot * price * (1 + commission_rate)
+    )
+    return (
+        f"{code} 可部署买入预算 ¥{buy_budget:,.0f} 不足一手"
+        f"（{min_lot} 股 @ ¥{price:.2f} ≈ ¥{lot_cost:,.0f}）"
+    )
+
+
+def buy_budget_precheck_reason(
+    pf: dict[str, Any],
+    enriched: dict[str, dict[str, Any]],
+    settings: dict[str, Any],
+    *,
+    prefer_code: str,
+) -> Optional[str]:
+    """Return a block reason when the decision symbol cannot afford one lot."""
+    analysis = simulate_buy_analysis(pf, enriched, settings, prefer_code=prefer_code)
+    if analysis.get("allowed"):
+        return None
+    reason = str(analysis.get("block_reason") or "").strip()
+    return reason or "买入预算不足"
 
 
 def _buy_budget_context(

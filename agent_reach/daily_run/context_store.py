@@ -59,7 +59,7 @@ def trade_case_id(trade_record: dict[str, Any]) -> str:
     code = _normalize_code(str(trade_record.get("code") or "UNK"))
     trade_id = str(trade_record.get("trade_id") or "T")
     msg = str(trade_record.get("portfolio_message") or trade_record.get("reasoning") or "")
-    if "最小单位" in msg or "一手" in msg or "资金不足" in msg:
+    if "最小单位" in msg or "一手" in msg or "资金不足" in msg or "可部署买入预算" in msg:
         reason = "cash-lot-fail"
     elif trade_record.get("cash_limit_bypass"):
         reason = "cash-bypass"

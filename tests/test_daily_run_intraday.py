@@ -178,10 +178,10 @@ class TestIntradayWorkflow:
         )
 
         snapshot = {
-            "code": "688008",
-            "name": "澜起科技",
-            "price": 260.0,
-            "change_pct": 1.5,
+            "code": "000725",
+            "name": "京东方A",
+            "price": 7.5,
+            "change_pct": 2.0,
             "portfolio": {
                 "total": 100000,
                 "cash": 80000,
@@ -196,6 +196,10 @@ class TestIntradayWorkflow:
         }
         settings = load_settings()
         settings.setdefault("portfolio", {})["auto_adjust_enabled"] = True
+        settings.setdefault("thresholds", {})["min_cash_ratio"] = 0.0
+        settings["harness_runtime"] = {
+            "position_policy": {"deploy_ratio": 1.0, "max_position_pct": 35.0},
+        }
         decision = TradeDecision(
             action="buy",
             trade_id="T1",
@@ -449,6 +453,8 @@ class TestDeepLossConsecutiveBuy:
             "name": "水晶光电",
             "price": 20.0,
             "portfolio": {
+                "total": 100000,
+                "cash": 60000,
                 "cash_ratio": 0.6,
                 "holdings": [
                     {
@@ -473,8 +479,9 @@ class TestDeepLossConsecutiveBuy:
             "harness": {
                 "threshold_modes": {"macro_veto": "fixed", "aggressive_entry": "fixed"},
             },
-            "thresholds": {"macro_veto": 30, "aggressive_entry": 45},
+            "thresholds": {"macro_veto": 30, "aggressive_entry": 45, "min_cash_ratio": 0.0},
             "harness_runtime": {
+                "position_policy": {"deploy_ratio": 1.0, "max_position_pct": 35.0},
                 "deep_loss_policy": {
                     "loss_cny_threshold": 1000,
                     "loss_pct_threshold": 10,
@@ -545,6 +552,57 @@ class TestDeepLossConsecutiveBuy:
         assert decision.blocked is False
         assert "条件性建仓" in decision.reasoning or "Lookback MSS" in decision.reasoning
 
+    def test_buy_blocked_when_deploy_budget_insufficient(self):
+        from agent_reach.daily_run.intraday import _decide_trade
+
+        class Verdict:
+            blocked = False
+            verdict = "观察"
+            mss_final = 48.0
+
+        settings = self._deep_loss_settings()
+        settings.setdefault("thresholds", {})["min_cash_ratio"] = 0.5
+        settings.setdefault("harness", {})["threshold_modes"] = {
+            "macro_veto": "fixed",
+            "aggressive_entry": "fixed",
+            "min_cash_ratio": "fixed",
+        }
+        settings.setdefault("harness_runtime", {})["position_policy"] = {
+            "deploy_ratio": 0.25,
+            "max_position_pct": 25.0,
+        }
+        snapshot = {
+            "code": "603986",
+            "name": "兆易创新",
+            "price": 388.77,
+            "portfolio": {
+                "total": 98561.92,
+                "cash": 56130.92,
+                "cash_ratio": 0.5695,
+                "holdings": [
+                    {"code": "688008", "name": "澜起科技", "shares": 100, "cost": 255.87, "days_held": 5},
+                ],
+                "watchlist": [{"code": "603986", "name": "兆易创新"}],
+            },
+            "watchlist": [{"code": "603986", "name": "兆易创新", "price": 388.77}],
+        }
+        decision = _decide_trade(
+            lookback_mss=48.0,
+            trend="rising",
+            verdict=Verdict(),
+            report={"code": "603986", "name": "兆易创新", "blocked": False, "audit_passed": True},
+            snapshot=snapshot,
+            settings=settings,
+            trade_index=4,
+            expected_return_pct=0.02,
+            prior_trades=[],
+        )
+        assert decision.action == "hold"
+        assert decision.blocked is True
+        assert decision.block_kind == "buy_budget"
+        assert "可部署买入预算" in decision.reasoning
+        assert "603986" in decision.reasoning
+
     def test_apply_buy_with_cash_limit_bypass(self, tmp_path, monkeypatch):
         from agent_reach.daily_run.intraday import TradeDecision, apply_paper_trade
 
@@ -612,7 +670,7 @@ class TestDeepLossConsecutiveBuy:
 
         blocked = apply_paper_trade(decision, snapshot, settings=settings, cash_limit_bypass=False)
         assert blocked.applied is False
-        assert "最小单位" in blocked.message or "资金不足一手" in blocked.message
+        assert "不足一手" in blocked.message
 
         bypassed = apply_paper_trade(decision, snapshot, settings=settings, cash_limit_bypass=True)
         assert bypassed.applied is True

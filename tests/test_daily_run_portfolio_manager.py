@@ -654,7 +654,7 @@ class TestApplyAutoAdjust:
         result = apply_auto_adjust(portfolio, decision, snapshot, settings_enabled)
         assert result.applied is False
         assert "688008" in result.message
-        assert "最小单位" in result.message
+        assert "不足一手" in result.message
 
     def test_max_total_blocks_buy_when_full(self, portfolio, snapshot, settings_enabled):
         # apply_auto_adjust only ever gates new buys via max_total_symbols
