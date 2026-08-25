@@ -173,6 +173,12 @@ def append_daily_pnl(
     merged = [by_date[d] for d in sorted(by_date)]
     attach_cumulative_pnl(merged)
     _write_history_rows(merged, path=p)
+    try:
+        from agent_reach.daily_run.storage.hooks import on_daily_pnl
+
+        on_daily_pnl(by_date[row.date].to_dict(), source_path=str(p))
+    except Exception:
+        pass
     return by_date[row.date]
 
 

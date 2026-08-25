@@ -284,6 +284,13 @@ def save_state(state: IntradayState, path: Optional[Path] = None) -> Path:
             tmp.replace(p)
     except (ImportError, OSError):
         p.write_text(payload, encoding="utf-8")
+    try:
+        from agent_reach.daily_run.storage.hooks import on_intraday_state
+
+        sym = p.stem if p.parent.name == "intraday" else ""
+        on_intraday_state(state.to_dict(), code=sym, source_path=str(p))
+    except Exception:
+        pass
     return p
 
 
@@ -342,6 +349,14 @@ def record_scan(
     }
     st.scans.append(entry)
     save_state(st, state_path)
+    try:
+        from agent_reach.daily_run.storage.hooks import on_intraday_scan
+
+        sym = str(entry.get("code") or "")
+        sp = str(state_path or default_state_path(sym or None))
+        on_intraday_scan(entry, code=sym, source_path=sp)
+    except Exception:
+        pass
 
     lookback_mss, lookback_detail = compute_lookback_mss(st.scans, cfg)
     trend = detect_mss_trend(st.scans, cfg)

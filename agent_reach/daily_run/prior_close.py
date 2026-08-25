@@ -79,6 +79,13 @@ def save_close_baseline(
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
+    try:
+        from agent_reach.daily_run.storage.hooks import on_baseline
+
+        on_baseline("close", norm, payload, source_path=str(out))
+    except Exception:
+        pass
+
     pc = _normalize_code(str(primary_code)) if primary_code else None
     if pc and norm == pc:
         legacy = Path.home() / ".agent-reach" / "daily_run" / "last_close.json"

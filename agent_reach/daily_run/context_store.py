@@ -191,6 +191,12 @@ def record_trade_case(
         "updated_at": trade_record.get("as_of"),
     }
     (case_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    try:
+        from agent_reach.daily_run.storage.hooks import on_trade_case
+
+        on_trade_case(case_id, trade_record, abstract=abstract, overview=overview, source_path=str(detail_path))
+    except Exception:
+        pass
     return uri
 
 

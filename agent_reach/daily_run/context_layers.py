@@ -85,6 +85,12 @@ def save_last_runtime_overlay(meta: dict[str, Any]) -> None:
         json.dumps(_overlay_snapshot(meta), ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
+    try:
+        from agent_reach.daily_run.storage.hooks import on_runtime_overlay
+
+        on_runtime_overlay(_overlay_snapshot(meta), source_path=str(path))
+    except Exception:
+        pass
 
 
 def _overlay_block_diff(

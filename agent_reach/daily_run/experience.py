@@ -378,3 +378,9 @@ def _update_rules_summary(path: Path, new_rules: list[str], cfg: dict[str, Any])
     data["rules"] = existing[-max_rules:]
     data["updated_at"] = datetime.now(timezone.utc).isoformat()
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    try:
+        from agent_reach.daily_run.storage.hooks import on_rules_summary
+
+        on_rules_summary(data, source_path=str(path))
+    except Exception:
+        pass

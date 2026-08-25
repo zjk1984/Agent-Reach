@@ -121,7 +121,235 @@ def backfill_from_files(
             if isinstance(state, dict):
                 store.sync_harness_state(state)
                 stats["harness_state"] = 1
+                try:
+                    from agent_reach.daily_run.storage.hooks import sync_l3_policy_persona
+
+                    sync_l3_policy_persona(state)
+                    stats["policy_persona"] = 1
+                except Exception:
+                    pass
         except (json.JSONDecodeError, OSError):
             pass
 
+    _backfill_roadmap(store, base, stats)
+
     return {"backfilled": stats, "status": store.status()}
+
+
+def _backfill_json_file(store, path: Path, handler, stats: dict[str, int], stat_key: str) -> None:
+    if not path.exists():
+        return
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return
+    if isinstance(data, dict):
+        handler(data, str(path))
+        stats[stat_key] = stats.get(stat_key, 0) + 1
+
+
+def _backfill_roadmap(store, base: Path, stats: dict[str, int]) -> None:
+    from agent_reach.daily_run.storage.hooks import (
+        on_baseline,
+        on_forecast,
+        on_harness_snapshot,
+        on_intraday_state,
+        on_job_run,
+        on_l1_state,
+        on_market_review,
+        on_rejected_strategy,
+        on_rules_summary,
+        on_runtime_overlay,
+        on_skill_changelog,
+        on_skill_fragment,
+        on_trade_case,
+        on_daily_pnl,
+        on_capital_event,
+    )
+
+    pnl_path = base / "pnl_history.jsonl"
+    for line_no, row in _iter_jsonl(pnl_path):
+        on_daily_pnl(row, source_path=str(pnl_path))
+        stats["pnl_history"] = stats.get("pnl_history", 0) + 1
+
+    cap_path = base / "capital_events.jsonl"
+    for line_no, row in _iter_jsonl(cap_path):
+        on_capital_event(row, source_path=str(cap_path))
+        stats["capital_event"] = stats.get("capital_event", 0) + 1
+
+    for path in (base / "skill_changelog.jsonl",):
+        for line_no, row in _iter_jsonl(path):
+            on_skill_changelog(row, source_path=str(path))
+            stats["skill_changelog"] = stats.get("skill_changelog", 0) + 1
+
+    rej_path = base / "rejected_strategies.jsonl"
+    for line_no, row in _iter_jsonl(rej_path):
+        on_rejected_strategy(row, source_path=str(rej_path))
+        stats["rejected_strategy"] = stats.get("rejected_strategy", 0) + 1
+
+    runs_root = base / "runs"
+    if runs_root.exists():
+        for path in sorted(runs_root.rglob("*.json")):
+            try:
+                row = json.loads(path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                continue
+            if isinstance(row, dict):
+                on_job_run(row, source_path=str(path))
+                stats["job_run"] = stats.get("job_run", 0) + 1
+
+    intraday_root = base / "intraday"
+    if intraday_root.exists():
+        for path in sorted(intraday_root.glob("*.json")):
+            try:
+                state = json.loads(path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                continue
+            if isinstance(state, dict):
+                code = path.stem
+                on_intraday_state(state, code=code, source_path=str(path))
+                stats["intraday_state"] = stats.get("intraday_state", 0) + 1
+                for scan in state.get("scans") or []:
+                    if isinstance(scan, dict):
+                        at = str(scan.get("as_of") or "")
+                        scan_id = str(scan.get("scan_id") or "")
+                        store.append_l0_event(
+                            "intraday_scan",
+                            scan,
+                            at=at,
+                            source_path=str(path),
+                            dedupe_key=f"backfill:intraday_scan:{code}:{scan_id}:{at}",
+                        )
+                        stats["intraday_scan"] = stats.get("intraday_scan", 0) + 1
+
+    _backfill_json_file(
+        store,
+        base / "daily_trade_state.json",
+        lambda d, p: on_l1_state("daily_trade_state", "daily_trade_state", d),
+        stats,
+        "daily_trade_state",
+    )
+    _backfill_json_file(
+        store,
+        base / "job_health.json",
+        lambda d, p: on_l1_state("job_health", "job_health", d),
+        stats,
+        "job_health",
+    )
+    _backfill_json_file(
+        store,
+        base / "pnl_target.json",
+        lambda d, p: on_l1_state("pnl_target", "pnl_target", d),
+        stats,
+        "pnl_target",
+    )
+    rules_path = base / "experience" / "rules_summary.json"
+    _backfill_json_file(
+        store,
+        rules_path,
+        lambda d, p: on_rules_summary(d, source_path=p),
+        stats,
+        "rules_summary",
+    )
+
+    overlay_path = base / "harness" / "last_runtime_overlay.json"
+    _backfill_json_file(
+        store,
+        overlay_path,
+        lambda d, p: on_runtime_overlay(d, source_path=p),
+        stats,
+        "runtime_overlay",
+    )
+
+    for kind_dir, kind in (("morning", "morning"), ("close", "close")):
+        bdir = base / "baselines" / kind_dir
+        if not bdir.exists():
+            continue
+        for path in sorted(bdir.glob("*.json")):
+            try:
+                row = json.loads(path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                continue
+            if isinstance(row, dict):
+                on_baseline(kind, path.stem, row, source_path=str(path))
+                stats[f"baseline_{kind}"] = stats.get(f"baseline_{kind}", 0) + 1
+
+    mdir = base / "market_review"
+    if mdir.exists():
+        for path in sorted(mdir.glob("*.json")):
+            try:
+                row = json.loads(path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                continue
+            if isinstance(row, dict):
+                on_market_review(row, review_date=path.stem, source_path=str(path))
+                stats["market_review"] = stats.get("market_review", 0) + 1
+
+    fdir = base / "forecasts"
+    if fdir.exists():
+        for path in sorted(fdir.glob("*.json")):
+            if path.name == "calibration.json":
+                try:
+                    row = json.loads(path.read_text(encoding="utf-8"))
+                    if isinstance(row, dict):
+                        store.upsert_l2_scenario(
+                            "forecast_calibration",
+                            "calibration",
+                            row,
+                            source_path=str(path),
+                            dedupe_key="l2:forecast_calibration",
+                        )
+                        stats["forecast_calibration"] = 1
+                except (json.JSONDecodeError, OSError):
+                    pass
+                continue
+            try:
+                row = json.loads(path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                continue
+            if isinstance(row, dict):
+                on_forecast(row, source_path=str(path))
+                stats["forecast"] = stats.get("forecast", 0) + 1
+
+    snap_dir = base / "harness" / "snapshots"
+    if snap_dir.exists():
+        for path in sorted(snap_dir.glob("*.json")):
+            try:
+                row = json.loads(path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                continue
+            if isinstance(row, dict):
+                on_harness_snapshot(row, snapshot_path=str(path))
+                stats["harness_snapshot"] = stats.get("harness_snapshot", 0) + 1
+
+    cases_root = base / "memory" / "cases"
+    if cases_root.exists():
+        for case_dir in sorted(cases_root.iterdir()):
+            if not case_dir.is_dir():
+                continue
+            detail = case_dir / "detail.json"
+            if not detail.exists():
+                continue
+            try:
+                rec = json.loads(detail.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                continue
+            abstract = ""
+            overview = ""
+            for name, var in ((".abstract.md", "abstract"), (".overview.md", "overview")):
+                p = case_dir / name
+                if p.exists():
+                    text = p.read_text(encoding="utf-8")
+                    if var == "abstract":
+                        abstract = text
+                    else:
+                        overview = text
+            on_trade_case(case_dir.name, rec, abstract=abstract, overview=overview, source_path=str(detail))
+            stats["trade_case"] = stats.get("trade_case", 0) + 1
+
+    skill_dir = base / "skill"
+    for name in ("playbook.md", "experience_latest.md"):
+        path = skill_dir / name
+        if path.exists():
+            on_skill_fragment(name.replace(".md", ""), path.read_text(encoding="utf-8"), source_path=str(path))
+            stats["skill_doc"] = stats.get("skill_doc", 0) + 1

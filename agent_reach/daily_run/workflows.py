@@ -1287,6 +1287,12 @@ def save_morning_baseline(
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         written = out
+        try:
+            from agent_reach.daily_run.storage.hooks import on_baseline
+
+            on_baseline("morning", norm, record, source_path=str(out))
+        except Exception:
+            pass
 
     pc = _normalize_code(str(primary_code)) if primary_code else None
     if path is not None or (pc and norm == pc):

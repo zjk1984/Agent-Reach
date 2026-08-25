@@ -12,8 +12,9 @@ from pathlib import Path
 from typing import Any, Optional
 
 from agent_reach.daily_run.storage.base import DailyRunStore
+from agent_reach.daily_run.storage.schema import SCHEMA_VERSION, _V2_TABLES, apply_migrations
 
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = SCHEMA_VERSION
 
 
 def _now_iso() -> str:
@@ -130,10 +131,16 @@ class SqliteDailyRunStore:
                     ON harness_entry_history(kind, entry_id, at);
                 """
             )
+            conn.executescript(_V2_TABLES)
             conn.execute(
                 "INSERT OR IGNORE INTO storage_meta(key, value) VALUES (?, ?)",
-                ("schema_version", str(_SCHEMA_VERSION)),
+                ("schema_version", "1"),
             )
+            row = conn.execute(
+                "SELECT value FROM storage_meta WHERE key = 'schema_version'"
+            ).fetchone()
+            current = int(row["value"]) if row else 1
+            apply_migrations(conn, current)
 
     def status(self) -> dict[str, Any]:
         with self._conn() as conn:
@@ -141,6 +148,9 @@ class SqliteDailyRunStore:
             for table in (
                 "l0_events",
                 "l1_atoms",
+                "l1_state",
+                "l2_scenarios",
+                "l3_documents",
                 "portfolio_snapshots",
                 "positions",
                 "harness_entries",
@@ -334,6 +344,127 @@ class SqliteDailyRunStore:
                     _json_dumps(payload or {}),
                     source_event_id,
                     dedupe_key or None,
+                ),
+            )
+            return int(cur.lastrowid)
+
+    def upsert_l1_state(
+        self,
+        state_key: str,
+        kind: str,
+        payload: dict[str, Any],
+        *,
+        at: str = "",
+    ) -> None:
+        with self._conn() as conn:
+            conn.execute(
+                """
+                INSERT INTO l1_state(state_key, kind, at, payload_json)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(state_key) DO UPDATE SET
+                    kind=excluded.kind,
+                    at=excluded.at,
+                    payload_json=excluded.payload_json
+                """,
+                (state_key, kind, at or _now_iso(), _json_dumps(payload)),
+            )
+
+    def upsert_l2_scenario(
+        self,
+        kind: str,
+        scenario_key: str,
+        payload: dict[str, Any],
+        *,
+        code: str = "",
+        at: str = "",
+        title: str = "",
+        content: str = "",
+        source_path: str = "",
+        dedupe_key: str = "",
+    ) -> int:
+        event_at = at or str(payload.get("at") or payload.get("date") or _now_iso())
+        with self._conn() as conn:
+            if dedupe_key:
+                existing = conn.execute(
+                    "SELECT id FROM l2_scenarios WHERE dedupe_key = ?",
+                    (dedupe_key,),
+                ).fetchone()
+                if existing:
+                    return int(existing["id"])
+            cur = conn.execute(
+                """
+                INSERT INTO l2_scenarios(
+                    kind, scenario_key, code, at, title, content,
+                    payload_json, source_path, dedupe_key, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    kind,
+                    scenario_key,
+                    code or None,
+                    event_at,
+                    title or None,
+                    content or None,
+                    _json_dumps(payload),
+                    source_path or None,
+                    dedupe_key or None,
+                    _now_iso(),
+                ),
+            )
+            return int(cur.lastrowid)
+
+    def upsert_l3_document(
+        self,
+        kind: str,
+        doc_key: str,
+        content: str,
+        *,
+        title: str = "",
+        payload: Optional[dict[str, Any]] = None,
+        source_path: str = "",
+        dedupe_key: str = "",
+        version: int = 1,
+    ) -> int:
+        with self._conn() as conn:
+            if dedupe_key:
+                existing = conn.execute(
+                    "SELECT id FROM l3_documents WHERE dedupe_key = ?",
+                    (dedupe_key,),
+                ).fetchone()
+                if existing:
+                    conn.execute(
+                        """
+                        UPDATE l3_documents SET
+                            title=?, content=?, payload_json=?, version=?, source_path=?, updated_at=?
+                        WHERE id=?
+                        """,
+                        (
+                            title or None,
+                            content,
+                            _json_dumps(payload or {}),
+                            int(version),
+                            source_path or None,
+                            _now_iso(),
+                            int(existing["id"]),
+                        ),
+                    )
+                    return int(existing["id"])
+            cur = conn.execute(
+                """
+                INSERT INTO l3_documents(
+                    kind, doc_key, title, content, payload_json, version, source_path, dedupe_key, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    kind,
+                    doc_key,
+                    title or None,
+                    content,
+                    _json_dumps(payload or {}),
+                    int(version),
+                    source_path or None,
+                    dedupe_key or None,
+                    _now_iso(),
                 ),
             )
             return int(cur.lastrowid)

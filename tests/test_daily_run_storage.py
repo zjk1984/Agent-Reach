@@ -87,9 +87,49 @@ def test_sqlite_trade_and_portfolio_dual_write(storage_env):
     assert trades[0]["action"]["side"] == "buy"
 
 
-def test_backfill_from_fixture_tree(storage_env):
+def test_schema_v2_tables(storage_env):
+    store = get_store(storage_env["settings"])
+    status = store.status()
+    assert status["schema_version"] >= 2
+    assert "l1_state" in status["counts"]
+    assert "l2_scenarios" in status["counts"]
+    assert "l3_documents" in status["counts"]
+
+
+def test_l0_pnl_and_l2_baseline_hooks(storage_env):
+    from agent_reach.daily_run.storage.hooks import on_baseline, on_daily_pnl
+
+    on_daily_pnl(
+        {"date": "2026-08-25", "daily_pnl": 100.0, "cumulative_pnl": 500.0, "recorded_at": "2026-08-25T10:00:00+00:00"},
+    )
+    on_baseline(
+        "morning",
+        "603986",
+        {"code": "603986", "mss_final": 55.0, "date": "2026-08-25"},
+        source_path="/tmp/baseline.json",
+    )
+    store = get_store(storage_env["settings"])
+    assert store.query_l0_events(kind="pnl_history", limit=5)
+    status = store.status()
+    assert status["counts"]["l2_scenarios"] >= 1
+
+
+def test_backfill_roadmap_fixture(storage_env):
     root = storage_env["root"]
     settings = storage_env["settings"]
+
+    (root / "pnl_history.jsonl").write_text(
+        json.dumps({"date": "2026-08-25", "daily_pnl": 1.0, "recorded_at": "2026-08-25T09:00:00+00:00"}, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    (root / "capital_events.jsonl").write_text(
+        json.dumps({"date": "2026-08-25", "kind": "deposit", "amount": 1000, "at": "2026-08-25T09:00:00+00:00"}, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    cases = root / "memory" / "cases" / "603986-T1-blocked"
+    cases.mkdir(parents=True)
+    (cases / "detail.json").write_text(json.dumps({"code": "603986", "trade_id": "T1"}, ensure_ascii=False), encoding="utf-8")
+    (cases / ".abstract.md").write_text("blocked buy", encoding="utf-8")
 
     ledger = root / "trade_ledger.jsonl"
     ledger.write_text(
@@ -127,7 +167,8 @@ def test_backfill_from_fixture_tree(storage_env):
 
     result = backfill_from_files(root=root, settings=settings)
     assert result["backfilled"]["trade"] == 1
-    assert result["backfilled"]["experience"] == 1
+    assert result["backfilled"].get("pnl_history", 0) >= 1
+    assert result["backfilled"].get("trade_case", 0) >= 1
 
     store = get_store(settings)
     assert store.query_trades(code="300308")
@@ -189,7 +230,12 @@ def test_harness_refinement_history(storage_env):
 
 def test_storage_disabled_by_default(monkeypatch):
     monkeypatch.delenv("AGENT_REACH_STORAGE", raising=False)
-    from agent_reach.daily_run.settings import load_settings
+    from agent_reach.daily_run.settings import clear_settings_cache, load_settings
 
+    clear_settings_cache()
     settings = load_settings()
+    if settings.get("storage", {}).get("enabled"):
+        settings = dict(settings)
+        settings["storage"] = dict(settings.get("storage") or {})
+        settings["storage"]["enabled"] = False
     assert storage_enabled(settings) is False

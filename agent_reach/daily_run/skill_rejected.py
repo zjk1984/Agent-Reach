@@ -113,6 +113,13 @@ def add_rejected_strategy(
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
     try:
+        from agent_reach.daily_run.storage.hooks import on_rejected_strategy
+
+        on_rejected_strategy(record, source_path=str(_REJECTED_PATH))
+    except Exception:
+        pass
+
+    try:
         from agent_reach.daily_run.rejected_strategies_harness import apply_rejected_strategies_harness_refinement
         from agent_reach.daily_run.settings import load_settings
 

@@ -100,6 +100,12 @@ def save_pnl_target_state(state: dict[str, Any], *, path: Optional[Path] = None)
     p = path or default_pnl_target_path()
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    try:
+        from agent_reach.daily_run.storage.hooks import on_l1_state
+
+        on_l1_state("pnl_target", "pnl_target", state)
+    except Exception:
+        pass
     return p
 
 

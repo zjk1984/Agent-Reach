@@ -146,6 +146,30 @@ def _distill_refinement_event(store, event: dict[str, Any]) -> list[int]:
     return [atom_id]
 
 
+def _distill_generic_l0(
+    store,
+    event: dict[str, Any],
+    *,
+    kind: str,
+    title_fn,
+    content_fn,
+) -> list[int]:
+    event_id = int(event["id"])
+    payload = event.get("payload") or {}
+    at = str(payload.get("at") or payload.get("date") or payload.get("as_of") or event.get("at") or "")
+    atom_id = store.upsert_l1_atom(
+        kind=kind,
+        code=str(payload.get("code") or ""),
+        at=at,
+        title=title_fn(payload),
+        content=content_fn(payload)[:4000],
+        payload=payload,
+        source_event_id=event_id,
+        dedupe_key=f"l1:{kind}:{event_id}",
+    )
+    return [atom_id]
+
+
 def distill_l0_event(store, event: dict[str, Any]) -> list[int]:
     kind = str(event.get("kind") or "")
     if kind == "trade":
@@ -170,6 +194,54 @@ def distill_l0_event(store, event: dict[str, Any]) -> list[int]:
             dedupe_key=f"l1:harness_audit:{event_id}",
         )
         return [atom_id]
+    if kind == "pnl_history":
+        return _distill_generic_l0(
+            store,
+            event,
+            kind="pnl_daily",
+            title_fn=lambda p: f"pnl {p.get('date')}",
+            content_fn=lambda p: f"daily_pnl={p.get('daily_pnl')} cumulative={p.get('cumulative_pnl')}",
+        )
+    if kind == "capital_event":
+        return _distill_generic_l0(
+            store,
+            event,
+            kind="capital_event",
+            title_fn=lambda p: f"{p.get('kind')} {p.get('amount')}",
+            content_fn=lambda p: f"{p.get('kind')} ¥{p.get('amount')} {p.get('note') or ''}",
+        )
+    if kind == "intraday_scan":
+        return _distill_generic_l0(
+            store,
+            event,
+            kind="intraday_scan",
+            title_fn=lambda p: str(p.get("scan_id") or "scan"),
+            content_fn=lambda p: f"{p.get('code')} mss={p.get('mss_final')} verdict={p.get('verdict')}",
+        )
+    if kind == "job_run":
+        return _distill_generic_l0(
+            store,
+            event,
+            kind="job_run",
+            title_fn=lambda p: str(p.get("job") or "job"),
+            content_fn=lambda p: f"{p.get('job')} ok={p.get('success')} date={p.get('date')}",
+        )
+    if kind == "skill_changelog":
+        return _distill_generic_l0(
+            store,
+            event,
+            kind="skill_change",
+            title_fn=lambda p: str(p.get("action") or p.get("title") or "skill"),
+            content_fn=lambda p: str(p.get("summary") or p.get("title") or p.get("action") or ""),
+        )
+    if kind == "rejected_strategy":
+        return _distill_generic_l0(
+            store,
+            event,
+            kind="rejected_strategy",
+            title_fn=lambda p: str(p.get("title") or "rejected"),
+            content_fn=lambda p: str(p.get("reason") or ""),
+        )
     return []
 
 
