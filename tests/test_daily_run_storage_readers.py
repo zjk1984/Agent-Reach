@@ -14,10 +14,15 @@ from agent_reach.daily_run.storage.hooks import (
     on_trade_ledger,
 )
 from agent_reach.daily_run.storage.readers import (
+    read_capital_events,
     read_daily_pnl_records,
+    read_daily_trade_state,
+    read_experience_entries,
     read_harness_state_payload,
     read_intraday_trade_records_for_day,
     read_latest_portfolio,
+    read_morning_baseline_from_store,
+    read_rejected_strategies,
     read_trade_ledger_entries,
 )
 
@@ -219,3 +224,89 @@ def test_read_experience_entries(storage_env):
     )
     rows = read_experience_entries(settings=settings, limit=5)
     assert rows and rows[0]["code"] == "603986"
+
+
+def test_read_capital_events(storage_env):
+    settings = storage_env["settings"]
+    from datetime import date
+
+    from agent_reach.daily_run.storage.hooks import on_capital_event
+
+    on_capital_event(
+        {
+            "date": "2026-08-25",
+            "kind": "deposit",
+            "amount": 30000.0,
+            "note": "test",
+            "at": "2026-08-25T09:00:00+00:00",
+        }
+    )
+    rows = read_capital_events(
+        settings=settings,
+        start=date(2026, 8, 25),
+        end=date(2026, 8, 25),
+    )
+    assert rows and rows[0]["kind"] == "deposit"
+
+
+def test_read_daily_trade_state(storage_env):
+    settings = storage_env["settings"]
+    from agent_reach.daily_run.storage.hooks import on_l1_state
+
+    on_l1_state(
+        "daily_trade_state",
+        "daily_trade_state",
+        {"date": "2026-08-25", "fingerprints": ["abc"]},
+        at="2026-08-25T09:00:00+00:00",
+    )
+    payload = read_daily_trade_state(settings=settings)
+    assert payload and payload.get("fingerprints") == ["abc"]
+
+
+def test_read_rejected_strategies(storage_env):
+    settings = storage_env["settings"]
+    from agent_reach.daily_run.storage.hooks import on_rejected_strategy
+
+    on_rejected_strategy({"id": "r1", "title": "bad idea", "reason": "failed"})
+    rows = read_rejected_strategies(settings=settings, limit=5)
+    assert rows and rows[0]["title"] == "bad idea"
+
+
+def test_read_morning_baseline_from_store(storage_env):
+    settings = storage_env["settings"]
+    from agent_reach.daily_run.storage import get_store
+
+    get_store(settings).upsert_l2_scenario(
+        "baseline_morning",
+        "morning/603986",
+        {"code": "603986", "mss_final": 52.0, "report_type": "premarket"},
+        code="603986",
+        at="2026-08-25",
+        title="morning baseline",
+        content="mss=52",
+        dedupe_key="l2:baseline:morning:603986:2026-08-25",
+    )
+    payload = read_morning_baseline_from_store("603986", settings=settings)
+    assert payload and float(payload["mss_final"]) == 52.0
+
+
+def test_load_capital_events_prefers_db(storage_env):
+    from agent_reach.daily_run.capital_events import load_capital_events
+    from agent_reach.daily_run.storage.hooks import on_capital_event
+    from datetime import date
+
+    settings = storage_env["settings"]
+    on_capital_event(
+        {
+            "date": "2026-08-25",
+            "kind": "withdraw",
+            "amount": 5000.0,
+            "at": "2026-08-25T10:00:00+00:00",
+        }
+    )
+    rows = load_capital_events(
+        settings=settings,
+        start=date(2026, 8, 25),
+        end=date(2026, 8, 25),
+    )
+    assert rows and rows[0].kind == "withdraw"

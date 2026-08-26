@@ -85,8 +85,21 @@ def load_capital_events(
     path: Optional[Path] = None,
     start: Optional[date] = None,
     end: Optional[date] = None,
+    settings: Optional[dict[str, Any]] = None,
 ) -> list[CapitalEvent]:
     p = path or default_capital_events_path()
+    try:
+        from agent_reach.daily_run.settings import load_settings
+        from agent_reach.daily_run.storage.config import storage_db_reads_allowed
+        from agent_reach.daily_run.storage.readers import read_capital_events
+
+        if storage_db_reads_allowed(settings, file_path=p, explicit_path=path is not None):
+            cfg = settings or load_settings()
+            db_rows = read_capital_events(settings=cfg, start=start, end=end)
+            if db_rows:
+                return [CapitalEvent.from_dict(row) for row in db_rows]
+    except Exception:
+        pass
     if not p.is_file():
         return []
     out: list[CapitalEvent] = []

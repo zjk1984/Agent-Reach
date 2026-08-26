@@ -1313,8 +1313,27 @@ def load_morning_baseline(path: Optional[Path] = None, *, code: Optional[str] = 
 
     from agent_reach.daily_run.snapshot_builder import _normalize_code
 
+    def _load_from_db(norm: str) -> Optional[dict[str, Any]]:
+        try:
+            from agent_reach.daily_run.storage.config import path_under_daily_run_data
+            from agent_reach.daily_run.storage.readers import read_morning_baseline_from_store
+            from agent_reach.daily_run.settings import load_settings
+
+            per = morning_baseline_path(norm)
+            legacy = _default_baseline_path()
+            if path_under_daily_run_data(per.parent) or path_under_daily_run_data(legacy.parent):
+                hit = read_morning_baseline_from_store(norm, settings=load_settings())
+                if hit:
+                    return hit
+        except Exception:
+            pass
+        return None
+
     if code:
         norm = _normalize_code(str(code))
+        db_row = _load_from_db(norm)
+        if db_row:
+            return db_row
         per = morning_baseline_path(norm)
         if per.exists():
             return json.loads(per.read_text(encoding="utf-8"))
@@ -1328,6 +1347,17 @@ def load_morning_baseline(path: Optional[Path] = None, *, code: Optional[str] = 
         )
 
     p = path or _default_baseline_path()
+    if path is None:
+        try:
+            from agent_reach.daily_run.snapshot_builder import load_portfolio
+
+            primary = _normalize_code(str((load_portfolio() or {}).get("primary_code") or ""))
+            if primary:
+                db_row = _load_from_db(primary)
+                if db_row:
+                    return db_row
+        except Exception:
+            pass
     if not p.exists():
         raise FileNotFoundError(f"未找到早盘基线：{p}，请先运行 daily-run morning --save-baseline")
     return json.loads(p.read_text(encoding="utf-8"))

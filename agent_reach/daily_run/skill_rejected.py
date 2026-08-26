@@ -21,7 +21,19 @@ def _normalize_title(title: str) -> str:
     return raw[:64]
 
 
-def load_rejected_records(*, limit: int = 200) -> list[dict[str, Any]]:
+def load_rejected_records(*, limit: int = 200, settings: Optional[dict[str, Any]] = None) -> list[dict[str, Any]]:
+    try:
+        from agent_reach.daily_run.storage.config import storage_db_reads_allowed
+        from agent_reach.daily_run.storage.readers import read_rejected_strategies
+
+        if storage_db_reads_allowed(settings, file_path=_REJECTED_PATH):
+            from agent_reach.daily_run.settings import load_settings
+
+            rows = read_rejected_strategies(settings=load_settings(), limit=limit)
+            if rows:
+                return rows[-limit:]
+    except Exception:
+        pass
     if not _REJECTED_PATH.exists():
         return []
     rows: list[dict[str, Any]] = []

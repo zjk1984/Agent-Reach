@@ -133,8 +133,22 @@ def dedupe_trade_ledger_entries(entries: list[dict[str, Any]]) -> list[dict[str,
     return out
 
 
-def load_daily_trade_state() -> dict[str, Any]:
+def load_daily_trade_state(*, settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     path = daily_trade_state_path()
+    try:
+        from agent_reach.daily_run.storage.config import storage_db_reads_allowed
+        from agent_reach.daily_run.storage.readers import read_daily_trade_state
+
+        if storage_db_reads_allowed(settings, file_path=path):
+            from agent_reach.daily_run.settings import load_settings
+
+            cfg = settings or load_settings()
+            db_state = read_daily_trade_state(settings=cfg)
+            if isinstance(db_state, dict) and db_state.get("date") == _today_str():
+                db_state.setdefault("fingerprints", [])
+                return db_state
+    except Exception:
+        pass
     if not path.exists():
         return {"date": _today_str(), "fingerprints": []}
     try:

@@ -522,3 +522,103 @@ def read_experience_entries(
         rows.append(dict(payload))
     rows.sort(key=lambda row: (str(row.get("date") or ""), str(row.get("at") or "")), reverse=True)
     return rows[:limit]
+
+
+def read_capital_events(
+    *,
+    settings: Optional[dict[str, Any]] = None,
+    start: Optional[date] = None,
+    end: Optional[date] = None,
+    limit: int = 500,
+) -> list[dict[str, Any]]:
+    if not storage_prefer_db(settings):
+        return []
+    since, until = _date_filter_bounds(start, end)
+    store = _get_store(settings)
+    events = store.query_l0_events(
+        kind="capital_event",
+        since=since,
+        until=until,
+        limit=max(limit, 1),
+        order="asc",
+    )
+    rows: list[dict[str, Any]] = []
+    for event in events:
+        payload = event.get("payload") or {}
+        if not isinstance(payload, dict):
+            continue
+        ds = str(payload.get("date") or event.get("at") or "")[:10]
+        if start is not None and ds and ds < start.isoformat():
+            continue
+        if end is not None and ds and ds > end.isoformat():
+            continue
+        rows.append(dict(payload))
+    rows.sort(key=lambda row: str(row.get("date") or ""))
+    return rows[:limit]
+
+
+def read_daily_trade_state(
+    *,
+    settings: Optional[dict[str, Any]] = None,
+) -> Optional[dict[str, Any]]:
+    if not storage_prefer_db(settings):
+        return None
+    store = _get_store(settings)
+    query = getattr(store, "query_l1_state", None)
+    if not callable(query):
+        return None
+    payload = query(state_key="daily_trade_state", kind="daily_trade_state")
+    return dict(payload) if isinstance(payload, dict) and payload else None
+
+
+def read_rejected_strategies(
+    *,
+    settings: Optional[dict[str, Any]] = None,
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    if not storage_prefer_db(settings):
+        return []
+    store = _get_store(settings)
+    events = store.query_l0_events(
+        kind="rejected_strategy",
+        limit=max(limit, 1),
+        order="desc",
+    )
+    rows: list[dict[str, Any]] = []
+    for event in events:
+        payload = event.get("payload") or {}
+        if isinstance(payload, dict) and payload:
+            rows.append(dict(payload))
+    return rows[:limit]
+
+
+def read_morning_baseline_from_store(
+    code: str,
+    *,
+    settings: Optional[dict[str, Any]] = None,
+) -> Optional[dict[str, Any]]:
+    from agent_reach.daily_run.snapshot_builder import _normalize_code
+
+    if not storage_prefer_db(settings):
+        return None
+    norm = _normalize_code(code)
+    if not norm:
+        return None
+    store = _get_store(settings)
+    query_l2 = getattr(store, "query_l2_scenarios", None)
+    if not callable(query_l2):
+        return None
+    key = f"morning/{norm}"
+    rows = query_l2(
+        kind="baseline_morning",
+        scenario_key=key,
+        code=norm,
+        limit=5,
+    )
+    for row in rows:
+        payload = row.get("payload")
+        if isinstance(payload, dict) and payload:
+            out = dict(payload)
+            out.setdefault("_baseline_source", "baseline_morning_db")
+            return out
+    return None
