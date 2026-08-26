@@ -15,12 +15,14 @@ from agent_reach.daily_run.storage.hooks import (
 )
 from agent_reach.daily_run.storage.readers import (
     read_capital_events,
+    read_daily_cache,
     read_daily_pnl_records,
     read_daily_trade_state,
     read_experience_entries,
     read_harness_state_payload,
     read_intraday_trade_records_for_day,
     read_job_health,
+    read_last_snapshot,
     read_latest_portfolio,
     read_morning_baseline_from_store,
     read_pnl_target_state,
@@ -443,3 +445,116 @@ def test_load_pnl_target_state_prefers_db(storage_env, tmp_path, monkeypatch):
     )
     state = load_pnl_target_state()
     assert state["pending"]["target_pnl_cny"] == 600.0
+
+
+def test_read_last_snapshot(storage_env):
+    settings = storage_env["settings"]
+    from agent_reach.daily_run.storage.hooks import on_last_snapshot
+
+    on_last_snapshot(
+        {"code": "603986", "price": 120.5, "as_of": "2026-08-25T09:00:00+00:00"},
+        source_path="/tmp/last_snapshot.json",
+    )
+    payload = read_last_snapshot(settings=settings)
+    assert payload and payload["code"] == "603986"
+
+
+def test_load_last_snapshot_prefers_db(storage_env, tmp_path, monkeypatch):
+    from agent_reach.daily_run.snapshot_cache import load_last_snapshot, save_last_snapshot
+    from agent_reach.daily_run.storage.hooks import on_last_snapshot
+
+    root = tmp_path / "daily_run"
+    snap_path = root / "last_snapshot.json"
+    snap_path.parent.mkdir(parents=True, exist_ok=True)
+    snap_path.write_text('{"code": "stale", "price": 1.0}\n', encoding="utf-8")
+    monkeypatch.setattr(
+        "agent_reach.daily_run.snapshot_cache.last_snapshot_path",
+        lambda: snap_path,
+    )
+    monkeypatch.setattr(
+        "agent_reach.daily_run.storage.config.daily_run_data_root",
+        lambda: root,
+    )
+
+    on_last_snapshot(
+        {"code": "603986", "price": 120.5, "as_of": "2026-08-25T09:00:00+00:00"},
+        source_path=str(snap_path),
+    )
+    snap = load_last_snapshot()
+    assert snap and snap["code"] == "603986"
+
+
+def test_save_last_snapshot_writes_db(storage_env, tmp_path, monkeypatch):
+    from agent_reach.daily_run.snapshot_cache import save_last_snapshot
+
+    root = tmp_path / "daily_run"
+    snap_path = root / "last_snapshot.json"
+    monkeypatch.setattr(
+        "agent_reach.daily_run.snapshot_cache.last_snapshot_path",
+        lambda: snap_path,
+    )
+    settings = storage_env["settings"]
+    save_last_snapshot({"code": "002583", "price": 7.95, "as_of": "2026-08-25"})
+    payload = read_last_snapshot(settings=settings)
+    assert payload and payload["code"] == "002583"
+
+
+def test_read_daily_cache(storage_env):
+    settings = storage_env["settings"]
+    from agent_reach.daily_run.storage.hooks import on_daily_cache
+
+    on_daily_cache(
+        {"macro_ctx": {"macro_summary": "risk-on"}, "technicals": {"603986": {"ma20": 120.0}}},
+        day="2026-08-25",
+        source_path="/tmp/cache/2026-08-25.json",
+    )
+    payload = read_daily_cache("2026-08-25", settings=settings)
+    assert payload and payload["macro_ctx"]["macro_summary"] == "risk-on"
+
+
+def test_load_daily_cache_prefers_db(storage_env, tmp_path, monkeypatch):
+    from agent_reach.daily_run.snapshot_cache import load_daily_cache
+    from agent_reach.daily_run.storage.hooks import on_daily_cache
+
+    root = tmp_path / "daily_run"
+    cache_root = root / "cache"
+    cache_root.mkdir(parents=True, exist_ok=True)
+    cache_file = cache_root / "2026-08-25.json"
+    cache_file.write_text('{"macro_ctx": {"macro_summary": "stale"}}\n', encoding="utf-8")
+    monkeypatch.setattr("agent_reach.daily_run.snapshot_cache.cache_dir", lambda: cache_root)
+    monkeypatch.setattr(
+        "agent_reach.daily_run.snapshot_cache._cache_day",
+        lambda d=None: "2026-08-25",
+    )
+    monkeypatch.setattr(
+        "agent_reach.daily_run.storage.config.daily_run_data_root",
+        lambda: root,
+    )
+
+    on_daily_cache(
+        {"macro_ctx": {"macro_summary": "fresh"}},
+        day="2026-08-25",
+        source_path=str(cache_file),
+    )
+    data = load_daily_cache()
+    assert data["macro_ctx"]["macro_summary"] == "fresh"
+
+
+def test_save_daily_cache_writes_db(storage_env, tmp_path, monkeypatch):
+    from agent_reach.daily_run.snapshot_cache import save_daily_cache
+
+    root = tmp_path / "daily_run" / "cache"
+    root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr("agent_reach.daily_run.snapshot_cache.cache_dir", lambda: root)
+    monkeypatch.setattr(
+        "agent_reach.daily_run.snapshot_cache._cache_day",
+        lambda d=None: "2026-08-26",
+    )
+    monkeypatch.setattr(
+        "agent_reach.daily_run.storage.config.daily_run_data_root",
+        lambda: root.parent,
+    )
+    settings = storage_env["settings"]
+    save_daily_cache({"technicals": {"603986": {"ma20": 121.0}}})
+    payload = read_daily_cache("2026-08-26", settings=settings)
+    assert payload and payload["technicals"]["603986"]["ma20"] == 121.0

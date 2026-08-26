@@ -151,11 +151,13 @@ def _backfill_json_file(store, path: Path, handler, stats: dict[str, int], stat_
 def _backfill_roadmap(store, base: Path, stats: dict[str, int]) -> None:
     from agent_reach.daily_run.storage.hooks import (
         on_baseline,
+        on_daily_cache,
         on_forecast,
         on_harness_snapshot,
         on_intraday_state,
         on_job_run,
         on_l1_state,
+        on_last_snapshot,
         on_market_review,
         on_rejected_strategy,
         on_rules_summary,
@@ -260,6 +262,25 @@ def _backfill_roadmap(store, base: Path, stats: dict[str, int]) -> None:
         stats,
         "runtime_overlay",
     )
+
+    _backfill_json_file(
+        store,
+        base / "last_snapshot.json",
+        lambda d, p: on_last_snapshot(d, source_path=p),
+        stats,
+        "last_snapshot",
+    )
+
+    cache_root = base / "cache"
+    if cache_root.exists():
+        for path in sorted(cache_root.glob("*.json")):
+            try:
+                row = json.loads(path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                continue
+            if isinstance(row, dict):
+                on_daily_cache(row, day=path.stem, source_path=str(path))
+                stats["daily_cache"] = stats.get("daily_cache", 0) + 1
 
     for kind_dir, kind in (("morning", "morning"), ("close", "close")):
         bdir = base / "baselines" / kind_dir

@@ -22,6 +22,10 @@ def isolate_daily_run_state(monkeypatch, tmp_path):
         "agent_reach.daily_run.snapshot_cache.last_snapshot_path",
         lambda: tmp_path / "last_snapshot.json",
     )
+    monkeypatch.setattr(
+        "agent_reach.daily_run.snapshot_cache.cache_dir",
+        lambda: tmp_path / "cache",
+    )
 
     # Harness self-evolution state (memory/policy/playbook/plan, refinements,
     # apply-audit trail, runtime overlay diffs) must never touch the real

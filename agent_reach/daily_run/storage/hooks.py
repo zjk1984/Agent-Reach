@@ -406,6 +406,18 @@ def on_runtime_overlay(overlay: dict[str, Any], *, source_path: str = "") -> Non
     )
 
 
+def on_last_snapshot(payload: dict[str, Any], *, source_path: str = "") -> None:
+    at = str(payload.get("as_of") or payload.get("generated_at") or "")[:10]
+    on_l1_state("last_snapshot", "last_snapshot", payload, at=at)
+
+
+def on_daily_cache(payload: dict[str, Any], *, day: str, source_path: str = "") -> None:
+    day_key = str(day or "")[:10]
+    if not day_key:
+        return
+    on_l1_state(f"daily_cache:{day_key}", "daily_cache", payload, at=day_key)
+
+
 def on_baseline(kind: str, code: str, record: dict[str, Any], *, source_path: str = "") -> None:
     day = str(record.get("date") or record.get("as_of") or "")[:10]
     key = f"{kind}/{code}"

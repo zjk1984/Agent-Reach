@@ -19,7 +19,7 @@ from agent_reach.daily_run.macro_collector import (
     resolve_intraday_macro_context,
 )
 from agent_reach.daily_run.mss_forecast import forecast_mss_range
-from agent_reach.daily_run.snapshot_cache import load_daily_cache, load_last_snapshot, save_daily_cache
+from agent_reach.daily_run.snapshot_cache import load_daily_cache, load_last_snapshot, save_daily_cache, save_last_snapshot
 
 EnrichLevel = str  # full | quotes | lite
 
@@ -835,6 +835,5 @@ def build_and_save(
         primary_code=primary_code,
     )
     out = output or (Path.home() / ".agent-reach" / "daily_run" / "last_snapshot.json")
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(snap, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    save_last_snapshot(snap, path=out)
     return snap, out

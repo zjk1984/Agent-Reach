@@ -632,6 +632,41 @@ def read_pnl_target_state(
     return dict(payload) if isinstance(payload, dict) and payload else None
 
 
+def read_last_snapshot(
+    *,
+    settings: Optional[dict[str, Any]] = None,
+) -> Optional[dict[str, Any]]:
+    if not storage_prefer_db(settings):
+        return None
+    store = _get_store(settings)
+    query = getattr(store, "query_l1_state", None)
+    if not callable(query):
+        return None
+    payload = query(state_key="last_snapshot", kind="last_snapshot")
+    return dict(payload) if isinstance(payload, dict) and payload else None
+
+
+def read_daily_cache(
+    day: str | date,
+    *,
+    settings: Optional[dict[str, Any]] = None,
+) -> Optional[dict[str, Any]]:
+    if isinstance(day, date):
+        key = day.isoformat()
+    else:
+        key = str(day or "")[:10]
+    if not key:
+        return None
+    if not storage_prefer_db(settings):
+        return None
+    store = _get_store(settings)
+    query = getattr(store, "query_l1_state", None)
+    if not callable(query):
+        return None
+    payload = query(state_key=f"daily_cache:{key}", kind="daily_cache")
+    return dict(payload) if isinstance(payload, dict) and payload else None
+
+
 def read_morning_baseline_from_store(
     code: str,
     *,
