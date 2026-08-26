@@ -1626,3 +1626,82 @@ class TestHarnessForecastCalibration:
         )
         assert merged["bias_pct"] == 0.12
         assert merged["vol_scale"] == 1.03
+
+
+class TestIntradayBuyPolicyEvolution:
+    def test_default_neutral_thresholds(self):
+        from agent_reach.daily_run.harness_policy import (
+            intraday_buy_policy_default,
+            resolve_harness_intraday_buy_policy,
+        )
+
+        settings = _harness_settings()
+        state = HarnessState()
+        policy = resolve_harness_intraday_buy_policy(state, settings=settings)
+        assert policy["consecutive_buy_cash_bypass"] == 3.0
+        assert policy["deep_loss_consecutive_buy"] == 3.0
+        assert intraday_buy_policy_default(settings, "consecutive_buy_cash_bypass") == 3
+
+    def test_budget_phrase_lowers_cash_bypass_threshold(self):
+        from agent_reach.daily_run.harness_policy import resolve_harness_intraday_buy_policy
+
+        state = _state_with_policy(
+            "budget-block",
+            title="预算预检",
+            content="决策层预算预检阻断，可部署买入预算不足一手",
+        )
+        policy = resolve_harness_intraday_buy_policy(state, settings=_harness_settings())
+        assert policy["consecutive_buy_cash_bypass"] == 2.0
+
+    def test_defensive_trim_raises_deep_loss_threshold(self):
+        from agent_reach.daily_run.harness_policy import resolve_harness_intraday_buy_policy
+
+        state = _state_with_policy(
+            "defensive",
+            title="pnl miss",
+            content="盈亏目标未达，维持防守",
+        )
+        settings = _harness_settings()
+        settings["harness"]["runtime_overlay_sources"] = ["policy"]
+        policy = resolve_harness_intraday_buy_policy(state, settings=settings)
+        assert policy["deep_loss_consecutive_buy"] == 4.0
+        assert policy["consecutive_buy_cash_bypass"] == 4.0
+
+    def test_overlay_writes_effective_intraday_buy_policy(self, monkeypatch):
+        from agent_reach.daily_run.harness import HarnessState
+
+        state = _state_with_policy(
+            "budget-block",
+            title="预算",
+            content="可部署买入预算不足一手",
+        )
+        monkeypatch.setattr("agent_reach.daily_run.harness.load_harness", lambda: state)
+        cfg = effective_settings(_harness_settings())
+        runtime = cfg.get("harness_runtime") or {}
+        assert runtime["intraday_buy_policy"]["consecutive_buy_cash_bypass"] == 2.0
+        assert cfg["intraday"]["consecutive_buy_cash_bypass"] == 2
+
+    def test_fixed_mode_keeps_static_intraday_value(self):
+        from agent_reach.daily_run.harness_policy import resolve_harness_intraday_buy_policy
+
+        state = _state_with_policy(
+            "budget-block",
+            title="预算预检",
+            content="决策层预算预检阻断",
+        )
+        settings = _harness_settings(
+            intraday={"consecutive_buy_cash_bypass": 5, "deep_loss_consecutive_buy": 4},
+            harness={
+                "enabled": True,
+                "runtime_overlay": True,
+                "threshold_evolution_mode": "harness",
+                "runtime_overlay_sources": ["policy", "memory"],
+                "threshold_modes": {
+                    "consecutive_buy_cash_bypass": "fixed",
+                    "deep_loss_consecutive_buy": "fixed",
+                },
+            },
+        )
+        policy = resolve_harness_intraday_buy_policy(state, settings=settings)
+        assert policy["consecutive_buy_cash_bypass"] == 5.0
+        assert policy["deep_loss_consecutive_buy"] == 4.0

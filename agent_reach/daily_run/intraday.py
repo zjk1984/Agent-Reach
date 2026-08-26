@@ -84,7 +84,9 @@ def consecutive_buy_cash_bypass_threshold(settings: Optional[dict[str, Any]] = N
     intraday = cfg.get("intraday") or {}
     if intraday.get("consecutive_buy_cash_bypass_enabled") is False:
         return 0
-    return max(1, int(intraday.get("consecutive_buy_cash_bypass") or 3))
+    from agent_reach.daily_run.harness_policy import intraday_buy_policy_default
+
+    return intraday_buy_policy_default(cfg, "consecutive_buy_cash_bypass")
 
 
 def deep_loss_consecutive_buy_threshold(settings: Optional[dict[str, Any]] = None) -> int:
@@ -92,7 +94,9 @@ def deep_loss_consecutive_buy_threshold(settings: Optional[dict[str, Any]] = Non
     intraday = cfg.get("intraday") or {}
     if intraday.get("deep_loss_consecutive_buy_enabled") is False:
         return 0
-    return max(1, int(intraday.get("deep_loss_consecutive_buy") or 3))
+    from agent_reach.daily_run.harness_policy import intraday_buy_policy_default
+
+    return intraday_buy_policy_default(cfg, "deep_loss_consecutive_buy")
 
 
 def deep_loss_buy_block_reason(

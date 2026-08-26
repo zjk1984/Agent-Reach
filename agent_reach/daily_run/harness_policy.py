@@ -215,6 +215,16 @@ _INTRADAY_AUDIT_NEUTRAL: dict[str, float] = {
     "min_quote_coverage_pct": 0.8,
 }
 
+_EVOLVED_INTRADAY_BUY_KEYS: tuple[str, ...] = (
+    "consecutive_buy_cash_bypass",
+    "deep_loss_consecutive_buy",
+)
+
+_INTRADAY_BUY_NEUTRAL: dict[str, float] = {
+    "consecutive_buy_cash_bypass": 3.0,
+    "deep_loss_consecutive_buy": 3.0,
+}
+
 _EVOLVED_MIN_DEPLOY_KEYS: tuple[str, ...] = ("min_deploy_cash",)
 
 _MIN_DEPLOY_NEUTRAL: dict[str, float] = {
@@ -291,7 +301,11 @@ EVOLVED_CONFIG_KEYS_BY_SECTION: dict[str, tuple[str, ...]] = {
         "max_applied_trades_per_day",
         "max_trade_evaluations_per_symbol",
     ),
-    "intraday": ("eval_trends",),
+    "intraday": (
+        "eval_trends",
+        "consecutive_buy_cash_bypass",
+        "deep_loss_consecutive_buy",
+    ),
     "portfolio": ("max_holdings", "max_total_symbols"),
     "trading": ("holding_lock_days", "stop_loss_ma20_pct", "friction_min_return_pct"),
     "mss_forecast": _EVOLVED_FORECAST_KEYS,
@@ -354,6 +368,12 @@ HARNESS_CONSUMER_HELPERS: dict[str, str] = {
     "exp_return_base": "expected_return_policy_default(settings, 'exp_return_base')",
     "intraday_block_on_audit_fail": (
         "intraday_audit_policy_default(settings, 'intraday_block_on_audit_fail')"
+    ),
+    "consecutive_buy_cash_bypass": (
+        "intraday_buy_policy_default(settings, 'consecutive_buy_cash_bypass')"
+    ),
+    "deep_loss_consecutive_buy": (
+        "intraday_buy_policy_default(settings, 'deep_loss_consecutive_buy')"
     ),
 }
 
@@ -1651,6 +1671,22 @@ def apply_harness_policy_overlay(settings: dict[str, Any]) -> dict[str, Any]:
     intraday_audit_meta = harness_intraday_audit_overlay_meta(base_intraday_audit, effective_intraday_audit)
     if intraday_audit_meta:
         harness_meta["intraday_audit_overlay"] = intraday_audit_meta
+    base_intraday_buy = resolve_harness_base_intraday_buy_policy(cfg)
+    effective_intraday_buy = resolve_harness_intraday_buy_policy(state, settings=cfg)
+    harness_meta["intraday_buy_policy"] = effective_intraday_buy
+    intraday_buy_meta = harness_intraday_buy_overlay_meta(base_intraday_buy, effective_intraday_buy)
+    if intraday_buy_meta:
+        harness_meta["intraday_buy_overlay"] = intraday_buy_meta
+    intraday = dict(cfg.get("intraday") or {})
+    if evolution_mode(cfg, "consecutive_buy_cash_bypass") == "harness":
+        intraday["consecutive_buy_cash_bypass"] = int(
+            effective_intraday_buy["consecutive_buy_cash_bypass"]
+        )
+    if evolution_mode(cfg, "deep_loss_consecutive_buy") == "harness":
+        intraday["deep_loss_consecutive_buy"] = int(
+            effective_intraday_buy["deep_loss_consecutive_buy"]
+        )
+    cfg["intraday"] = intraday
     audit_block = effective_intraday_audit.get("intraday_block_on_audit_fail", 0.0) > 0.5
     data_audit = dict(cfg.get("data_audit") or {})
     data_audit["intraday_block_on_audit_fail"] = audit_block
@@ -2673,6 +2709,111 @@ def intraday_audit_policy_default(settings: dict[str, Any], key: str) -> float:
     if key == "min_quote_coverage_pct":
         return float(audit.get("min_quote_coverage_pct", _INTRADAY_AUDIT_NEUTRAL[key]))
     return float(_INTRADAY_AUDIT_NEUTRAL.get(key, 0.0))
+
+
+def intraday_buy_policy_base(settings: dict[str, Any], key: str) -> float:
+    intraday = dict(settings.get("intraday") or {})
+    if key in intraday:
+        return float(intraday[key])
+    return float(_INTRADAY_BUY_NEUTRAL.get(key, 3.0))
+
+
+def resolve_harness_base_intraday_buy_policy(settings: dict[str, Any]) -> dict[str, float]:
+    return {key: intraday_buy_policy_base(settings, key) for key in _EVOLVED_INTRADAY_BUY_KEYS}
+
+
+def _clamp_intraday_buy_policy(merged: dict[str, float]) -> dict[str, float]:
+    out = dict(merged)
+    for key in _EVOLVED_INTRADAY_BUY_KEYS:
+        out[key] = max(2.0, min(6.0, float(out.get(key, _INTRADAY_BUY_NEUTRAL[key]))))
+    return out
+
+
+def _apply_intraday_buy_policy_evolution(
+    merged: dict[str, float],
+    state: Any,
+    *,
+    settings: dict[str, Any],
+) -> dict[str, float]:
+    signals = resolve_harness_trade_signals(state, settings=settings)
+
+    if signals.get("defensive_trim") or signals.get("pnl_target_miss"):
+        if evolution_mode(settings, "consecutive_buy_cash_bypass") == "harness":
+            merged["consecutive_buy_cash_bypass"] = max(
+                float(merged.get("consecutive_buy_cash_bypass", 3.0)),
+                4.0,
+            )
+        if evolution_mode(settings, "deep_loss_consecutive_buy") == "harness":
+            merged["deep_loss_consecutive_buy"] = max(
+                float(merged.get("deep_loss_consecutive_buy", 3.0)),
+                4.0,
+            )
+
+    if _overlay_has_phrase(state, "预算预检", settings=settings) or _overlay_has_phrase(
+        state, "可部署买入预算", settings=settings
+    ) or _overlay_has_phrase(state, "决策层预算", settings=settings):
+        if evolution_mode(settings, "consecutive_buy_cash_bypass") == "harness":
+            merged["consecutive_buy_cash_bypass"] = min(
+                float(merged.get("consecutive_buy_cash_bypass", 3.0)),
+                2.0,
+            )
+
+    if _overlay_has_phrase(state, "深度套牢", settings=settings) or _overlay_has_phrase(
+        state, "深浮亏", settings=settings
+    ):
+        if evolution_mode(settings, "deep_loss_consecutive_buy") == "harness":
+            merged["deep_loss_consecutive_buy"] = max(
+                float(merged.get("deep_loss_consecutive_buy", 3.0)),
+                5.0,
+            )
+
+    if signals.get("pnl_target_hit"):
+        if evolution_mode(settings, "consecutive_buy_cash_bypass") == "harness":
+            merged["consecutive_buy_cash_bypass"] = min(
+                float(merged.get("consecutive_buy_cash_bypass", 3.0)),
+                2.0,
+            )
+
+    return merged
+
+
+def resolve_harness_intraday_buy_policy(
+    state: Any,
+    *,
+    settings: dict[str, Any],
+) -> dict[str, float]:
+    base = resolve_harness_base_intraday_buy_policy(settings)
+    merged = dict(base)
+    if not _overlay_enabled(settings):
+        return _clamp_intraday_buy_policy(merged)
+    merged = _apply_intraday_buy_policy_evolution(merged, state, settings=settings)
+    merged = _restore_fixed_evolution_keys(merged, base, settings, _EVOLVED_INTRADAY_BUY_KEYS)
+    return _clamp_intraday_buy_policy(merged)
+
+
+def harness_intraday_buy_overlay_meta(
+    base_policy: dict[str, float],
+    effective_policy: dict[str, float],
+) -> dict[str, Any]:
+    changed: dict[str, dict[str, float]] = {}
+    for key in _EVOLVED_INTRADAY_BUY_KEYS:
+        base_val = float(base_policy.get(key, _INTRADAY_BUY_NEUTRAL.get(key, 3.0)))
+        eff_val = float(effective_policy.get(key, base_val))
+        if abs(eff_val - base_val) >= 0.01:
+            changed[key] = {"base": base_val, "effective": eff_val}
+    return changed
+
+
+def intraday_buy_policy_default(settings: dict[str, Any], key: str) -> int:
+    if evolution_mode(settings, key) == "harness":
+        runtime = settings.get("harness_runtime") or {}
+        policy = runtime.get("intraday_buy_policy")
+        if isinstance(policy, dict) and key in policy:
+            return max(1, int(round(float(policy[key]))))
+    intraday = settings.get("intraday") or {}
+    if key in intraday:
+        return max(1, int(intraday[key]))
+    return max(1, int(_INTRADAY_BUY_NEUTRAL.get(key, 3.0)))
 
 
 def min_deploy_policy_base(settings: dict[str, Any], key: str) -> float:
