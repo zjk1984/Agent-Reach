@@ -20,9 +20,12 @@ from agent_reach.daily_run.storage.readers import (
     read_experience_entries,
     read_harness_state_payload,
     read_intraday_trade_records_for_day,
+    read_job_health,
     read_latest_portfolio,
     read_morning_baseline_from_store,
+    read_pnl_target_state,
     read_rejected_strategies,
+    read_runtime_overlay,
     read_trade_ledger_entries,
 )
 
@@ -310,3 +313,133 @@ def test_load_capital_events_prefers_db(storage_env):
         end=date(2026, 8, 25),
     )
     assert rows and rows[0].kind == "withdraw"
+
+
+def test_read_runtime_overlay(storage_env):
+    settings = storage_env["settings"]
+    from agent_reach.daily_run.storage.hooks import on_runtime_overlay
+
+    on_runtime_overlay(
+        {
+            "threshold_overlay": {"min_mss": 45.0},
+            "updated_at": "2026-08-25T10:00:00+00:00",
+        },
+        source_path="/tmp/last_runtime_overlay.json",
+    )
+    payload = read_runtime_overlay(settings=settings)
+    assert payload and payload["threshold_overlay"]["min_mss"] == 45.0
+
+
+def test_load_last_runtime_overlay_prefers_db(storage_env, tmp_path, monkeypatch):
+    from agent_reach.daily_run.context_layers import load_last_runtime_overlay
+    from agent_reach.daily_run.storage.hooks import on_runtime_overlay
+
+    root = tmp_path / "daily_run"
+    overlay_path = root / "harness" / "last_runtime_overlay.json"
+    overlay_path.parent.mkdir(parents=True, exist_ok=True)
+    overlay_path.write_text('{"runtime_overlay": {"stale": true}}\n', encoding="utf-8")
+    monkeypatch.setattr(
+        "agent_reach.daily_run.context_layers._last_overlay_path",
+        lambda: overlay_path,
+    )
+    monkeypatch.setattr(
+        "agent_reach.daily_run.storage.config.daily_run_data_root",
+        lambda: root,
+    )
+
+    on_runtime_overlay(
+        {"runtime_overlay": {"foo": "bar"}, "updated_at": "2026-08-25T10:00:00+00:00"},
+        source_path=str(overlay_path),
+    )
+    overlay = load_last_runtime_overlay()
+    assert overlay.get("runtime_overlay", {}).get("foo") == "bar"
+
+
+def test_read_job_health(storage_env):
+    settings = storage_env["settings"]
+    from agent_reach.daily_run.storage.hooks import on_l1_state
+
+    on_l1_state(
+        "job_health",
+        "job_health",
+        {"jobs": {"close": {"consecutive_failures": 2, "last_error": "timeout"}}},
+    )
+    payload = read_job_health(settings=settings)
+    assert payload and payload["jobs"]["close"]["consecutive_failures"] == 2
+
+
+def test_job_health_load_prefers_db(storage_env, tmp_path, monkeypatch):
+    from agent_reach.daily_run.job_health import _load
+    from agent_reach.daily_run.storage.hooks import on_l1_state
+
+    root = tmp_path / "daily_run"
+    health_file = root / "job_health.json"
+    health_file.parent.mkdir(parents=True, exist_ok=True)
+    health_file.write_text(
+        '{"jobs": {"morning": {"consecutive_failures": 99, "last_error": "stale"}}}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("agent_reach.daily_run.job_health.health_path", lambda: health_file)
+    monkeypatch.setattr(
+        "agent_reach.daily_run.storage.config.daily_run_data_root",
+        lambda: root,
+    )
+
+    on_l1_state(
+        "job_health",
+        "job_health",
+        {"jobs": {"morning": {"consecutive_failures": 1, "last_error": "api"}}},
+    )
+    data = _load()
+    assert data["jobs"]["morning"]["consecutive_failures"] == 1
+
+
+def test_read_pnl_target_state(storage_env):
+    settings = storage_env["settings"]
+    from agent_reach.daily_run.storage.hooks import on_l1_state
+
+    on_l1_state(
+        "pnl_target",
+        "pnl_target",
+        {
+            "pending": {"target_date": "2026-08-26", "target_pnl_cny": 500.0},
+            "last_result": None,
+            "history": [],
+        },
+    )
+    payload = read_pnl_target_state(settings=settings)
+    assert payload and payload["pending"]["target_pnl_cny"] == 500.0
+
+
+def test_load_pnl_target_state_prefers_db(storage_env, tmp_path, monkeypatch):
+    from agent_reach.daily_run.pnl_target import load_pnl_target_state
+    from agent_reach.daily_run.storage.hooks import on_l1_state
+
+    root = tmp_path / "daily_run"
+    target_file = root / "pnl_target.json"
+    target_file.parent.mkdir(parents=True, exist_ok=True)
+    target_file.write_text(
+        '{"pending": {"target_date": "2026-08-01", "target_pnl_cny": 1.0}, '
+        '"last_result": null, "history": []}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "agent_reach.daily_run.pnl_target.default_pnl_target_path",
+        lambda: target_file,
+    )
+    monkeypatch.setattr(
+        "agent_reach.daily_run.storage.config.daily_run_data_root",
+        lambda: root,
+    )
+
+    on_l1_state(
+        "pnl_target",
+        "pnl_target",
+        {
+            "pending": {"target_date": "2026-08-27", "target_pnl_cny": 600.0},
+            "last_result": None,
+            "history": [],
+        },
+    )
+    state = load_pnl_target_state()
+    assert state["pending"]["target_pnl_cny"] == 600.0

@@ -69,6 +69,18 @@ def _last_overlay_path() -> Path:
 
 def load_last_runtime_overlay() -> dict[str, Any]:
     path = _last_overlay_path()
+    try:
+        from agent_reach.daily_run.storage.config import storage_db_reads_allowed
+        from agent_reach.daily_run.storage.readers import read_runtime_overlay
+
+        if storage_db_reads_allowed(None, file_path=path):
+            from agent_reach.daily_run.settings import load_settings
+
+            db_overlay = read_runtime_overlay(settings=load_settings())
+            if isinstance(db_overlay, dict) and db_overlay:
+                return db_overlay
+    except Exception:
+        pass
     if not path.exists():
         return {}
     try:

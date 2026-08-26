@@ -85,14 +85,27 @@ def _pnl_target_cfg(settings: Optional[dict[str, Any]]) -> dict[str, Any]:
 
 def load_pnl_target_state(*, path: Optional[Path] = None) -> dict[str, Any]:
     p = path or default_pnl_target_path()
+    empty = {"pending": None, "last_result": None, "history": []}
+    try:
+        from agent_reach.daily_run.storage.config import storage_db_reads_allowed
+        from agent_reach.daily_run.storage.readers import read_pnl_target_state
+
+        if storage_db_reads_allowed(None, file_path=p, explicit_path=path is not None):
+            from agent_reach.daily_run.settings import load_settings
+
+            db_state = read_pnl_target_state(settings=load_settings())
+            if isinstance(db_state, dict) and db_state:
+                return db_state
+    except Exception:
+        pass
     if not p.is_file():
-        return {"pending": None, "last_result": None, "history": []}
+        return empty
     try:
         data = json.loads(p.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
-        return {"pending": None, "last_result": None, "history": []}
+        return empty
     if not isinstance(data, dict):
-        return {"pending": None, "last_result": None, "history": []}
+        return empty
     return data
 
 

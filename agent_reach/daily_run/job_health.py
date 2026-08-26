@@ -15,6 +15,18 @@ def health_path() -> Path:
 
 def _load() -> dict[str, Any]:
     p = health_path()
+    try:
+        from agent_reach.daily_run.storage.config import storage_db_reads_allowed
+        from agent_reach.daily_run.storage.readers import read_job_health
+
+        if storage_db_reads_allowed(None, file_path=p):
+            from agent_reach.daily_run.settings import load_settings
+
+            db_data = read_job_health(settings=load_settings())
+            if isinstance(db_data, dict) and db_data.get("jobs") is not None:
+                return db_data
+    except Exception:
+        pass
     if not p.exists():
         return {"jobs": {}}
     try:

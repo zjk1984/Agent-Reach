@@ -592,6 +592,46 @@ def read_rejected_strategies(
     return rows[:limit]
 
 
+def read_runtime_overlay(
+    *,
+    settings: Optional[dict[str, Any]] = None,
+) -> Optional[dict[str, Any]]:
+    payload = read_l2_payload("runtime_overlay", "effective", settings=settings)
+    return dict(payload) if isinstance(payload, dict) and payload else None
+
+
+def read_job_health(
+    *,
+    settings: Optional[dict[str, Any]] = None,
+) -> Optional[dict[str, Any]]:
+    if not storage_prefer_db(settings):
+        return None
+    store = _get_store(settings)
+    query = getattr(store, "query_l1_state", None)
+    if not callable(query):
+        return None
+    payload = query(state_key="job_health", kind="job_health")
+    if not isinstance(payload, dict) or not payload:
+        return None
+    data = dict(payload)
+    data.setdefault("jobs", {})
+    return data
+
+
+def read_pnl_target_state(
+    *,
+    settings: Optional[dict[str, Any]] = None,
+) -> Optional[dict[str, Any]]:
+    if not storage_prefer_db(settings):
+        return None
+    store = _get_store(settings)
+    query = getattr(store, "query_l1_state", None)
+    if not callable(query):
+        return None
+    payload = query(state_key="pnl_target", kind="pnl_target")
+    return dict(payload) if isinstance(payload, dict) and payload else None
+
+
 def read_morning_baseline_from_store(
     code: str,
     *,

@@ -115,6 +115,16 @@ def isolate_daily_run_state(monkeypatch, tmp_path):
     monkeypatch.setattr("agent_reach.daily_run.skill_rejected._REJECTED_PATH", rejected_path)
     monkeypatch.setattr("agent_reach.daily_run.skill_rejected.rejected_path", lambda: rejected_path)
 
+    # Job health / PnL target: same real-file leak as capital_events above.
+    monkeypatch.setattr(
+        "agent_reach.daily_run.job_health.health_path",
+        lambda: tmp_path / "job_health.json",
+    )
+    monkeypatch.setattr(
+        "agent_reach.daily_run.pnl_target.default_pnl_target_path",
+        lambda: tmp_path / "pnl_target.json",
+    )
+
     # Skill fragments (external playbook.md / experience_latest.md / fragments.json
     # + archives) are the "Agent 优先顺序" entry point the daily_run_skill tells
     # every agent to read first. A test that forgets its own isolation and calls
