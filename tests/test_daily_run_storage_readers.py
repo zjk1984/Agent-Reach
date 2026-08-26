@@ -180,6 +180,12 @@ def test_load_portfolio_prefers_file_when_db_truncated(storage_env, tmp_path, mo
     assert "603986" in codes
     assert len(codes) == 4
 
+    db_after = get_store(settings).query_latest_portfolio_snapshot()
+    assert db_after
+    assert len(db_after.get("holdings") or []) == 2
+    assert len(db_after.get("watchlist") or []) == 2
+    assert db_after.get("_snapshot_source") == "repair"
+
 
 def test_load_portfolio_uses_db_when_file_not_broader(storage_env, tmp_path, monkeypatch):
     from agent_reach.daily_run.snapshot_builder import load_portfolio

@@ -69,7 +69,10 @@ def load_portfolio(path: Optional[Path] = None, *, settings: Optional[dict[str, 
                     and not _portfolio_is_empty(file_pf)
                     and _db_portfolio_suspicious(db_pf, file_pf)
                 ):
-                    return _finalize_portfolio(file_pf)
+                    repaired = _finalize_portfolio(file_pf)
+                    with _PORTFOLIO_IO_LOCK:
+                        _repair_portfolio_db_snapshot(repaired, settings=cfg)
+                    return repaired
                 return _finalize_portfolio(db_pf)
     except Exception:
         pass
@@ -169,6 +172,30 @@ def _db_portfolio_suspicious(db_pf: dict[str, Any], file_pf: dict[str, Any]) -> 
     if file_holdings and not db_holdings:
         return True
     return False
+
+
+def _strip_portfolio_storage_metadata(data: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(data)
+    for key in ("_snapshot_at", "_snapshot_source", "_state_key", "_state_kind", "_state_at"):
+        payload.pop(key, None)
+    return payload
+
+
+def _repair_portfolio_db_snapshot(
+    portfolio: dict[str, Any],
+    *,
+    settings: Optional[dict[str, Any]] = None,
+) -> None:
+    """Backfill SQLite when the latest DB snapshot is missing symbols from portfolio.json."""
+    try:
+        from agent_reach.daily_run.storage.config import storage_enabled
+        from agent_reach.daily_run.storage.hooks import on_portfolio_save
+
+        if not storage_enabled(settings):
+            return
+        on_portfolio_save(_strip_portfolio_storage_metadata(portfolio), source="repair")
+    except Exception:
+        pass
 
 
 def fetch_quotes_map(
