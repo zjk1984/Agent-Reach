@@ -1074,10 +1074,23 @@ class TestHarnessRuntimeExtensions:
         assert policy["loss_streak_max"] == 0.0
 
     def test_rejected_blocks_buy(self, tmp_path, monkeypatch):
+        from agent_reach.daily_run.weekly_report import trading_week_range
+
         rej = tmp_path / "rejected_strategies.jsonl"
         monkeypatch.setattr("agent_reach.daily_run.skill_rejected._REJECTED_PATH", rej)
-        add_rejected_strategy("禁止接飞刀追涨", "宏观回避期逆势加仓已证伪")
-        blocked = trade_blocked_by_rejected("buy", name="中际旭创", settings={"harness": {}})
+        monday, friday = trading_week_range()
+        settings = {
+            "harness": {},
+            "rejected_strategies": {"active_week_only": True},
+        }
+        add_rejected_strategy(
+            "禁止接飞刀追涨",
+            "宏观回避期逆势加仓已证伪",
+            week_start=monday.isoformat(),
+            week_end=friday.isoformat(),
+            settings=settings,
+        )
+        blocked = trade_blocked_by_rejected("buy", name="中际旭创", settings=settings)
         assert blocked
 
     def test_trade_signals_from_memory(self):

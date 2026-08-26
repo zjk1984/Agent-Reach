@@ -875,7 +875,11 @@
   },
 
   "rejected_strategies": {
-    "harness_evolve": true
+    "harness_evolve": true,
+    "weekly_refresh": true,
+    "active_week_only": true,
+    "archive_expired": true,
+    "auto_add_from_weekly": true
   },
 
   "llm_narrative": {

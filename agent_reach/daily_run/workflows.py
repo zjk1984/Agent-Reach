@@ -1549,6 +1549,18 @@ def run_weekly(
         steps.append("skill_writeback_skipped")
     else:
         steps.append("skill_writeback")
+
+    from agent_reach.daily_run.skill_rejected import refresh_rejected_strategies_for_week
+
+    rejected_refresh = refresh_rejected_strategies_for_week(report.to_dict(), cfg)
+    if rejected_refresh.get("skipped"):
+        steps.append("rejected_refresh_skipped")
+    else:
+        steps.append("rejected_refresh")
+        if rejected_refresh.get("archived"):
+            steps.append(f"rejected_archived_{rejected_refresh['archived']}")
+        if rejected_refresh.get("added"):
+            steps.append(f"rejected_added_{len(rejected_refresh['added'])}")
         if skill_writeback.get("synced_skills"):
             steps.append(f"skill_sync_{len(skill_writeback['synced_skills'])}")
         if skill_writeback.get("applied_config"):
