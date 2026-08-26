@@ -105,6 +105,8 @@ def build_report(
         "prior_close_date": snapshot.get("prior_close_date"),
         "prior_close_verdict": snapshot.get("prior_close_verdict"),
         "prior_close_source": snapshot.get("prior_close_source"),
+        "prior_close_stale": snapshot.get("prior_close_stale"),
+        "prior_close_scan_id": snapshot.get("prior_close_scan_id"),
         "entry_price": verdict.entry_price,
         "stop_loss_price": verdict.stop_loss_price,
         "invalidation": verdict.invalidation,

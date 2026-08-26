@@ -331,8 +331,13 @@ def render_merged_decision_markdown(
             current = report.get("mss_final", "—")
             delta = report.get("prior_close_delta")
             delta_s = f"{delta:+.1f}" if delta is not None else "—"
+            from agent_reach.daily_run.prior_close import prior_close_date_label
+
+            prior_label = prior
+            if prior != "—":
+                prior_label = f"{prior} ({prior_close_date_label(report)})"
             lines.append(
-                f"| {name} | {code} | {prior} | {current} | {delta_s} "
+                f"| {name} | {code} | {prior_label} | {current} | {delta_s} "
                 f"| {report.get('verdict', '—')} |"
             )
     else:

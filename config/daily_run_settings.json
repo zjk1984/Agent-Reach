@@ -576,7 +576,7 @@
     "executor": "local_cron",
     "start_notify": true,
     "symbols_mode": "all",
-    "close_symbols_mode": "holdings",
+    "close_symbols_mode": "all",
     "intraday_symbols_mode": "all",
     "intraday_parallel": true,
     "intraday_parallel_workers": 2,

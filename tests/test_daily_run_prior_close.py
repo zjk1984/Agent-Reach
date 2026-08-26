@@ -10,8 +10,10 @@ import pytest
 from agent_reach.daily_run.pipeline import build_report, render_markdown
 from agent_reach.daily_run.prior_close import (
     attach_prior_close_reference,
+    format_prior_close_line,
     load_prior_close_reference,
     prev_trading_day,
+    prior_close_date_label,
     save_close_baseline,
 )
 from agent_reach.daily_run.settings import load_settings
@@ -129,3 +131,86 @@ class TestPriorCloseReference:
     def test_prev_trading_day_skips_weekend(self):
         friday = date(2026, 7, 17)
         assert prev_trading_day(friday).weekday() < 5
+
+    def test_stale_prior_close_date_label(self):
+        label = prior_close_date_label(
+            {
+                "prior_close_date": "2026-08-18",
+                "prior_close_source": "close_baseline_stale",
+                "prior_close_stale": True,
+            }
+        )
+        assert label == "2026-08-18·过期"
+
+    def test_intraday_scan_prior_close_fallback(self, tmp_path, monkeypatch):
+        runs = tmp_path / "runs" / "2026-08-25"
+        runs.mkdir(parents=True)
+        close_dir = tmp_path / "baselines" / "close"
+        close_dir.mkdir(parents=True)
+        (close_dir / "603986.json").write_text(
+            json.dumps(
+                {
+                    "code": "603986",
+                    "mss_final": 58.47,
+                    "verdict": "观察",
+                    "close_date": "2026-08-18",
+                }
+            ),
+            encoding="utf-8",
+        )
+        manifest = {
+            "at": "2026-08-25T10:00:00+00:00",
+            "payload": {
+                "symbol_results": [
+                    {
+                        "code": "603986",
+                        "result": {
+                            "scan": {
+                                "scan": {
+                                    "scan_id": "S13",
+                                    "code": "603986",
+                                    "mss_final": 50.4,
+                                    "verdict": "观察",
+                                    "as_of": "2026-08-25T05:49:58+00:00",
+                                }
+                            }
+                        },
+                    }
+                ]
+            },
+        }
+        (runs / "intraday_135009.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+        target = date(2026, 8, 25)
+        monkeypatch.setattr(
+            "agent_reach.daily_run.prior_close.close_baseline_path",
+            lambda code: close_dir / f"{code}.json",
+        )
+        monkeypatch.setattr(
+            "agent_reach.daily_run.prior_close.prev_trading_day",
+            lambda *a, **k: target,
+        )
+        monkeypatch.setattr(
+            "agent_reach.daily_run.prior_close.runs_dir",
+            lambda: tmp_path / "runs",
+        )
+
+        loaded = load_prior_close_reference("603986", load_settings(), as_of=date(2026, 8, 26))
+        assert loaded is not None
+        assert loaded["mss_final"] == 50.4
+        assert loaded["close_date"] == "2026-08-25"
+        assert loaded["source"] == "intraday_scan"
+        assert loaded["scan_id"] == "S13"
+
+        line = format_prior_close_line(
+            {
+                "prior_close_mss": 50.4,
+                "prior_close_date": "2026-08-25",
+                "prior_close_verdict": "观察",
+                "prior_close_source": "intraday_scan",
+                "prior_close_scan_id": "S13",
+                "mss_final": 49.0,
+                "prior_close_delta": -1.4,
+            }
+        )
+        assert "2026-08-25·S13" in line
