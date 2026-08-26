@@ -137,6 +137,18 @@ def save_forecast(forecast: dict[str, Any]) -> Path:
 
 
 def load_forecast(week_start: date) -> Optional[dict[str, Any]]:
+    try:
+        from agent_reach.daily_run.storage.config import path_under_daily_run_data
+        from agent_reach.daily_run.storage.readers import read_week_forecast
+
+        if path_under_daily_run_data(forecasts_dir()):
+            from agent_reach.daily_run.settings import load_settings
+
+            payload = read_week_forecast(week_start, settings=load_settings())
+            if isinstance(payload, dict) and payload:
+                return payload
+    except Exception:
+        pass
     path = _forecast_path(week_start)
     if not path.exists():
         return None
@@ -149,6 +161,18 @@ def load_forecast(week_start: date) -> Optional[dict[str, Any]]:
 def load_active_forecast(as_of: Optional[date] = None) -> Optional[dict[str, Any]]:
     """Return forecast whose week contains as_of (typically Mon–Fri)."""
     d = as_of or today_shanghai()
+    try:
+        from agent_reach.daily_run.storage.config import path_under_daily_run_data
+        from agent_reach.daily_run.storage.readers import read_active_week_forecast
+
+        if path_under_daily_run_data(forecasts_dir()):
+            from agent_reach.daily_run.settings import load_settings
+
+            hit = read_active_week_forecast(d, settings=load_settings())
+            if isinstance(hit, dict) and hit:
+                return hit
+    except Exception:
+        pass
     root = forecasts_dir()
     if not root.exists():
         return None

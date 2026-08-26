@@ -507,6 +507,16 @@ def build_mss_trajectory(
 
 
 def _load_week_manifests(start: date, end: date) -> list[dict[str, Any]]:
+    try:
+        from agent_reach.daily_run.storage.config import storage_db_reads_allowed
+        from agent_reach.daily_run.storage.readers import read_job_run_manifests
+
+        if storage_db_reads_allowed(None, file_path=runs_dir()):
+            db_rows = read_job_run_manifests(start, end)
+            if db_rows:
+                return db_rows
+    except Exception:
+        pass
     records: list[dict[str, Any]] = []
     for day, path in _iter_manifest_files(start, end):
         record = _load_manifest(path)
@@ -518,23 +528,9 @@ def _load_week_manifests(start: date, end: date) -> list[dict[str, Any]]:
 
 
 def _load_trade_ledger_range(start: date, end: date) -> list[dict[str, Any]]:
-    path = default_ledger_path()
-    if not path.exists():
-        return []
-    entries: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            entry = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        at = str(entry.get("at") or "")
-        if not _date_in_range(at, start, end):
-            continue
-        entries.append(entry)
-    return dedupe_trade_ledger_entries(entries)
+    from agent_reach.daily_run.realized_pnl import load_ledger_entries
+
+    return load_ledger_entries(start=start, end=end)
 
 
 def _holdings_shares_map(portfolio: dict[str, Any]) -> dict[str, int]:

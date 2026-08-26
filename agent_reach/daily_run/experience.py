@@ -151,6 +151,18 @@ def _tail_jsonl_lines(path: Path, limit: int) -> list[str]:
 
 def load_recent_experience(limit: int = 10) -> list[dict[str, Any]]:
     path = experience_dir() / "experience.jsonl"
+    try:
+        from agent_reach.daily_run.storage.config import path_under_daily_run_data
+        from agent_reach.daily_run.storage.readers import read_experience_entries
+
+        if path_under_daily_run_data(path.parent):
+            from agent_reach.daily_run.settings import load_settings
+
+            rows = read_experience_entries(settings=load_settings(), limit=limit)
+            if rows:
+                return rows
+    except Exception:
+        pass
     if not path.exists():
         return []
     out = []
@@ -177,6 +189,23 @@ def _date_in_experience_range(ds: str, start: date, end: date) -> bool:
 def load_experience_in_range(start: date, end: date) -> list[dict[str, Any]]:
     """All experience entries whose ``date`` falls in ``[start, end]`` (inclusive)."""
     path = experience_dir() / "experience.jsonl"
+    try:
+        from agent_reach.daily_run.storage.config import path_under_daily_run_data
+        from agent_reach.daily_run.storage.readers import read_experience_entries
+
+        if path_under_daily_run_data(path.parent):
+            from agent_reach.daily_run.settings import load_settings
+
+            rows = read_experience_entries(
+                settings=load_settings(),
+                start=start,
+                end=end,
+                limit=5000,
+            )
+            if rows:
+                return rows
+    except Exception:
+        pass
     if not path.exists():
         return []
     out: list[dict[str, Any]] = []

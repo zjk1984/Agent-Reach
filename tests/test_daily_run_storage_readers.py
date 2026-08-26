@@ -160,3 +160,62 @@ def test_read_harness_state_payload(storage_env):
     )
     payload = read_harness_state_payload(settings=settings)
     assert payload and payload["entries"]["memory"]["m1"]["content"] == "hello"
+
+
+def test_read_job_run_manifests(storage_env):
+    settings = storage_env["settings"]
+    from agent_reach.daily_run.storage.hooks import on_job_run
+
+    on_job_run(
+        {
+            "job": "close",
+            "date": "2026-08-25",
+            "at": "2026-08-25T07:00:00+00:00",
+            "payload": {"result": {"snapshot": {"code": "603986", "mss_final": 50.0}}},
+        },
+        source_path="/tmp/close_070000.json",
+    )
+    from agent_reach.daily_run.storage.readers import read_job_run_manifests
+    from datetime import date
+
+    rows = read_job_run_manifests(date(2026, 8, 25), date(2026, 8, 25), settings=settings)
+    assert rows and rows[0]["job"] == "close"
+    assert rows[0]["_run_date"] == "2026-08-25"
+
+
+def test_read_week_forecast(storage_env):
+    settings = storage_env["settings"]
+    from agent_reach.daily_run.storage import get_store
+    from agent_reach.daily_run.storage.readers import read_week_forecast
+    from datetime import date
+
+    get_store(settings).upsert_l2_scenario(
+        "forecast",
+        "2026-08-25",
+        {"week_start": "2026-08-25", "week_end": "2026-08-29", "summary": "test"},
+        at="2026-08-25",
+        title="week forecast",
+        content="test",
+        dedupe_key="l2:forecast:2026-08-25",
+    )
+    payload = read_week_forecast(date(2026, 8, 25), settings=settings)
+    assert payload and payload.get("summary") == "test"
+
+
+def test_read_experience_entries(storage_env):
+    settings = storage_env["settings"]
+    from agent_reach.daily_run.storage.hooks import on_experience_entry
+    from agent_reach.daily_run.storage.readers import read_experience_entries
+
+    on_experience_entry(
+        {
+            "date": "2026-08-25",
+            "at": "2026-08-25T07:30:00+00:00",
+            "code": "603986",
+            "name": "兆易创新",
+            "mss_final": 51.0,
+            "rules": ["rule-a"],
+        }
+    )
+    rows = read_experience_entries(settings=settings, limit=5)
+    assert rows and rows[0]["code"] == "603986"

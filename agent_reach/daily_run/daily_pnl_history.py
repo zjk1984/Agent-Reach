@@ -244,24 +244,21 @@ def backfill_from_manifests(
     path: Optional[Path] = None,
 ) -> dict[str, Any]:
     """Import daily P&L from close run manifests (latest close per day)."""
-    from agent_reach.daily_run.weekly_report import (
-        _iter_manifest_files,
-        _load_manifest,
-        _portfolio_summary_from_manifest,
-    )
+    from agent_reach.daily_run.run_manifest import load_run_manifests_for_range
+    from agent_reach.daily_run.weekly_report import _portfolio_summary_from_manifest
 
     end_day = end or today_shanghai()
     start_day = start or (end_day - timedelta(days=365))
     imported: dict[str, DailyPnlRecord] = {}
 
-    for day, mpath in _iter_manifest_files(start_day, end_day):
-        record = _load_manifest(mpath)
-        if not record or record.get("job") != "close":
+    for record in load_run_manifests_for_range(start_day, end_day):
+        if record.get("job") != "close":
             continue
         ps = _portfolio_summary_from_manifest(record)
         if not ps:
             continue
-        row = summary_to_history_row(ps, source="manifest", manifest_path=str(mpath))
+        mpath = str(record.get("_path") or "")
+        row = summary_to_history_row(ps, source="manifest", manifest_path=mpath)
         if row is None:
             continue
         day_str = row.date

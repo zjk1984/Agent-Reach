@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import asdict, is_dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
@@ -29,7 +29,26 @@ def runs_dir() -> Path:
 
 def has_job_manifest_today(job: str, *, require_feishu: bool = False) -> bool:
     """True if job already recorded under today's Shanghai date folder."""
-    out_dir = runs_dir() / today_shanghai().isoformat()
+    today = today_shanghai()
+    try:
+        from agent_reach.daily_run.storage.config import storage_db_reads_allowed
+        from agent_reach.daily_run.storage.readers import read_job_run_manifests
+
+        if storage_db_reads_allowed(None, file_path=runs_dir()):
+            for record in read_job_run_manifests(today, today):
+                if str(record.get("job") or "") != job:
+                    continue
+                payload = record.get("payload") or {}
+                if payload.get("skipped"):
+                    continue
+                if require_feishu:
+                    feishu = record.get("feishu")
+                    if not feishu:
+                        continue
+                return True
+    except Exception:
+        pass
+    out_dir = runs_dir() / today.isoformat()
     if not out_dir.exists():
         return False
     for path in sorted(out_dir.glob(f"{job}_*.json")):
@@ -100,6 +119,48 @@ def save_run_manifest(
         pass
     logger.info("daily-run manifest saved: {}", path)
     return path
+
+
+def load_run_manifests_for_range(
+    start: date,
+    end: date,
+    *,
+    settings: Optional[dict[str, Any]] = None,
+) -> list[dict[str, Any]]:
+    """Load run manifests for a date range (DB first when enabled, else runs/*.json)."""
+    try:
+        from agent_reach.daily_run.storage.config import storage_db_reads_allowed
+        from agent_reach.daily_run.storage.readers import read_job_run_manifests
+
+        if storage_db_reads_allowed(settings, file_path=runs_dir()):
+            db_rows = read_job_run_manifests(start, end, settings=settings)
+            if db_rows:
+                return db_rows
+    except Exception:
+        pass
+
+    records: list[dict[str, Any]] = []
+    root = runs_dir()
+    if not root.exists():
+        return records
+    for day_dir in sorted(root.iterdir()):
+        if not day_dir.is_dir():
+            continue
+        try:
+            day = date.fromisoformat(day_dir.name)
+        except ValueError:
+            continue
+        if not (start <= day <= end):
+            continue
+        for path in sorted(day_dir.glob("*.json")):
+            try:
+                record = json.loads(path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                continue
+            record["_run_date"] = day.isoformat()
+            record["_path"] = str(path)
+            records.append(record)
+    return records
 
 
 class StepTimer:

@@ -404,3 +404,121 @@ def attach_optimizer_storage_context(
     if extra_sources:
         sources.extend(extra_sources)
     return attach_storage_retrieval(payload, settings=settings, job=job, extra_sources=sources)
+
+
+def read_job_run_manifests(
+    start: date,
+    end: date,
+    *,
+    settings: Optional[dict[str, Any]] = None,
+    job: str = "",
+    limit: int = 5000,
+) -> list[dict[str, Any]]:
+    """Return job run manifests from L0 ``job_run`` events."""
+    if not storage_prefer_db(settings):
+        return []
+    since, until = _date_filter_bounds(start, end)
+    store = _get_store(settings)
+    events = store.query_l0_events(
+        kind="job_run",
+        since=since,
+        until=until,
+        limit=limit,
+        order="asc",
+    )
+    records: list[dict[str, Any]] = []
+    for event in events:
+        manifest = event.get("payload") or {}
+        if not isinstance(manifest, dict) or not manifest.get("job"):
+            continue
+        if job and str(manifest.get("job") or "") != job:
+            continue
+        day = str(manifest.get("date") or event.get("at") or "")[:10]
+        if not day or day < start.isoformat() or day > end.isoformat():
+            continue
+        record = dict(manifest)
+        record["_run_date"] = day
+        record["_path"] = str(event.get("source_path") or record.get("_path") or "")
+        record["_source"] = "job_run_db"
+        records.append(record)
+    return records
+
+
+def read_week_forecast(
+    week_start: date | str,
+    *,
+    settings: Optional[dict[str, Any]] = None,
+) -> Optional[dict[str, Any]]:
+    if isinstance(week_start, date):
+        key = week_start.isoformat()
+    else:
+        key = str(week_start or "")[:10]
+    if not key:
+        return None
+    payload = read_l2_payload("forecast", key, settings=settings)
+    return dict(payload) if isinstance(payload, dict) and payload else None
+
+
+def read_active_week_forecast(
+    as_of: Optional[date] = None,
+    *,
+    settings: Optional[dict[str, Any]] = None,
+) -> Optional[dict[str, Any]]:
+    if not storage_prefer_db(settings):
+        return None
+    from agent_reach.daily_run.trade_calendar import today_shanghai
+
+    target = as_of or today_shanghai()
+    store = _get_store(settings)
+    query_l2 = getattr(store, "query_l2_scenarios", None)
+    if not callable(query_l2):
+        return None
+    rows = query_l2(kind="forecast", limit=52)
+    best: Optional[dict[str, Any]] = None
+    best_ws = ""
+    for row in rows:
+        payload = row.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        try:
+            ws = date.fromisoformat(str(payload.get("week_start") or row.get("scenario_key") or "")[:10])
+            we = date.fromisoformat(str(payload.get("week_end") or "")[:10])
+        except ValueError:
+            continue
+        if ws <= target <= we and ws.isoformat() >= best_ws:
+            best = dict(payload)
+            best_ws = ws.isoformat()
+    return best
+
+
+def read_experience_entries(
+    *,
+    settings: Optional[dict[str, Any]] = None,
+    start: Optional[date] = None,
+    end: Optional[date] = None,
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    if not storage_prefer_db(settings):
+        return []
+    since, until = _date_filter_bounds(start, end)
+    store = _get_store(settings)
+    events = store.query_l0_events(
+        kind="experience",
+        since=since,
+        until=until,
+        limit=max(limit, 1),
+        order="desc",
+    )
+    rows: list[dict[str, Any]] = []
+    for event in events:
+        payload = event.get("payload") or {}
+        if not isinstance(payload, dict):
+            continue
+        ds = str(payload.get("date") or payload.get("at") or "")[:10]
+        if start is not None and ds and ds < start.isoformat():
+            continue
+        if end is not None and ds and ds > end.isoformat():
+            continue
+        rows.append(dict(payload))
+    rows.sort(key=lambda row: (str(row.get("date") or ""), str(row.get("at") or "")), reverse=True)
+    return rows[:limit]
