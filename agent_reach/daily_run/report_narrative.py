@@ -385,6 +385,9 @@ def _generate_narrative(
         limits = dict(limits)
         for key, val in _INTRADAY_RISK_LIMITS.items():
             limits[key] = max(int(limits.get(key, 0)), int(val))
+    from agent_reach.daily_run.storage.retrieval import attach_storage_retrieval
+
+    context = attach_storage_retrieval(context, settings=settings, job=job)
     compact_context = _compact_context(context, limits)
     base_system = _narrative_system_prompt(job, limits=limits)
     hint = system.strip()

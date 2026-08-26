@@ -1028,6 +1028,15 @@ def _compact_llm_user_payload(payload: dict[str, Any], limits: dict[str, int]) -
             compact["evidence_summary"],
             limits["max_string_chars"],
         )
+    if "storage_retrieval" in compact:
+        block = compact.get("storage_retrieval")
+        if isinstance(block, dict):
+            compact["storage_retrieval"] = {
+                "lookback_days": block.get("lookback_days"),
+                "codes": list(block.get("codes") or [])[:6],
+                "atoms": list(block.get("atoms") or [])[:12],
+                "trades": list(block.get("trades") or [])[:10],
+            }
 
     blob = json.dumps(compact, ensure_ascii=False)
     cap = limits["max_context_chars"]
@@ -1257,13 +1266,22 @@ def review_harness_refine(
         from agent_reach.daily_run.llm_chat import chat_json, resolve_chat_provider
 
         if resolve_chat_provider(str(llm_cfg.get("provider") or "auto")):
+            from agent_reach.daily_run.storage.retrieval import attach_storage_retrieval
+
             review_payload = _compact_llm_user_payload(
-                {
-                    "job": job,
-                    "signals": signals,
-                    "harness_overview": state.overview(entry_limit=limits["max_overview_entries"]),
-                    "recent_refinements": [e.to_dict() for e in state.refinements[-limits["max_refinement_items"] :]],
-                },
+                attach_storage_retrieval(
+                    {
+                        "job": job,
+                        "signals": signals,
+                        "harness_overview": state.overview(entry_limit=limits["max_overview_entries"]),
+                        "recent_refinements": [
+                            e.to_dict() for e in state.refinements[-limits["max_refinement_items"] :]
+                        ],
+                    },
+                    settings=settings,
+                    job=f"harness_review:{job}",
+                    extra_sources=[evidence],
+                ),
                 limits,
             )
             payload = chat_json(
@@ -1413,15 +1431,24 @@ def plan_harness_refinement(
     limits = _llm_refine_limits(llm_cfg)
     if resolve_chat_provider(provider):
         memory, policy, playbook, plan, ev_summary = _evidence_from_job(job, evidence, settings=settings)
+        from agent_reach.daily_run.storage.retrieval import attach_storage_retrieval
+
         plan_payload = _compact_llm_user_payload(
-            {
-                "job": job,
-                "instructions": instructions,
-                "evidence_summary": ev_summary,
-                "layer_a": {"memory": memory, "policy": policy, "playbook": playbook, "plan": plan},
-                "harness_overview": state.overview(entry_limit=limits["max_overview_entries"]),
-                "recent_refinements": [e.to_dict() for e in state.refinements[-limits["max_refinement_items"] :]],
-            },
+            attach_storage_retrieval(
+                {
+                    "job": job,
+                    "instructions": instructions,
+                    "evidence_summary": ev_summary,
+                    "layer_a": {"memory": memory, "policy": policy, "playbook": playbook, "plan": plan},
+                    "harness_overview": state.overview(entry_limit=limits["max_overview_entries"]),
+                    "recent_refinements": [
+                        e.to_dict() for e in state.refinements[-limits["max_refinement_items"] :]
+                    ],
+                },
+                settings=settings,
+                job=f"harness_refine:{job}",
+                extra_sources=[evidence],
+            ),
             limits,
         )
         payload = chat_json(

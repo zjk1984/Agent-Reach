@@ -53,6 +53,30 @@ def distill_settings(settings: Optional[dict[str, Any]] = None) -> dict[str, Any
     return dict(cfg.get("distill") or {})
 
 
+def retrieval_settings(settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    cfg = storage_settings(settings)
+    block = dict(cfg.get("retrieval") or {})
+    return {
+        "enabled": block.get("enabled", True) is not False,
+        "lookback_days": max(1, int(block.get("lookback_days") or 30)),
+        "max_codes": max(1, int(block.get("max_codes") or 8)),
+        "max_atoms_per_code": max(1, int(block.get("max_atoms_per_code") or 4)),
+        "max_trades": max(1, int(block.get("max_trades") or 15)),
+        "max_line_chars": max(48, int(block.get("max_line_chars") or 120)),
+        "include_trades": block.get("include_trades", True) is not False,
+        "atom_kinds": list(
+            block.get("atom_kinds")
+            or [
+                "trade_action",
+                "experience_summary",
+                "experience_rule",
+                "trade_batch",
+            ]
+        ),
+        "llm_jobs": dict(block.get("llm_jobs") or {}),
+    }
+
+
 def prune_settings(settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     cfg = storage_settings(settings)
     block = dict(cfg.get("prune") or {})

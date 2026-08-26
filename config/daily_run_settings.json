@@ -844,6 +844,30 @@
       "enabled": true,
       "auto_after_close": false
     },
+    "retrieval": {
+      "enabled": true,
+      "lookback_days": 30,
+      "max_codes": 8,
+      "max_atoms_per_code": 4,
+      "max_trades": 15,
+      "max_line_chars": 120,
+      "include_trades": true,
+      "atom_kinds": [
+        "trade_action",
+        "experience_summary",
+        "experience_rule",
+        "trade_batch"
+      ],
+      "llm_jobs": {
+        "morning": true,
+        "close": true,
+        "midday": true,
+        "weekly": true,
+        "forecast": true,
+        "harness_review": true,
+        "harness_refine": true
+      }
+    },
     "postgres": {
       "dsn": "",
       "schema": "daily_run"
