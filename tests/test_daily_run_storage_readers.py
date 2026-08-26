@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from agent_reach.daily_run.daily_pnl_history import load_daily_pnl_history
@@ -123,6 +125,99 @@ def test_read_latest_portfolio(storage_env):
     )
     pf = read_latest_portfolio(settings=settings)
     assert pf and float(pf["cash"]) == 50000.0
+
+
+def test_load_portfolio_prefers_file_when_db_truncated(storage_env, tmp_path, monkeypatch):
+    from agent_reach.daily_run.snapshot_builder import load_portfolio
+    from agent_reach.daily_run.storage import get_store
+    from agent_reach.daily_run.symbols import resolve_target_symbols
+
+    settings = storage_env["settings"]
+    root = tmp_path / "daily_run"
+    root.mkdir(parents=True, exist_ok=True)
+    pf_path = root / "portfolio.json"
+    full = {
+        "holdings": [
+            {"code": "688008", "name": "澜起科技", "shares": 100},
+            {"code": "000725", "name": "京东方A", "shares": 900},
+        ],
+        "watchlist": [
+            {"code": "603986", "name": "兆易创新"},
+            {"code": "002415", "name": "海康威视"},
+        ],
+        "cash": 50000.0,
+        "total": 110000.0,
+    }
+    pf_path.write_text(json.dumps(full, ensure_ascii=False) + "\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "agent_reach.daily_run.snapshot_builder.default_portfolio_path",
+        lambda: pf_path,
+    )
+    monkeypatch.setattr(
+        "agent_reach.daily_run.storage.config.daily_run_data_root",
+        lambda: root,
+    )
+
+    get_store(settings).upsert_portfolio(
+        {
+            "holdings": [],
+            "watchlist": [{"code": "000725", "name": "京东方A"}],
+            "cash": 40000.0,
+            "total": 90000.0,
+        },
+        source="test",
+    )
+
+    loaded = load_portfolio(settings=settings)
+    assert len(loaded.get("holdings") or []) == 2
+    assert len(loaded.get("watchlist") or []) == 2
+    codes = resolve_target_symbols(
+        loaded,
+        {**settings, "schedule": {"symbols_mode": "all", "intraday_symbols_mode": "all"}},
+        workflow="intraday",
+    )
+    assert "688008" in codes
+    assert "603986" in codes
+    assert len(codes) == 4
+
+
+def test_load_portfolio_uses_db_when_file_not_broader(storage_env, tmp_path, monkeypatch):
+    from agent_reach.daily_run.snapshot_builder import load_portfolio
+
+    settings = storage_env["settings"]
+    root = tmp_path / "daily_run"
+    root.mkdir(parents=True, exist_ok=True)
+    pf_path = root / "portfolio.json"
+    file_pf = {
+        "holdings": [{"code": "688008", "name": "澜起科技", "shares": 100}],
+        "watchlist": [],
+        "cash": 50000.0,
+        "total": 100000.0,
+    }
+    pf_path.write_text(json.dumps(file_pf, ensure_ascii=False) + "\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "agent_reach.daily_run.snapshot_builder.default_portfolio_path",
+        lambda: pf_path,
+    )
+    monkeypatch.setattr(
+        "agent_reach.daily_run.storage.config.daily_run_data_root",
+        lambda: root,
+    )
+
+    db_pf = {
+        "holdings": [{"code": "688008", "name": "澜起科技", "shares": 100}],
+        "watchlist": [{"code": "603986", "name": "兆易创新"}],
+        "cash": 48000.0,
+        "total": 98000.0,
+    }
+    get_store = __import__(
+        "agent_reach.daily_run.storage", fromlist=["get_store"]
+    ).get_store
+    get_store(settings).upsert_portfolio(db_pf, source="test")
+
+    loaded = load_portfolio(settings=settings)
+    assert float(loaded["cash"]) == 48000.0
+    assert any(row.get("code") == "603986" for row in loaded.get("watchlist") or [])
 
 
 def test_read_intraday_trade_records_for_day(storage_env):

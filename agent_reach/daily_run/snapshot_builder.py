@@ -63,6 +63,13 @@ def load_portfolio(path: Optional[Path] = None, *, settings: Optional[dict[str, 
             cfg = settings or load_settings()
             db_pf = read_latest_portfolio(settings=cfg)
             if db_pf and not _portfolio_is_empty(db_pf):
+                file_pf = _load_portfolio_file(p)
+                if (
+                    file_pf
+                    and not _portfolio_is_empty(file_pf)
+                    and _db_portfolio_suspicious(db_pf, file_pf)
+                ):
+                    return _finalize_portfolio(file_pf)
                 return _finalize_portfolio(db_pf)
     except Exception:
         pass
@@ -118,6 +125,50 @@ def code_to_xueqiu_symbol(code: str) -> str:
 
 def _normalize_code(code: str) -> str:
     return code.zfill(6)[-6:] if str(code).isdigit() else str(code)
+
+
+def _portfolio_symbol_codes(data: dict[str, Any]) -> set[str]:
+    codes: set[str] = set()
+    for row in list(data.get("holdings") or []) + list(data.get("watchlist") or []):
+        code = _normalize_code(str(row.get("code") or ""))
+        if code:
+            codes.add(code)
+    return codes
+
+
+def _load_portfolio_file(path: Path) -> Optional[dict[str, Any]]:
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _db_portfolio_suspicious(db_pf: dict[str, Any], file_pf: dict[str, Any]) -> bool:
+    """True when DB snapshot looks truncated vs the on-disk portfolio file."""
+    if _portfolio_is_empty(file_pf):
+        return False
+    db_codes = _portfolio_symbol_codes(db_pf)
+    file_codes = _portfolio_symbol_codes(file_pf)
+    if not db_codes:
+        return bool(file_codes)
+    if file_codes - db_codes:
+        return True
+    file_holdings = {
+        _normalize_code(str(row.get("code") or ""))
+        for row in (file_pf.get("holdings") or [])
+        if row.get("code")
+    }
+    db_holdings = {
+        _normalize_code(str(row.get("code") or ""))
+        for row in (db_pf.get("holdings") or [])
+        if row.get("code")
+    }
+    if file_holdings and not db_holdings:
+        return True
+    return False
 
 
 def fetch_quotes_map(
