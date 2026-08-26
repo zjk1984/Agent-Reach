@@ -10,6 +10,37 @@ from typing import Any, Optional
 _DEFAULT_DB_NAME = "daily_run.db"
 
 
+def daily_run_data_root() -> Path:
+    return Path.home() / ".agent-reach" / "daily_run"
+
+
+def path_under_daily_run_data(path: Path) -> bool:
+    """True when ``path`` lives under the canonical daily-run data directory."""
+    try:
+        path.resolve().relative_to(daily_run_data_root().resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def storage_db_reads_allowed(
+    settings: Optional[dict[str, Any]] = None,
+    *,
+    file_path: Optional[Path] = None,
+    explicit_path: bool = False,
+) -> bool:
+    """Whether read-through should query SQLite before local files."""
+    if explicit_path:
+        return False
+    if not storage_read_prefer_db(settings):
+        return False
+    if file_path is not None and path_under_daily_run_data(file_path):
+        return True
+    if settings is not None and storage_enabled(settings):
+        return True
+    return False
+
+
 def storage_settings(settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     if settings is None:
         from agent_reach.daily_run.settings import load_settings
@@ -17,6 +48,13 @@ def storage_settings(settings: Optional[dict[str, Any]] = None) -> dict[str, Any
         settings = load_settings()
     block = dict((settings or {}).get("storage") or {})
     return block
+
+
+def storage_read_prefer_db(settings: Optional[dict[str, Any]] = None) -> bool:
+    cfg = storage_settings(settings)
+    if not storage_enabled(settings):
+        return False
+    return cfg.get("read_prefer_db", True) is not False
 
 
 def storage_enabled(settings: Optional[dict[str, Any]] = None) -> bool:

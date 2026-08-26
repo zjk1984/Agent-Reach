@@ -510,7 +510,7 @@ def build_weekly_buy_rules_whatif(
         if baseline is None or current is None:
             continue
 
-        intraday = _intraday_from_day_manifests(day_manifests)
+        intraday = _intraday_trades_for_day(day, settings=cfg, day_manifests=day_manifests)
         day_summary = {
             "as_of": day,
             "trades": day_trades,
@@ -656,6 +656,29 @@ def _intraday_from_day_manifests(day_manifests: list[dict[str, Any]]) -> list[di
             intraday = list(ps.get("intraday_trades") or [])
             if intraday:
                 return intraday
+    return []
+
+
+def _intraday_trades_for_day(
+    day: str,
+    *,
+    settings: Optional[dict[str, Any]] = None,
+    day_manifests: Optional[list[dict[str, Any]]] = None,
+) -> list[dict[str, Any]]:
+    if day_manifests:
+        manifest_rows = _intraday_from_day_manifests(day_manifests)
+        if manifest_rows:
+            return manifest_rows
+    from agent_reach.daily_run.run_manifest import runs_dir
+    from agent_reach.daily_run.storage.config import path_under_daily_run_data
+    from agent_reach.daily_run.storage.readers import read_intraday_trade_records_for_day
+
+    if path_under_daily_run_data(runs_dir()):
+        db_rows = read_intraday_trade_records_for_day(day, settings=settings)
+        if db_rows:
+            return db_rows
+    if day_manifests:
+        return _intraday_from_day_manifests(day_manifests)
     return []
 
 
@@ -1505,7 +1528,7 @@ def build_weekly_intraday_friction_whatif(
         if not (week_start <= day_date <= week_end):
             continue
         day_manifests = manifests_by_day[day]
-        intraday = _intraday_from_day_manifests(day_manifests)
+        intraday = _intraday_trades_for_day(day, settings=cfg, day_manifests=day_manifests)
         if not intraday:
             continue
         baseline = _intraday_baseline_from_day_manifests(day_manifests)
@@ -1884,7 +1907,7 @@ def build_weekly_intraday_sell_whatif(
         if not (week_start <= day_date <= week_end):
             continue
         day_manifests = manifests_by_day[day]
-        intraday = _intraday_from_day_manifests(day_manifests)
+        intraday = _intraday_trades_for_day(day, settings=cfg, day_manifests=day_manifests)
         if not intraday:
             continue
         baseline = _intraday_baseline_from_day_manifests(day_manifests)

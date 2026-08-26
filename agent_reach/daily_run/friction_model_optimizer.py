@@ -146,6 +146,9 @@ def optimize_friction_model_with_deepseek(
     import json
 
     payload = build_friction_model_payload(portfolio_summary, settings=settings)
+    from agent_reach.daily_run.storage.readers import attach_optimizer_storage_context
+
+    payload = attach_optimizer_storage_context(payload, settings=settings, job="friction_model")
     result = chat_json(
         system=(
             "你是 daily-run harness 摩擦模型优化器。输出 JSON："

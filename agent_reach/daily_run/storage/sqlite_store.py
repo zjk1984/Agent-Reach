@@ -499,7 +499,9 @@ class SqliteDailyRunStore:
         *,
         kind: str = "",
         since: str = "",
+        until: str = "",
         limit: int = 50,
+        order: str = "desc",
     ) -> list[dict[str, Any]]:
         clauses: list[str] = []
         params: list[Any] = []
@@ -509,7 +511,11 @@ class SqliteDailyRunStore:
         if since:
             clauses.append("at >= ?")
             params.append(since)
+        if until:
+            clauses.append("at < ?")
+            params.append(until)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        order_sql = "ASC, id ASC" if str(order).lower() == "asc" else "DESC, id DESC"
         params.append(max(1, int(limit)))
         with self._conn() as conn:
             rows = conn.execute(
@@ -517,7 +523,7 @@ class SqliteDailyRunStore:
                 SELECT id, kind, at, source_path, payload_json, dedupe_key, distilled_at
                 FROM l0_events
                 {where}
-                ORDER BY at DESC, id DESC
+                ORDER BY at {order_sql}
                 LIMIT ?
                 """,
                 params,
@@ -702,6 +708,215 @@ class SqliteDailyRunStore:
             "bytes_estimate": total_bytes,
             "by_kind": by_kind,
         }
+
+    def query_trade_ledger_entries(
+        self,
+        *,
+        since: str = "",
+        until: str = "",
+        limit: int = 5000,
+    ) -> list[dict[str, Any]]:
+        events = self.query_l0_events(
+            kind="trade",
+            since=since,
+            until=until,
+            limit=limit,
+            order="asc",
+        )
+        return [dict(event.get("payload") or {}) for event in events if event.get("payload")]
+
+    def query_pnl_history_records(
+        self,
+        *,
+        since: str = "",
+        until: str = "",
+        limit: int = 2000,
+    ) -> list[dict[str, Any]]:
+        events = self.query_l0_events(
+            kind="pnl_history",
+            since=since,
+            until=until,
+            limit=limit,
+            order="asc",
+        )
+        return [dict(event.get("payload") or {}) for event in events if event.get("payload")]
+
+    def query_latest_portfolio_snapshot(self) -> Optional[dict[str, Any]]:
+        with self._conn() as conn:
+            row = conn.execute(
+                """
+                SELECT payload_json, at, source FROM portfolio_snapshots
+                ORDER BY id DESC LIMIT 1
+                """
+            ).fetchone()
+        if not row:
+            return None
+        try:
+            payload = json.loads(row["payload_json"])
+        except json.JSONDecodeError:
+            return None
+        if isinstance(payload, dict):
+            payload.setdefault("_snapshot_at", row["at"])
+            payload.setdefault("_snapshot_source", row["source"])
+        return payload
+
+    def query_l1_state(
+        self,
+        *,
+        state_key: str = "",
+        kind: str = "",
+    ) -> Optional[dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if state_key:
+            clauses.append("state_key = ?")
+            params.append(state_key)
+        if kind:
+            clauses.append("kind = ?")
+            params.append(kind)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._conn() as conn:
+            row = conn.execute(
+                f"SELECT state_key, kind, at, payload_json FROM l1_state {where} LIMIT 1",
+                params,
+            ).fetchone()
+        if not row:
+            return None
+        try:
+            payload = json.loads(row["payload_json"])
+        except json.JSONDecodeError:
+            payload = {}
+        if isinstance(payload, dict):
+            payload.setdefault("_state_key", row["state_key"])
+            payload.setdefault("_state_kind", row["kind"])
+            payload.setdefault("_state_at", row["at"])
+        return payload
+
+    def query_l2_scenarios(
+        self,
+        *,
+        kind: str = "",
+        scenario_key: str = "",
+        code: str = "",
+        since: str = "",
+        until: str = "",
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if kind:
+            clauses.append("kind = ?")
+            params.append(kind)
+        if scenario_key:
+            clauses.append("scenario_key = ?")
+            params.append(scenario_key)
+        if code:
+            clauses.append("code = ?")
+            params.append(code)
+        if since:
+            clauses.append("at >= ?")
+            params.append(since)
+        if until:
+            clauses.append("at < ?")
+            params.append(until)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(max(1, int(limit)))
+        with self._conn() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT id, kind, scenario_key, code, at, title, content, payload_json, source_path
+                FROM l2_scenarios
+                {where}
+                ORDER BY at DESC, id DESC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                payload = json.loads(row["payload_json"] or "{}")
+            except json.JSONDecodeError:
+                payload = {}
+            out.append(
+                {
+                    "id": row["id"],
+                    "kind": row["kind"],
+                    "scenario_key": row["scenario_key"],
+                    "code": row["code"],
+                    "at": row["at"],
+                    "title": row["title"],
+                    "content": row["content"],
+                    "payload": payload,
+                    "source_path": row["source_path"],
+                }
+            )
+        return out
+
+    def get_l3_document(self, kind: str, doc_key: str) -> Optional[dict[str, Any]]:
+        with self._conn() as conn:
+            row = conn.execute(
+                """
+                SELECT kind, doc_key, title, content, payload_json, version, source_path, updated_at
+                FROM l3_documents
+                WHERE kind = ? AND doc_key = ?
+                ORDER BY id DESC LIMIT 1
+                """,
+                (kind, doc_key),
+            ).fetchone()
+        if not row:
+            return None
+        try:
+            payload = json.loads(row["payload_json"] or "{}")
+        except json.JSONDecodeError:
+            payload = {}
+        return {
+            "kind": row["kind"],
+            "doc_key": row["doc_key"],
+            "title": row["title"],
+            "content": row["content"],
+            "payload": payload,
+            "version": row["version"],
+            "source_path": row["source_path"],
+            "updated_at": row["updated_at"],
+        }
+
+    def list_harness_entries(self, *, kind: str = "") -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if kind:
+            clauses.append("kind = ?")
+            params.append(kind)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._conn() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT kind, entry_id, title, content, version, status, payload_json, updated_at
+                FROM harness_entries
+                {where}
+                ORDER BY updated_at DESC
+                """,
+                params,
+            ).fetchall()
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                payload = json.loads(row["payload_json"] or "{}")
+            except json.JSONDecodeError:
+                payload = {}
+            out.append(
+                {
+                    "kind": row["kind"],
+                    "entry_id": row["entry_id"],
+                    "title": row["title"],
+                    "content": row["content"],
+                    "version": row["version"],
+                    "status": row["status"],
+                    "payload": payload,
+                    "updated_at": row["updated_at"],
+                }
+            )
+        return out
 
     def vacuum(self) -> None:
         with self._conn() as conn:

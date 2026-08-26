@@ -163,6 +163,9 @@ def optimize_intraday_sell_with_deepseek(
     import json
 
     payload = build_intraday_sell_optimize_payload(source, settings=settings)
+    from agent_reach.daily_run.storage.readers import attach_optimizer_storage_context
+
+    payload = attach_optimizer_storage_context(payload, settings=settings, job="intraday_sell")
     result = chat_json(
         system=(
             "你是 daily-run harness 盘中卖出 scan 优化器。输出 JSON："

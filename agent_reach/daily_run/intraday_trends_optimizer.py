@@ -161,6 +161,9 @@ def optimize_intraday_trends_with_deepseek(
     import json
 
     payload = build_intraday_trends_optimize_payload(source, settings=settings)
+    from agent_reach.daily_run.storage.readers import attach_optimizer_storage_context
+
+    payload = attach_optimizer_storage_context(payload, settings=settings, job="intraday_trends")
     result = chat_json(
         system=(
             "你是 daily-run harness 盘中趋势集合优化器。输出 JSON："

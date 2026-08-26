@@ -169,6 +169,9 @@ def optimize_buy_rules_whatif_with_deepseek(
     import json
 
     payload = build_buy_whatif_optimize_payload(report, settings=settings)
+    from agent_reach.daily_run.storage.readers import attach_optimizer_storage_context
+
+    payload = attach_optimizer_storage_context(payload, settings=settings, job="buy_rules_whatif")
     result = chat_json(
         system=(
             "你是 A 股量化 daily-run harness 买入 sizing 优化器。"

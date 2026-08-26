@@ -97,6 +97,18 @@ def save_close_baseline(
 def load_close_baseline(code: str) -> Optional[dict[str, Any]]:
     norm = _normalize_code(str(code))
     per = close_baseline_path(norm)
+    try:
+        from agent_reach.daily_run.storage.config import path_under_daily_run_data
+
+        if path_under_daily_run_data(per.parent):
+            from agent_reach.daily_run.settings import load_settings
+            from agent_reach.daily_run.storage.readers import read_close_baseline_from_store
+
+            db_row = read_close_baseline_from_store(norm, settings=load_settings())
+            if db_row:
+                return db_row
+    except Exception:
+        pass
     if per.exists():
         try:
             return json.loads(per.read_text(encoding="utf-8"))
@@ -228,8 +240,23 @@ def _intraday_best_scans_for_day(day: date) -> dict[str, dict[str, Any]]:
     return out
 
 
-def _load_last_intraday_scan(day: date, code: str) -> Optional[dict[str, Any]]:
-    """Last intraday scan MSS for ``code`` on ``day`` (from job manifests)."""
+def _load_last_intraday_scan(day: date, code: str, *, settings: Optional[dict[str, Any]] = None) -> Optional[dict[str, Any]]:
+    """Last intraday scan MSS for ``code`` on ``day`` (DB → job manifests)."""
+    try:
+        from agent_reach.daily_run.storage.config import path_under_daily_run_data
+
+        if path_under_daily_run_data(runs_dir()):
+            from agent_reach.daily_run.storage.readers import read_intraday_scan_best_for_day
+
+            if settings is None:
+                from agent_reach.daily_run.settings import load_settings
+
+                settings = load_settings()
+            hit = read_intraday_scan_best_for_day(day, code, settings=settings)
+            if hit:
+                return hit
+    except Exception:
+        pass
     norm = _normalize_code(code)
     hit = _intraday_best_scans_for_day(day).get(norm)
     if not hit:
@@ -279,7 +306,7 @@ def load_prior_close_reference(
     if manifest:
         return {**manifest, "source": manifest.get("_baseline_source", "manifest")}
 
-    intraday = _load_last_intraday_scan(target_day, norm)
+    intraday = _load_last_intraday_scan(target_day, norm, settings=settings or {})
     if intraday:
         return intraday
 

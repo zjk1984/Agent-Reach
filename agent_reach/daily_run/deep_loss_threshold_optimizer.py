@@ -167,6 +167,9 @@ def optimize_deep_loss_threshold_with_deepseek(
     import json
 
     payload = build_deep_loss_threshold_payload(portfolio_summary, settings=settings)
+    from agent_reach.daily_run.storage.readers import attach_optimizer_storage_context
+
+    payload = attach_optimizer_storage_context(payload, settings=settings, job="deep_loss_threshold")
     result = chat_json(
         system=(
             "你是 daily-run harness 深亏阈值优化器。输出 JSON："

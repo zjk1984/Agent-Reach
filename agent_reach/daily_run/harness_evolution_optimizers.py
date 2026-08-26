@@ -265,6 +265,9 @@ def optimize_weekly_threshold_with_deepseek(
     import json
 
     payload = build_weekly_threshold_payload(report, settings=settings)
+    from agent_reach.daily_run.storage.readers import attach_optimizer_storage_context
+
+    payload = attach_optimizer_storage_context(payload, settings=settings, job="harness_threshold")
     result = chat_json(
         system=(
             "你是 A 股 daily-run harness 阈值优化器。输出 JSON："
@@ -364,6 +367,9 @@ def optimize_pnl_target_with_deepseek(
     import json
 
     payload = build_pnl_target_payload(cycle, portfolio_summary=portfolio_summary, settings=settings)
+    from agent_reach.daily_run.storage.readers import attach_optimizer_storage_context
+
+    payload = attach_optimizer_storage_context(payload, settings=settings, job="pnl_target")
     result = chat_json(
         system=(
             "你是 daily-run harness 盈亏目标优化器。输出 JSON："
@@ -453,6 +459,9 @@ def optimize_forecast_calibrate_with_deepseek(
     import json
 
     payload = build_forecast_calibrate_payload(forecast, settings=settings)
+    from agent_reach.daily_run.storage.readers import attach_optimizer_storage_context
+
+    payload = attach_optimizer_storage_context(payload, settings=settings, job="forecast_calibrate")
     result = chat_json(
         system=(
             "你是 daily-run harness MSS 预测校准优化器。输出 JSON："

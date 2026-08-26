@@ -33,6 +33,22 @@ def market_review_path(review_date: str) -> Path:
 
 def load_market_review(review_date: str) -> Optional[dict[str, Any]]:
     path = market_review_path(review_date)
+    try:
+        from agent_reach.daily_run.storage.config import path_under_daily_run_data
+
+        if path_under_daily_run_data(path.parent):
+            from agent_reach.daily_run.settings import load_settings
+            from agent_reach.daily_run.storage.readers import read_l2_payload
+
+            payload = read_l2_payload(
+                "market_review",
+                review_date,
+                settings=load_settings(),
+            )
+            if isinstance(payload, dict) and payload:
+                return payload
+    except Exception:
+        pass
     if not path.exists():
         return None
     try:

@@ -116,8 +116,25 @@ def load_daily_pnl_history(
     path: Optional[Path] = None,
     start: Optional[date] = None,
     end: Optional[date] = None,
+    settings: Optional[dict[str, Any]] = None,
 ) -> list[DailyPnlRecord]:
     p = path or default_pnl_history_path()
+    try:
+        from agent_reach.daily_run.settings import load_settings
+        from agent_reach.daily_run.storage.config import storage_db_reads_allowed
+        from agent_reach.daily_run.storage.readers import read_daily_pnl_records
+
+        if storage_db_reads_allowed(settings, file_path=p, explicit_path=path is not None):
+            cfg = settings or load_settings()
+            db_rows = read_daily_pnl_records(settings=cfg, start=start, end=end)
+            if db_rows:
+                by_date = {
+                    str(row.get("date") or ""): DailyPnlRecord.from_dict(row)
+                    for row in db_rows
+                }
+                return [by_date[d] for d in sorted(by_date) if d]
+    except Exception:
+        pass
     if not p.is_file():
         return []
     by_date: dict[str, DailyPnlRecord] = {}

@@ -844,6 +844,7 @@
       "enabled": true,
       "auto_after_close": false
     },
+    "read_prefer_db": true,
     "retrieval": {
       "enabled": true,
       "lookback_days": 30,

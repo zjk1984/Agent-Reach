@@ -127,8 +127,21 @@ def load_ledger_entries(
     path: Optional[Path] = None,
     start: Optional[date] = None,
     end: Optional[date] = None,
+    settings: Optional[dict[str, Any]] = None,
 ) -> list[dict[str, Any]]:
     p = path or default_ledger_path()
+    try:
+        from agent_reach.daily_run.settings import load_settings
+        from agent_reach.daily_run.storage.config import storage_db_reads_allowed
+        from agent_reach.daily_run.storage.readers import read_trade_ledger_entries
+
+        if storage_db_reads_allowed(settings, file_path=p, explicit_path=path is not None):
+            cfg = settings or load_settings()
+            db_rows = read_trade_ledger_entries(settings=cfg, start=start, end=end)
+            if db_rows:
+                return db_rows
+    except Exception:
+        pass
     if not p.is_file():
         return []
     entries: list[dict[str, Any]] = []

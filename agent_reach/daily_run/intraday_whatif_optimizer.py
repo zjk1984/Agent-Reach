@@ -156,6 +156,9 @@ def optimize_intraday_friction_with_deepseek(
     import json
 
     payload = build_intraday_friction_optimize_payload(portfolio_summary, settings=settings)
+    from agent_reach.daily_run.storage.readers import attach_optimizer_storage_context
+
+    payload = attach_optimizer_storage_context(payload, settings=settings, job="intraday_friction")
     result = chat_json(
         system=(
             "你是 daily-run harness 盘中摩擦/趋势优化器。输出 JSON："

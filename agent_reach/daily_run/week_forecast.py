@@ -60,6 +60,22 @@ def list_trading_days(start: date, end: date, *, settings: Optional[dict[str, An
 def load_calibration_file() -> dict[str, Any]:
     """Read calibration.json only (no harness overlay)."""
     path = calibration_path()
+    try:
+        from agent_reach.daily_run.storage.config import path_under_daily_run_data
+
+        if path_under_daily_run_data(path.parent):
+            from agent_reach.daily_run.settings import load_settings
+            from agent_reach.daily_run.storage.readers import read_l2_payload
+
+            payload = read_l2_payload(
+                "forecast_calibration",
+                "calibration",
+                settings=load_settings(),
+            )
+            if isinstance(payload, dict) and payload:
+                return payload
+    except Exception:
+        pass
     if not path.exists():
         return {"bias_pct": 0.0, "vol_scale": 1.0, "hit_rate": None, "reviews": 0}
     try:

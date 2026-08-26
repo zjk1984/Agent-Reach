@@ -162,6 +162,9 @@ def optimize_sell_rules_whatif_with_deepseek(
     import json
 
     payload = build_whatif_optimize_payload(report, settings=settings)
+    from agent_reach.daily_run.storage.readers import attach_optimizer_storage_context
+
+    payload = attach_optimizer_storage_context(payload, settings=settings, job="sell_rules_whatif")
     result = chat_json(
         system=(
             "你是 A 股量化 daily-run harness 卖出比例优化器。"

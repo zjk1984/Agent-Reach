@@ -52,8 +52,20 @@ def _finalize_portfolio(data: dict[str, Any]) -> dict[str, Any]:
     return sync_portfolio_holding_days(data, settings=load_settings())
 
 
-def load_portfolio(path: Optional[Path] = None) -> dict[str, Any]:
+def load_portfolio(path: Optional[Path] = None, *, settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     p = path or default_portfolio_path()
+    try:
+        from agent_reach.daily_run.settings import load_settings
+        from agent_reach.daily_run.storage.config import storage_db_reads_allowed
+        from agent_reach.daily_run.storage.readers import read_latest_portfolio
+
+        if storage_db_reads_allowed(settings, file_path=p, explicit_path=path is not None):
+            cfg = settings or load_settings()
+            db_pf = read_latest_portfolio(settings=cfg)
+            if db_pf and not _portfolio_is_empty(db_pf):
+                return _finalize_portfolio(db_pf)
+    except Exception:
+        pass
     if p.exists():
         data = json.loads(p.read_text(encoding="utf-8"))
         if not _portfolio_is_empty(data):

@@ -39,12 +39,42 @@ def external_enabled(settings: Optional[dict[str, Any]] = None) -> bool:
 
 
 def read_playbook_fragment() -> str:
+    try:
+        from agent_reach.daily_run.storage.config import path_under_daily_run_data
+
+        if path_under_daily_run_data(FRAGMENTS_DIR):
+            from agent_reach.daily_run.settings import load_settings
+            from agent_reach.daily_run.storage.readers import read_l3_document
+
+            doc = read_l3_document("skill_playbook", "playbook", settings=load_settings())
+            content = (doc or {}).get("content")
+            if isinstance(content, str) and content.strip():
+                return content
+    except Exception:
+        pass
     if not PLAYBOOK_FRAGMENT.exists():
         return ""
     return PLAYBOOK_FRAGMENT.read_text(encoding="utf-8")
 
 
 def read_experience_fragment() -> str:
+    try:
+        from agent_reach.daily_run.storage.config import path_under_daily_run_data
+
+        if path_under_daily_run_data(FRAGMENTS_DIR):
+            from agent_reach.daily_run.settings import load_settings
+            from agent_reach.daily_run.storage.readers import read_l3_document
+
+            doc = read_l3_document(
+                "skill_experience_latest",
+                "experience_latest",
+                settings=load_settings(),
+            )
+            content = (doc or {}).get("content")
+            if isinstance(content, str) and content.strip():
+                return content
+    except Exception:
+        pass
     if not EXPERIENCE_FRAGMENT.exists():
         return ""
     return EXPERIENCE_FRAGMENT.read_text(encoding="utf-8")

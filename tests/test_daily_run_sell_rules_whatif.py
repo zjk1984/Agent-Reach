@@ -572,6 +572,15 @@ def _settings_buy_evolved():
 
 
 class TestBuyRulesWhatIf:
+    @pytest.fixture(autouse=True)
+    def _isolated_harness(self, monkeypatch):
+        from agent_reach.daily_run.harness import HarnessState
+
+        monkeypatch.setattr(
+            "agent_reach.daily_run.harness.load_harness",
+            lambda: HarnessState(),
+        )
+
     def test_partial_deploy_vs_actual_buy(self):
         morning = {
             "portfolio": {
@@ -663,6 +672,15 @@ class TestBuyRulesWhatIf:
 
 
 class TestIntradaySellWhatIf:
+    @pytest.fixture(autouse=True)
+    def _isolated_harness(self, monkeypatch):
+        from agent_reach.daily_run.harness import HarnessState
+
+        monkeypatch.setattr(
+            "agent_reach.daily_run.harness.load_harness",
+            lambda: HarnessState(),
+        )
+
     def test_missed_macro_veto_sell_signal(self):
         morning = {
             "portfolio": {

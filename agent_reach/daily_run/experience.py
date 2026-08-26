@@ -255,6 +255,19 @@ def load_experience_rules(limit: int = 5, *, settings: Optional[dict[str, Any]] 
         logger.warning("daily-run load_experience_rules harness path failed: {}", exc)
 
     path = experience_dir() / "rules_summary.json"
+    try:
+        from agent_reach.daily_run.storage.config import path_under_daily_run_data
+
+        if path_under_daily_run_data(path.parent):
+            from agent_reach.daily_run.settings import load_settings
+            from agent_reach.daily_run.storage.readers import read_rules_summary
+
+            db_summary = read_rules_summary(settings=load_settings())
+            if db_summary and db_summary.get("rules"):
+                rules = list(db_summary.get("rules") or [])
+                return rules[-limit:]
+    except Exception:
+        pass
     if not path.exists():
         return []
     try:

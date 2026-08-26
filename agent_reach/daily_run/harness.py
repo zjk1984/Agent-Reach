@@ -117,14 +117,32 @@ class HarnessState:
             self.entries.setdefault(kind, {})
 
     @classmethod
-    def load(cls, path: Optional[Path] = None) -> HarnessState:
+    def load(cls, path: Optional[Path] = None, *, settings: Optional[dict[str, Any]] = None) -> HarnessState:
         p = path or _state_path()
+        if path is None:
+            try:
+                from agent_reach.daily_run.storage.config import storage_db_reads_allowed
+
+                if storage_db_reads_allowed(settings, file_path=p):
+                    from agent_reach.daily_run.settings import load_settings
+                    from agent_reach.daily_run.storage.readers import read_harness_state_payload
+
+                    cfg = settings or load_settings()
+                    db_payload = read_harness_state_payload(settings=cfg)
+                    if db_payload:
+                        return cls._from_payload(db_payload)
+            except Exception:
+                pass
         if not p.exists():
             return cls()
         try:
             data = json.loads(p.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             return cls()
+        return cls._from_payload(data)
+
+    @classmethod
+    def _from_payload(cls, data: dict[str, Any]) -> HarnessState:
         state = cls(schema=int(data.get("schema") or _SCHEMA_VERSION))
         for kind in _KINDS:
             block = (data.get("entries") or {}).get(kind) or {}
@@ -317,7 +335,7 @@ class HarnessState:
 
 
 def load_harness() -> HarnessState:
-    return HarnessState.load(_state_path())
+    return HarnessState.load()
 
 
 def save_harness(state: HarnessState) -> Path:
