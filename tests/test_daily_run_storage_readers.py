@@ -139,14 +139,20 @@ def test_load_portfolio_prefers_file_when_db_truncated(storage_env, tmp_path, mo
     full = {
         "holdings": [
             {"code": "688008", "name": "澜起科技", "shares": 100},
+            {"code": "002583", "name": "海能达", "shares": 2500},
             {"code": "000725", "name": "京东方A", "shares": 900},
         ],
         "watchlist": [
             {"code": "603986", "name": "兆易创新"},
             {"code": "002415", "name": "海康威视"},
+            {"code": "601138", "name": "工业富联"},
+            {"code": "300308", "name": "中际旭创"},
+            {"code": "002273", "name": "水晶光电"},
+            {"code": "600584", "name": "长电科技"},
         ],
         "cash": 50000.0,
         "total": 110000.0,
+        "primary_code": "688008",
     }
     pf_path.write_text(json.dumps(full, ensure_ascii=False) + "\n", encoding="utf-8")
     monkeypatch.setattr(
@@ -169,21 +175,30 @@ def test_load_portfolio_prefers_file_when_db_truncated(storage_env, tmp_path, mo
     )
 
     loaded = load_portfolio(settings=settings)
-    assert len(loaded.get("holdings") or []) == 2
-    assert len(loaded.get("watchlist") or []) == 2
+    assert len(loaded.get("holdings") or []) == 3
+    assert len(loaded.get("watchlist") or []) == 6
     codes = resolve_target_symbols(
         loaded,
         {**settings, "schedule": {"symbols_mode": "all", "intraday_symbols_mode": "all"}},
         workflow="intraday",
     )
-    assert "688008" in codes
-    assert "603986" in codes
-    assert len(codes) == 4
+    assert len(codes) == 9
+    assert codes == [
+        "688008",
+        "002583",
+        "000725",
+        "603986",
+        "002415",
+        "601138",
+        "300308",
+        "002273",
+        "600584",
+    ]
 
     db_after = get_store(settings).query_latest_portfolio_snapshot()
     assert db_after
-    assert len(db_after.get("holdings") or []) == 2
-    assert len(db_after.get("watchlist") or []) == 2
+    assert len(db_after.get("holdings") or []) == 3
+    assert len(db_after.get("watchlist") or []) == 6
     assert db_after.get("_snapshot_source") == "repair"
 
 
