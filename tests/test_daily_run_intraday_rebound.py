@@ -166,3 +166,67 @@ def test_no_rebound_when_defensive_trim_absent():
         "harness_runtime": {"trade_signals": {"defensive_trim": False}},
     }
     assert detect_intraday_session_rebound(_rebound_scans(), settings) is None
+
+
+def test_rebound_harness_evolves_easier_on_defensive_trim():
+    from agent_reach.daily_run.harness import HarnessEntry, HarnessState
+    from agent_reach.daily_run.intraday_rebound_policy import resolve_harness_rebound_policy
+
+    state = HarnessState()
+    state.entries["memory"]["miss"] = HarnessEntry(
+        id="miss",
+        kind="memory",
+        title="MSS 预测偏离",
+        content="MSS 预测偏离：下日调低进攻阈值或缩窄仓位",
+        source="deterministic",
+        job="close",
+        evidence="close",
+        created_at="2026-08-17T00:00:00+00:00",
+        updated_at="2026-08-17T00:00:00+00:00",
+    )
+    settings = {
+        "harness": {
+            "runtime_overlay_sources": ["memory"],
+            "min_mss_delta_mode": "harness",
+            "min_latest_mss_mode": "harness",
+        },
+        "intraday": {
+            "rebound": {
+                "mode": "harness",
+                "enabled": True,
+                "min_mss_delta": 3.0,
+                "min_latest_mss": 50.0,
+            },
+        },
+    }
+    policy = resolve_harness_rebound_policy(state, settings=settings)
+    assert policy["min_mss_delta"] == 2.5
+    assert policy["min_latest_mss"] == 48.0
+
+
+def test_rebound_overlay_uses_harness_runtime_policy():
+    settings = {
+        "thresholds": {"macro_veto": 30, "aggressive_entry": 45},
+        "harness": {"enabled": True, "runtime_overlay": True},
+        "intraday": {
+            "rebound": {
+                "mode": "harness",
+                "enabled": True,
+                "min_mss_delta": 3.0,
+                "min_latest_mss": 50.0,
+            },
+        },
+        "harness_runtime": {
+            **_defensive_runtime(),
+            "rebound_policy": {"min_mss_delta": 2.0, "min_latest_mss": 47.0},
+        },
+    }
+    patched = apply_intraday_rebound_overlay(settings, _rebound_scans())
+    assert intraday_rebound_active(patched)
+
+
+def test_parse_rebound_policy_line():
+    from agent_reach.daily_run.intraday_rebound_policy import parse_rebound_policy_line
+
+    parsed = parse_rebound_policy_line("rebound最优：min_mss_delta=2.20 min_latest_mss=47.50")
+    assert parsed == {"min_mss_delta": 2.2, "min_latest_mss": 47.5}

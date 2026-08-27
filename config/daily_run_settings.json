@@ -47,6 +47,7 @@
     "defensive_trim_min_mss": 40,
     "defensive_trim_mss_buffer": 0,
     "rebound": {
+      "mode": "harness",
       "enabled": true,
       "min_mss_delta": 3.0,
       "min_latest_mss": 50.0,
@@ -965,6 +966,8 @@
     "non_deep_loss_sell_ratio_mode": "harness",
     "win_rate_min_mode": "harness",
     "loss_streak_max_mode": "harness",
+    "min_mss_delta_mode": "harness",
+    "min_latest_mss_mode": "harness",
     "max_memory": 80,
     "max_policy": 30,
     "max_playbook": 20,

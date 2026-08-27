@@ -10,7 +10,9 @@ from agent_reach.daily_run.intraday_scan_filters import scans_for_trend_detectio
 
 
 def _rebound_cfg(settings: dict[str, Any]) -> dict[str, Any]:
-    return dict((settings.get("intraday") or {}).get("rebound") or {})
+    from agent_reach.daily_run.intraday_rebound_policy import rebound_effective_cfg
+
+    return rebound_effective_cfg(settings)
 
 
 def intraday_rebound_active(settings: dict[str, Any]) -> bool:

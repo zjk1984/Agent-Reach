@@ -169,6 +169,7 @@ def test_apply_harness_policy_overlay_includes_new_policies(mock_load, mock_over
         "finance_close": {"mode": "harness"},
         "watchlist": {"mode": "harness"},
         "macro_collector": {"xueqiu_hit_mode": "harness"},
+        "intraday": {"rebound": {"mode": "harness", "min_mss_delta": 3.0, "min_latest_mss": 50.0}},
         "thresholds": {},
         "experience": {"enabled": True},
     }
@@ -180,7 +181,8 @@ def test_apply_harness_policy_overlay_includes_new_policies(mock_load, mock_over
     assert "finance_tolerance_policy" in runtime
     assert "watchlist_score_policy" in runtime
     assert "xueqiu_hit_policy" in runtime
-    assert out["optimizer"].get("mode") == "harness"
+    assert "rebound_policy" in runtime
+    assert out["intraday"]["rebound"]["min_mss_delta"] == 3.0
     assert out["watchlist"].get("announcement_score_boost") is not None
 
 

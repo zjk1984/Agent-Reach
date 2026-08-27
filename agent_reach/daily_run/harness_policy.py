@@ -305,6 +305,8 @@ EVOLVED_CONFIG_KEYS_BY_SECTION: dict[str, tuple[str, ...]] = {
         "eval_trends",
         "consecutive_buy_cash_bypass",
         "deep_loss_consecutive_buy",
+        "min_mss_delta",
+        "min_latest_mss",
     ),
     "portfolio": ("max_holdings", "max_total_symbols"),
     "trading": ("holding_lock_days", "stop_loss_ma20_pct", "friction_min_return_pct"),
@@ -1708,6 +1710,24 @@ def apply_harness_policy_overlay(settings: dict[str, Any]) -> dict[str, Any]:
         intraday["deep_loss_consecutive_buy"] = int(
             effective_intraday_buy["deep_loss_consecutive_buy"]
         )
+    cfg["intraday"] = intraday
+    from agent_reach.daily_run.intraday_rebound_policy import (
+        harness_rebound_overlay_meta,
+        rebound_effective_cfg,
+        rebound_policy_base,
+        resolve_harness_rebound_policy,
+    )
+
+    base_rebound = rebound_policy_base(cfg)
+    effective_rebound = resolve_harness_rebound_policy(state, settings=cfg)
+    harness_meta["rebound_policy"] = effective_rebound
+    rebound_meta = harness_rebound_overlay_meta(base_rebound, effective_rebound)
+    if rebound_meta:
+        harness_meta["rebound_overlay"] = rebound_meta
+    intraday = dict(cfg.get("intraday") or {})
+    rebound_block = dict(intraday.get("rebound") or {})
+    rebound_block.update(rebound_effective_cfg({**cfg, "harness_runtime": harness_meta}))
+    intraday["rebound"] = rebound_block
     cfg["intraday"] = intraday
     audit_block = effective_intraday_audit.get("intraday_block_on_audit_fail", 0.0) > 0.5
     data_audit = dict(cfg.get("data_audit") or {})
