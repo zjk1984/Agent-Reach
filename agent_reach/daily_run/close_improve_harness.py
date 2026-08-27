@@ -9,7 +9,10 @@ from agent_reach.daily_run.close_improvements import CloseImprovements, Improvem
 from agent_reach.daily_run.harness_skill_base import apply_skill_refinement
 
 
-def _item_to_harness(item: ImprovementItem) -> tuple[list[str], list[str], list[str], list[str]]:
+def _item_to_harness(
+    item: ImprovementItem,
+    settings: Optional[dict[str, Any]] = None,
+) -> tuple[list[str], list[str], list[str], list[str]]:
     memory: list[str] = []
     policy: list[str] = []
     playbook: list[str] = []
@@ -20,8 +23,18 @@ def _item_to_harness(item: ImprovementItem) -> tuple[list[str], list[str], list[
     if item.category == "mss":
         memory.append(line)
         if "预测" in blob or "MSS" in blob:
-            memory.append("MSS 预测偏离：下日调低进攻阈值或缩窄仓位")
-            playbook.append("增大 mss_forecast.base_spread 或运行 daily-run optimize")
+            from agent_reach.daily_run.harness_reading_signals import (
+                macro_warming_memory_line,
+                resolve_harness_reading_signals,
+            )
+
+            reading = resolve_harness_reading_signals(settings)
+            if reading.get("mss_recovery"):
+                memory.append(macro_warming_memory_line(reading))
+                memory.append("宏观回暖")
+            else:
+                memory.append("MSS 预测偏离：下日调低进攻阈值或缩窄仓位")
+                playbook.append("增大 mss_forecast.base_spread 或运行 daily-run optimize")
         if "技术" in blob or "MA20" in blob:
             memory.append("技术面因子拖累 MSS：确认 AKShare 历史 K 线可用")
 
@@ -54,7 +67,11 @@ def _item_to_harness(item: ImprovementItem) -> tuple[list[str], list[str], list[
     return memory, policy, playbook, plan
 
 
-def improvements_to_harness_evidence(improvements: CloseImprovements) -> dict[str, Any]:
+def improvements_to_harness_evidence(
+    improvements: CloseImprovements,
+    *,
+    settings: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
     memory: list[str] = []
     policy: list[str] = []
     playbook: list[str] = []
@@ -69,7 +86,7 @@ def improvements_to_harness_evidence(improvements: CloseImprovements) -> dict[st
             {"memory": memory, "policy": policy, "playbook": playbook, "plan": plan}[kind].append(line)
 
     for item in improvements.items:
-        m, p, pb, pl = _item_to_harness(item)
+        m, p, pb, pl = _item_to_harness(item, settings=settings)
         _extend("memory", m)
         _extend("policy", p)
         _extend("playbook", pb)
@@ -86,7 +103,11 @@ def improvements_to_harness_evidence(improvements: CloseImprovements) -> dict[st
     }
 
 
-def forecast_review_to_harness_evidence(forecast_review: dict[str, Any]) -> dict[str, Any]:
+def forecast_review_to_harness_evidence(
+    forecast_review: dict[str, Any],
+    *,
+    settings: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
     memory: list[str] = []
     playbook: list[str] = []
     plan: list[str] = []
@@ -96,8 +117,18 @@ def forecast_review_to_harness_evidence(forecast_review: dict[str, Any]) -> dict
     if acc is not None and total > 0:
         memory.append(f"周预测命中率 {float(acc):.0%}（{forecast_review.get('symbol_hits', 0)}/{total}）")
     if forecast_review.get("mss_hit") is False:
-        memory.append("MSS 预测偏离：下日调低进攻阈值或缩窄仓位")
-        playbook.append("增大 mss_forecast.base_spread 或检查 macro 因子滞后")
+        from agent_reach.daily_run.harness_reading_signals import (
+            macro_warming_memory_line,
+            resolve_harness_reading_signals,
+        )
+
+        reading = resolve_harness_reading_signals(settings)
+        if reading.get("mss_recovery"):
+            memory.append(macro_warming_memory_line(reading))
+            memory.append("宏观回暖")
+        else:
+            memory.append("MSS 预测偏离：下日调低进攻阈值或缩窄仓位")
+            playbook.append("增大 mss_forecast.base_spread 或检查 macro 因子滞后")
     for note in forecast_review.get("optimization_notes") or []:
         playbook.append(str(note)[:200])
 
@@ -121,8 +152,8 @@ def apply_close_improve_harness_refinement(
 ) -> dict[str, Any]:
     from agent_reach.daily_run.harness_skill_base import merge_harness_evidence
 
-    parts = [improvements_to_harness_evidence(improvements)]
+    parts = [improvements_to_harness_evidence(improvements, settings=settings)]
     if forecast_review:
-        parts.append(forecast_review_to_harness_evidence(forecast_review))
+        parts.append(forecast_review_to_harness_evidence(forecast_review, settings=settings))
     evidence = merge_harness_evidence(*parts)
     return apply_skill_refinement("close_improve", evidence, settings=settings, enabled_flag="close_improvements")

@@ -1028,6 +1028,21 @@ def _apply_mss_signal_evolution(
     settings: dict[str, Any],
 ) -> dict[str, float]:
     signals = resolve_harness_trade_signals(state, settings=settings)
+    if signals.get("macro_warming"):
+        from agent_reach.daily_run.harness_reading_signals import reading_signals_cfg
+
+        cfg = reading_signals_cfg(settings)
+        if threshold_mode(settings, "macro_veto") == "harness":
+            merged["macro_veto"] = max(
+                float(merged.get("macro_veto", 40.0)),
+                float(cfg["recovery_macro_veto"]),
+            )
+        if threshold_mode(settings, "aggressive_entry") == "harness":
+            merged["aggressive_entry"] = max(
+                float(merged.get("aggressive_entry", 50.0)),
+                float(cfg["recovery_aggressive_entry"]),
+            )
+        return merged
     if signals.get("defensive_trim"):
         if threshold_mode(settings, "macro_veto") == "harness":
             merged["macro_veto"] = min(float(merged.get("macro_veto", 40.0)), 30.0)
@@ -1432,7 +1447,7 @@ def resolve_harness_trade_signals(
     pnl_hit = any("盈亏目标达成" in blob for blob in blobs)
     pnl_miss = any("盈亏目标未达" in blob for blob in blobs)
 
-    return {
+    memory_signals = {
         "mss_forecast_miss": mss_miss,
         "defensive_trim": mss_miss or deviation or pnl_miss,
         "deviation_active": deviation,
@@ -1441,6 +1456,13 @@ def resolve_harness_trade_signals(
         "pnl_target_hit": pnl_hit,
         "pnl_target_miss": pnl_miss,
     }
+    from agent_reach.daily_run.harness_reading_signals import (
+        merge_reading_into_trade_signals,
+        resolve_harness_reading_signals,
+    )
+
+    reading = resolve_harness_reading_signals(settings)
+    return merge_reading_into_trade_signals(memory_signals, reading, settings=settings)
 
 
 def harness_forecast_overlay_meta(
@@ -1619,6 +1641,11 @@ def apply_harness_policy_overlay(settings: dict[str, Any]) -> dict[str, Any]:
             harness_meta["mss_weights_overlay"] = weight_meta
 
     trade_signals = resolve_harness_trade_signals(state, settings=cfg)
+    from agent_reach.daily_run.harness_reading_signals import resolve_harness_reading_signals
+
+    reading = resolve_harness_reading_signals(cfg)
+    if reading.get("reading_available"):
+        harness_meta["reading_signals"] = reading
     if trade_signals.get("kronos_bullish"):
         harness_meta["kronos_bullish"] = trade_signals["kronos_bullish"]
     if trade_signals.get("kronos_bearish"):
@@ -1885,6 +1912,9 @@ def apply_harness_policy_overlay(settings: dict[str, Any]) -> dict[str, Any]:
             "deviation_active",
             "pnl_target_hit",
             "pnl_target_miss",
+            "mss_recovery",
+            "macro_warming",
+            "reading_suppressed_defensive",
         )
     }
 

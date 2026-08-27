@@ -16,6 +16,7 @@ from agent_reach.daily_run.settings import effective_settings, load_settings
 class CloseHarnessSkillsReport:
     verify: dict[str, Any] = field(default_factory=dict)
     close_improve: dict[str, Any] = field(default_factory=dict)
+    reading_signals: dict[str, Any] = field(default_factory=dict)
     data_audit: dict[str, Any] = field(default_factory=dict)
     watchlist_adjust: dict[str, Any] = field(default_factory=dict)
     watchlist_intel: dict[str, Any] = field(default_factory=dict)
@@ -34,6 +35,7 @@ class CloseHarnessSkillsReport:
         return {
             "verify": self.verify,
             "close_improve": self.close_improve,
+            "reading_signals": self.reading_signals,
             "data_audit": self.data_audit,
             "watchlist_adjust": self.watchlist_adjust,
             "watchlist_intel": self.watchlist_intel,
@@ -52,6 +54,7 @@ class CloseHarnessSkillsReport:
                 for block in (
                     self.verify,
                     self.close_improve,
+                    self.reading_signals,
                     self.data_audit,
                     self.watchlist_adjust,
                     self.watchlist_intel,
@@ -102,6 +105,10 @@ def run_close_harness_refinements(
             settings=cfg,
             forecast_review=forecast_review,
         )
+
+    from agent_reach.daily_run.harness_reading_signals import apply_reading_harness_refinement
+
+    report.reading_signals = apply_reading_harness_refinement(settings=cfg)
 
     if audit is not None:
         from agent_reach.daily_run.data_audit_harness import apply_data_audit_harness_refinement

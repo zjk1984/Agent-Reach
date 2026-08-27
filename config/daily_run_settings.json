@@ -969,6 +969,16 @@
     "loss_streak_max_mode": "harness",
     "min_mss_delta_mode": "harness",
     "min_latest_mss_mode": "harness",
+    "reading_signals": {
+      "enabled": true,
+      "suppress_defensive_on_recovery": true,
+      "persist_macro_warming_on_close": true,
+      "recovery_min_mss": 52.0,
+      "recovery_min_lookback": 52.0,
+      "recovery_min_delta": 5.0,
+      "recovery_macro_veto": 38.0,
+      "recovery_aggressive_entry": 48.0
+    },
     "max_memory": 80,
     "max_policy": 30,
     "max_playbook": 20,
