@@ -204,8 +204,10 @@ def reconcile_close_portfolio(
     settings: Optional[dict[str, Any]] = None,
 ) -> ReconciliationResult:
     """Close NAV reconcile: start + daily_pnl + capital_flow ≈ end."""
+    from agent_reach.daily_run.finance_tolerance_policy import finance_tolerance_cfg
+
     cfg = _finance_cfg(settings)
-    tolerance = float(cfg.get("reconcile_tolerance_cny", 1.0))
+    tolerance = float(finance_tolerance_cfg(settings).get("reconcile_tolerance_cny", cfg.get("reconcile_tolerance_cny", 1.0)))
 
     start = portfolio_summary.get("start_total")
     end = portfolio_summary.get("end_total")
@@ -376,12 +378,17 @@ def analyze_reconciliation_snapshot(
 
 
 def _variance_cfg(settings: Optional[dict[str, Any]], section: str) -> dict[str, float]:
+    from agent_reach.daily_run.finance_tolerance_policy import finance_tolerance_cfg
+
     block = dict((settings or {}).get(section) or {})
     if section == "finance_close" and not block.get("variance_tolerance_cny"):
         block = {**_finance_cfg(settings), **block}
+    tolerances = finance_tolerance_cfg(settings)
     return {
-        "tolerance": float(block.get("variance_tolerance_cny", 1.0)),
-        "materiality_cny": float(block.get("variance_materiality_cny", 500)),
+        "tolerance": float(tolerances.get("variance_tolerance_cny", block.get("variance_tolerance_cny", 1.0))),
+        "materiality_cny": float(
+            tolerances.get("variance_materiality_cny", block.get("variance_materiality_cny", 500))
+        ),
         "materiality_pct": float(block.get("percent_materiality", 0.0)),
     }
 
@@ -606,8 +613,11 @@ def build_weekly_financial_statements(
     settings: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Weekly income / balance / cash-flow skeleton (dsh-finance financial-statements)."""
+    from agent_reach.daily_run.finance_tolerance_policy import finance_tolerance_cfg
+
     cfg = _statements_cfg(settings)
-    materiality = float(cfg.get("materiality_cny") or 1000)
+    tolerances = finance_tolerance_cfg(settings)
+    materiality = float(tolerances.get("statement_materiality_cny", cfg.get("materiality_cny") or 1000))
 
     end_total = report.get("end_total")
     start_total = report.get("start_total")
@@ -653,7 +663,9 @@ def build_weekly_financial_statements(
         flags.append("缺少周初/周末净值")
     if weekly_pnl is not None and start_total and float(start_total) > 0:
         implied = float(end_total or 0) - float(start_total)
-        if abs(implied - weekly_pnl) > float(cfg.get("tie_tolerance_cny") or 5.0):
+        if abs(implied - weekly_pnl) > float(
+            tolerances.get("tie_tolerance_cny", cfg.get("tie_tolerance_cny") or 5.0)
+        ):
             flags.append(f"损益与净值变动差 {abs(implied - weekly_pnl):,.2f} 元")
 
     return {
@@ -959,8 +971,11 @@ def check_trade_ledger_journal(
     settings: Optional[dict[str, Any]] = None,
 ) -> JournalEntryCheckResult:
     """Port of dsh-finance finance_journal_entry_check for trade ledger lines."""
+    from agent_reach.daily_run.finance_tolerance_policy import finance_tolerance_cfg
+
     cfg = _ledger_cfg(settings)
-    tolerance = float(cfg.get("amount_tolerance_cny", 1.0))
+    tolerances = finance_tolerance_cfg(settings)
+    tolerance = float(tolerances.get("amount_tolerance_cny", cfg.get("amount_tolerance_cny", 1.0)))
     pct_tol = float(cfg.get("amount_tolerance_pct", 0.02))
     require_trade_id = bool(cfg.get("require_trade_id"))
     require_reasoning = bool(cfg.get("require_reasoning"))

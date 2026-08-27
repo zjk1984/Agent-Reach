@@ -55,11 +55,13 @@ def resolve_optimize_objective(
     objective: Optional[str] = None,
     settings: Optional[dict[str, Any]] = None,
 ) -> str:
-    """Resolve objective name (CLI override → settings.optimizer.default_objective)."""
+    """Resolve objective name (CLI override → harness-evolved optimizer grid policy)."""
     if objective:
         return str(objective)
+    from agent_reach.daily_run.optimizer_grid_policy import optimizer_grid_cfg
+
     cfg = settings or load_settings()
-    return str((cfg.get("optimizer") or {}).get("default_objective") or "sharpe")
+    return str(optimizer_grid_cfg(cfg).get("default_objective") or "sharpe")
 
 
 def _history_has_factors(history: list[dict[str, Any]]) -> bool:
@@ -88,7 +90,9 @@ def grid_search_optimize(
 ) -> OptimizeResult:
     """Grid search macro_veto / aggressive_entry and optionally mss_weights."""
     cfg = settings or load_settings()
-    opt_cfg = cfg.get("optimizer", {})
+    from agent_reach.daily_run.optimizer_grid_policy import optimizer_grid_cfg
+
+    opt_cfg = optimizer_grid_cfg(cfg)
     backtest_cfg = cfg.get("backtest", {})
 
     veto_grid = [float(x) for x in opt_cfg.get("macro_veto_grid", [38, 40, 42, 45])]

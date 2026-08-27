@@ -77,6 +77,7 @@
   },
 
   "data_audit": {
+    "mode": "harness",
     "required_source_categories": ["quote", "flow", "sentiment"],
     "block_on_audit_fail": true,
     "block_on_price_deviation": true,
@@ -186,6 +187,7 @@
 
   "finance_close": {
     "enabled": true,
+    "mode": "harness",
     "harness_evolve": true,
     "max_position_pct": 35,
     "max_sector_pct": 50,
@@ -254,6 +256,7 @@
 
   "expert_consensus": {
     "enabled": true,
+    "mode": "harness",
     "harness_evolve": true,
     "mss_drift_threshold": 12,
     "low_score_cutoff": 42,
@@ -439,6 +442,7 @@
   },
 
   "optimizer": {
+    "mode": "harness",
     "harness_evolve": true,
     "macro_veto_grid": [38, 40, 42, 45],
     "aggressive_entry_grid": [48, 50, 52, 55],
@@ -537,6 +541,7 @@
     "hot_topic_dedup_threshold": 0.86,
     "hot_topic_dedup_cross_source": true,
     "xueqiu_hit_outcomes_enabled": true,
+    "xueqiu_hit_mode": "harness",
     "xueqiu_hit_harness_evolve": true,
     "xueqiu_hit_candidate_overlay_enabled": true,
     "xueqiu_hit_low_rate": 0.4,
@@ -683,6 +688,7 @@
   },
 
   "watchlist": {
+    "mode": "harness",
     "auto_adjust_enabled": true,
     "harness_evolve": true,
     "adjust_phases": ["morning", "close"],

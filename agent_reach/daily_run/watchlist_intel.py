@@ -44,7 +44,9 @@ def watchlist_intel_enabled(settings: Optional[dict[str, Any]] = None) -> bool:
 
 
 def _intel_cfg(settings: Optional[dict[str, Any]]) -> dict[str, Any]:
-    wl = (settings or {}).get("watchlist") or {}
+    from agent_reach.daily_run.watchlist_score_policy import watchlist_score_cfg
+
+    wl = watchlist_score_cfg(settings)
     nested = wl.get("intel") or {}
     raw_keywords = nested.get("negative_keywords", wl.get("negative_intel_keywords"))
     if isinstance(raw_keywords, list) and raw_keywords:

@@ -28,7 +28,9 @@ def run_data_audit(
     doctor_channels: Optional[dict[str, dict]] = None,
 ) -> AuditResult:
     """Validate snapshot freshness, sources, price anchors, and doctor readiness."""
-    audit_cfg = settings.get("data_audit", {})
+    from agent_reach.daily_run.data_audit_policy import data_audit_cfg
+
+    audit_cfg = data_audit_cfg(settings)
     thresholds = settings.get("thresholds", {})
     issues: list[str] = []
     warnings: list[str] = []

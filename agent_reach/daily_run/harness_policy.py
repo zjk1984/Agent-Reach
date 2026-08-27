@@ -1712,6 +1712,112 @@ def apply_harness_policy_overlay(settings: dict[str, Any]) -> dict[str, Any]:
         effective_intraday_audit.get("min_quote_coverage_pct", data_audit.get("min_quote_coverage_pct", 0.8))
     )
     cfg["data_audit"] = data_audit
+    from agent_reach.daily_run.data_audit_policy import (
+        data_audit_policy_base,
+        harness_data_audit_overlay_meta,
+        resolve_harness_data_audit_policy,
+    )
+
+    base_data_audit = data_audit_policy_base(cfg)
+    effective_data_audit = resolve_harness_data_audit_policy(state, settings=cfg)
+    harness_meta["data_audit_policy"] = effective_data_audit
+    data_audit_meta = harness_data_audit_overlay_meta(base_data_audit, effective_data_audit)
+    if data_audit_meta:
+        harness_meta["data_audit_overlay"] = data_audit_meta
+    data_audit = dict(cfg.get("data_audit") or {})
+    data_audit["min_quote_coverage_pct"] = max(
+        float(effective_intraday_audit.get("min_quote_coverage_pct", 0.8)),
+        float(
+            effective_data_audit.get(
+                "min_quote_coverage_pct",
+                data_audit.get("min_quote_coverage_pct", 0.8),
+            )
+        ),
+    )
+    data_audit["block_on_audit_fail"] = float(effective_data_audit.get("block_on_audit_fail", 1.0)) > 0.5
+    data_audit["close_block_on_audit_fail"] = (
+        float(effective_data_audit.get("close_block_on_audit_fail", 1.0)) > 0.5
+    )
+    data_audit["block_on_price_deviation"] = (
+        float(effective_data_audit.get("block_on_price_deviation", 1.0)) > 0.5
+    )
+    cfg["data_audit"] = data_audit
+    from agent_reach.daily_run.optimizer_grid_policy import (
+        harness_optimizer_grid_overlay_meta,
+        optimizer_grid_cfg,
+        optimizer_grid_policy_base,
+        resolve_harness_optimizer_grid_policy,
+    )
+
+    base_optimizer_grid = optimizer_grid_policy_base(cfg)
+    effective_optimizer_grid = resolve_harness_optimizer_grid_policy(state, settings=cfg)
+    harness_meta["optimizer_grid_policy"] = effective_optimizer_grid
+    optimizer_grid_meta = harness_optimizer_grid_overlay_meta(base_optimizer_grid, effective_optimizer_grid)
+    if optimizer_grid_meta:
+        harness_meta["optimizer_grid_overlay"] = optimizer_grid_meta
+    optimizer = dict(cfg.get("optimizer") or {})
+    optimizer.update(optimizer_grid_cfg({**cfg, "harness_runtime": harness_meta}))
+    cfg["optimizer"] = optimizer
+    from agent_reach.daily_run.expert_consensus_policy import (
+        expert_consensus_cfg,
+        expert_consensus_policy_base,
+        harness_expert_consensus_overlay_meta,
+        resolve_harness_expert_consensus_policy,
+    )
+
+    base_expert = expert_consensus_policy_base(cfg)
+    effective_expert = resolve_harness_expert_consensus_policy(state, settings=cfg)
+    harness_meta["expert_consensus_policy"] = effective_expert
+    expert_meta = harness_expert_consensus_overlay_meta(base_expert, effective_expert)
+    if expert_meta:
+        harness_meta["expert_consensus_overlay"] = expert_meta
+    cfg["expert_consensus"] = expert_consensus_cfg({**cfg, "harness_runtime": harness_meta})
+    from agent_reach.daily_run.xueqiu_hit_policy import (
+        harness_xueqiu_hit_overlay_meta,
+        resolve_harness_xueqiu_hit_policy,
+        xueqiu_hit_policy_base,
+        xueqiu_hit_threshold_cfg,
+    )
+
+    base_xueqiu_hit = xueqiu_hit_policy_base(cfg)
+    effective_xueqiu_hit = resolve_harness_xueqiu_hit_policy(state, settings=cfg)
+    harness_meta["xueqiu_hit_policy"] = effective_xueqiu_hit
+    xueqiu_hit_meta = harness_xueqiu_hit_overlay_meta(base_xueqiu_hit, effective_xueqiu_hit)
+    if xueqiu_hit_meta:
+        harness_meta["xueqiu_hit_overlay"] = xueqiu_hit_meta
+    macro = dict(cfg.get("macro_collector") or {})
+    macro.update(xueqiu_hit_threshold_cfg({**cfg, "harness_runtime": harness_meta}))
+    cfg["macro_collector"] = macro
+    from agent_reach.daily_run.finance_tolerance_policy import (
+        apply_finance_tolerance_overlay,
+        finance_tolerance_policy_base,
+        harness_finance_tolerance_overlay_meta,
+        resolve_harness_finance_tolerance_policy,
+    )
+
+    base_finance_tol = finance_tolerance_policy_base(cfg)
+    effective_finance_tol = resolve_harness_finance_tolerance_policy(state, settings=cfg)
+    harness_meta["finance_tolerance_policy"] = effective_finance_tol
+    finance_tol_meta = harness_finance_tolerance_overlay_meta(base_finance_tol, effective_finance_tol)
+    if finance_tol_meta:
+        harness_meta["finance_tolerance_overlay"] = finance_tol_meta
+    cfg = apply_finance_tolerance_overlay({**cfg, "harness_runtime": harness_meta})
+    from agent_reach.daily_run.watchlist_score_policy import (
+        harness_watchlist_score_overlay_meta,
+        resolve_harness_watchlist_score_policy,
+        watchlist_score_cfg,
+        watchlist_score_policy_base,
+    )
+
+    base_watchlist_score = watchlist_score_policy_base(cfg)
+    effective_watchlist_score = resolve_harness_watchlist_score_policy(state, settings=cfg)
+    harness_meta["watchlist_score_policy"] = effective_watchlist_score
+    watchlist_score_meta = harness_watchlist_score_overlay_meta(base_watchlist_score, effective_watchlist_score)
+    if watchlist_score_meta:
+        harness_meta["watchlist_score_overlay"] = watchlist_score_meta
+    watchlist = dict(cfg.get("watchlist") or {})
+    watchlist.update(watchlist_score_cfg({**cfg, "harness_runtime": harness_meta}))
+    cfg["watchlist"] = watchlist
     base_min_deploy = resolve_harness_base_min_deploy_policy(cfg)
     effective_min_deploy = resolve_harness_min_deploy_policy(state, settings=cfg)
     harness_meta["min_deploy_policy"] = effective_min_deploy

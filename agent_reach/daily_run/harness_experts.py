@@ -44,7 +44,9 @@ class ExpertConsensusReview:
 
 
 def _expert_cfg(settings: Optional[dict[str, Any]]) -> dict[str, Any]:
-    return dict((settings or {}).get("expert_consensus") or {})
+    from agent_reach.daily_run.expert_consensus_policy import expert_consensus_cfg
+
+    return expert_consensus_cfg(settings)
 
 
 def _score_drift(expert: float, mss: float, *, threshold: float) -> bool:

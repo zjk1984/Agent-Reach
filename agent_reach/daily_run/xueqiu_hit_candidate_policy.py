@@ -30,7 +30,9 @@ def resolve_xueqiu_hit_candidate_overlay(
     if not xueqiu_hit_candidate_overlay_enabled(settings):
         return settings, {}
 
-    macro_base = dict(settings.get("macro_collector") or {})
+    from agent_reach.daily_run.xueqiu_hit_policy import xueqiu_hit_threshold_cfg
+
+    macro_base = xueqiu_hit_threshold_cfg(settings)
     wl_base = dict(settings.get("watchlist") or {})
     min_samples = int(
         macro_base.get(
