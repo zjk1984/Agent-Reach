@@ -10,6 +10,7 @@ from agent_reach.daily_run.skill_rejected import (
     is_rejected_title,
     load_active_rejected_records,
     refresh_rejected_strategies_for_week,
+    rejected_bypass_on_intraday_rebound,
     trade_blocked_by_rejected,
     _candidates_from_weekly_report,
 )
@@ -84,6 +85,45 @@ class TestSkillRejected:
             settings={**settings, "harness": {}},
         )
         assert blocked
+
+    def test_catch_knife_bypass_on_intraday_rebound(self, tmp_path, monkeypatch):
+        path = tmp_path / "rejected_strategies.jsonl"
+        monkeypatch.setattr("agent_reach.daily_run.skill_rejected._REJECTED_PATH", path)
+        settings = {
+            "rejected_strategies": {"active_week_only": False},
+            "intraday": {"rebound": {"rejected_bypass_catch_knife": True}},
+            "harness_runtime": {
+                "intraday_rebound": {"active": True, "trend": "turning_up"},
+            },
+        }
+        add_rejected_strategy("禁止接飞刀追涨", "宏观回避期逆势加仓已证伪", settings=settings)
+        assert trade_blocked_by_rejected("buy", name="中际旭创", settings=settings, trend="turning_up") is None
+
+    def test_catch_knife_still_blocks_without_rebound(self, tmp_path, monkeypatch):
+        path = tmp_path / "rejected_strategies.jsonl"
+        monkeypatch.setattr("agent_reach.daily_run.skill_rejected._REJECTED_PATH", path)
+        settings = {"rejected_strategies": {"active_week_only": False}, "harness": {}}
+        add_rejected_strategy("禁止接飞刀追涨", "宏观回避期逆势加仓已证伪", settings=settings)
+        assert trade_blocked_by_rejected("buy", name="中际旭创", settings=settings, trend="turning_up")
+
+    def test_symbol_specific_reject_not_bypassed_on_rebound(self, tmp_path, monkeypatch):
+        path = tmp_path / "rejected_strategies.jsonl"
+        monkeypatch.setattr("agent_reach.daily_run.skill_rejected._REJECTED_PATH", path)
+        settings = {
+            "rejected_strategies": {"active_week_only": False},
+            "intraday": {"rebound": {"rejected_bypass_catch_knife": True}},
+            "harness_runtime": {"intraday_rebound": {"active": True, "trend": "turning_up"}},
+        }
+        add_rejected_strategy("禁止澜起科技逆势加仓", "单票 what-if 已证伪", settings=settings)
+        assert is_rejected_title("澜起科技", settings=settings) is False
+        blocked = trade_blocked_by_rejected("buy", name="澜起科技", settings=settings, trend="turning_up")
+        assert blocked == "禁止澜起科技逆势加仓"
+        assert rejected_bypass_on_intraday_rebound(
+            settings,
+            trend="turning_up",
+            title="禁止澜起科技逆势加仓",
+            reason="单票 what-if 已证伪",
+        ) is False
 
     def test_refresh_archives_and_adds_next_week(self, tmp_path, monkeypatch):
         path = tmp_path / "rejected_strategies.jsonl"

@@ -145,6 +145,65 @@ _BUY_BLOCK_PHRASES: tuple[str, ...] = (
     "逆势加仓",
 )
 
+_CATCH_KNIFE_GLOBAL_TITLE_KEYS: frozenset[str] = frozenset(
+    {
+        _normalize_title("禁止接飞刀追涨"),
+        _normalize_title("禁止逆势加仓"),
+    }
+)
+
+
+def _rebound_trend_from_settings(settings: Optional[dict[str, Any]]) -> str:
+    runtime = (settings or {}).get("harness_runtime") or {}
+    rebound = runtime.get("intraday_rebound") or {}
+    return str(rebound.get("trend") or "")
+
+
+def _rebound_bypass_catch_knife_enabled(settings: Optional[dict[str, Any]]) -> bool:
+    rebound = dict(((settings or {}).get("intraday") or {}).get("rebound") or {})
+    if rebound.get("rejected_bypass_catch_knife") is False:
+        return False
+    return True
+
+
+def _is_symbol_specific_rejected_title(title: str) -> bool:
+    text = str(title or "").strip()
+    if not text.startswith("禁止"):
+        return False
+    if "接飞刀" in text:
+        return False
+    return bool(re.match(r"^禁止[\u4e00-\u9fffA-Za-z0-9]{2,20}逆势加仓$", text))
+
+
+def _is_global_catch_knife_reject(title: str, reason: str = "") -> bool:
+    key = _normalize_title(title)
+    if key in _CATCH_KNIFE_GLOBAL_TITLE_KEYS:
+        return True
+    if _is_symbol_specific_rejected_title(title):
+        return False
+    blob = f"{title} {reason}"
+    return any(p in blob for p in _BUY_BLOCK_PHRASES)
+
+
+def rejected_bypass_on_intraday_rebound(
+    settings: Optional[dict[str, Any]],
+    *,
+    trend: str = "",
+    title: str = "",
+    reason: str = "",
+) -> bool:
+    """V-reversal session: confirmed rebound is not catch-a-falling-knife."""
+    if not _rebound_bypass_catch_knife_enabled(settings):
+        return False
+    from agent_reach.daily_run.intraday_rebound import intraday_rebound_active
+
+    if not intraday_rebound_active(settings or {}):
+        return False
+    if not _is_global_catch_knife_reject(title, reason):
+        return False
+    effective_trend = str(trend or _rebound_trend_from_settings(settings))
+    return effective_trend in {"rising", "turning_up"}
+
 
 def trade_blocked_by_rejected(
     action: str,
@@ -152,6 +211,7 @@ def trade_blocked_by_rejected(
     code: str = "",
     name: str = "",
     settings: Optional[dict[str, Any]] = None,
+    trend: str = "",
 ) -> Optional[str]:
     """Return rejected strategy title if trade action should be blocked."""
     harness_cfg = dict((settings or {}).get("harness") or {})
@@ -171,6 +231,13 @@ def trade_blocked_by_rejected(
         reason = str(row.get("reason") or "")
         blob = f"{title} {reason}"
         if any(p in blob for p in _BUY_BLOCK_PHRASES):
+            if rejected_bypass_on_intraday_rebound(
+                settings,
+                trend=trend,
+                title=title,
+                reason=reason,
+            ):
+                continue
             return title or reason
     return None
 

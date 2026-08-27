@@ -230,3 +230,76 @@ def test_parse_rebound_policy_line():
 
     parsed = parse_rebound_policy_line("rebound最优：min_mss_delta=2.20 min_latest_mss=47.50")
     assert parsed == {"min_mss_delta": 2.2, "min_latest_mss": 47.5}
+
+
+def test_rebound_bypasses_catch_knife_rejected_for_buy(tmp_path, monkeypatch):
+    from agent_reach.daily_run.skill_rejected import add_rejected_strategy
+
+    path = tmp_path / "rejected_strategies.jsonl"
+    monkeypatch.setattr("agent_reach.daily_run.skill_rejected._REJECTED_PATH", path)
+    add_rejected_strategy(
+        "禁止接飞刀追涨",
+        "盘中摩擦 what-if：趋势误判",
+        settings={"rejected_strategies": {"active_week_only": False}},
+    )
+
+    settings = {
+        "thresholds": {"macro_veto": 38, "aggressive_entry": 48, "min_cash_ratio": 0.0},
+        "trading": {"commission_rate": 0.0015, "slippage_rate": 0.001, "holding_lock_days": 1},
+        "harness": {
+            "enabled": True,
+            "runtime_overlay": True,
+            "macro_veto_mode": "harness",
+            "aggressive_entry_mode": "harness",
+            "runtime_rejected_guard": True,
+        },
+        "rejected_strategies": {"active_week_only": False},
+        "intraday": {
+            "rebound": {"mode": "harness", "enabled": True, "rejected_bypass_catch_knife": True},
+        },
+    }
+    patched = apply_intraday_rebound_overlay(
+        {**settings, "harness_runtime": _defensive_runtime()},
+        _rebound_scans(),
+    )
+    trend = detect_mss_trend(_rebound_scans(), patched)
+    verdict = VerdictResult(
+        verdict="观察",
+        confidence="中",
+        mss_final=55,
+        entry_price=None,
+        stop_loss_price=None,
+        invalidation="",
+        reasoning="",
+        blocked=False,
+    )
+    decision = _decide_trade(
+        lookback_mss=54.0,
+        trend=trend,
+        verdict=verdict,
+        report={"code": "688008", "name": "澜起科技", "blocked": False, "audit_passed": True},
+        snapshot={
+            "code": "688008",
+            "portfolio": {
+                "cash_ratio": 0.6,
+                "cash": 60000,
+                "total": 100000,
+                "holdings": [],
+                "watchlist": [{"code": "688008", "name": "澜起科技"}],
+            },
+            "watchlist": [{"code": "688008", "price": 50.0, "name": "澜起科技"}],
+            "symbols": [{"code": "688008", "price": 50.0, "name": "澜起科技"}],
+        },
+        settings={
+            **patched,
+            "harness_runtime": {
+                **(patched.get("harness_runtime") or {}),
+                "position_policy": {"deploy_ratio": 1.0, "max_position_pct": 35.0},
+            },
+        },
+        trade_index=1,
+        expected_return_pct=0.02,
+    )
+    assert decision.action == "buy"
+    assert decision.blocked is False
+    assert decision.block_kind != "buy_rejected"

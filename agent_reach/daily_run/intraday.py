@@ -1183,6 +1183,7 @@ def _decide_trade(
             code=str(report.get("code") or ""),
             name=str(report.get("name") or ""),
             settings=settings,
+            trend=trend,
         )
         if buy_block:
             return TradeDecision(

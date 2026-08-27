@@ -60,7 +60,8 @@
       "defensive_trim_min_mss": 40.0,
       "defensive_trim_mss_buffer": 0.0,
       "deep_loss_sell_ratio": 0.75,
-      "non_deep_loss_sell_ratio": 0.85
+      "non_deep_loss_sell_ratio": 0.85,
+      "rejected_bypass_catch_knife": true
     },
     "expected_return": {
       "base": 0.015,
