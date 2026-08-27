@@ -208,9 +208,10 @@ def build_weekly_optimizer_whatif(
     best_score = float(best.best_score)
     score_delta = round(best_score - current_score, 6)
     min_delta = float(
-        dict((cfg.get("rejected_strategies") or {}).get("weekly_whatif") or {}).get(
-            "optimizer_score_delta_min", 0.05
-        )
+        __import__(
+            "agent_reach.daily_run.rejected_whatif_policy",
+            fromlist=["weekly_whatif_policy_default"],
+        ).weekly_whatif_policy_default(cfg, "optimizer_score_delta_min")
     )
 
     return OptimizerWhatIfResult(

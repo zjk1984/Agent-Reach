@@ -27,29 +27,9 @@ def _normalize_title(title: str) -> str:
 
 
 def _rejected_cfg(settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:
-    cfg = dict((settings or {}).get("rejected_strategies") or {})
-    whatif = dict(cfg.get("weekly_whatif") or {})
-    return {
-        "harness_evolve": cfg.get("harness_evolve", True),
-        "weekly_refresh": cfg.get("weekly_refresh", True),
-        "active_week_only": cfg.get("active_week_only", True),
-        "archive_expired": cfg.get("archive_expired", True),
-        "auto_add_from_weekly": cfg.get("auto_add_from_weekly", True),
-        "buy_notional_delta_cny": float(whatif.get("buy_notional_delta_cny", 5000)),
-        "sell_pnl_delta_cny": float(whatif.get("sell_pnl_delta_cny", 200)),
-        "friction_pass_min": int(whatif.get("friction_pass_min", 2)),
-        "trend_mismatch_min": int(whatif.get("trend_mismatch_min", 2)),
-        "intraday_sell_missed_min": int(whatif.get("intraday_sell_missed_min", 2)),
-        "require_whatif_for_macro": whatif.get("require_whatif_for_macro", True) is not False,
-        "deep_loss_lag_count_min": int(whatif.get("deep_loss_lag_count_min", 1)),
-        "deep_loss_share_delta_min": int(whatif.get("deep_loss_share_delta_min", 100)),
-        "sell_threshold_missed_min": int(
-            whatif.get("sell_threshold_missed_min", whatif.get("intraday_sell_missed_min", 2))
-        ),
-        "forecast_divergence_days_min": int(whatif.get("forecast_divergence_days_min", 3)),
-        "optimizer_score_delta_min": float(whatif.get("optimizer_score_delta_min", 0.05)),
-        "kronos_blocked_signals_min": int(whatif.get("kronos_blocked_signals_min", 2)),
-    }
+    from agent_reach.daily_run.rejected_whatif_policy import weekly_whatif_cfg
+
+    return weekly_whatif_cfg(settings)
 
 
 def _parse_iso_date(raw: str) -> Optional[date]:

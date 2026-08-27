@@ -1650,6 +1650,24 @@ def apply_harness_policy_overlay(settings: dict[str, Any]) -> dict[str, Any]:
     pnl_target_meta = harness_pnl_target_overlay_meta(base_pnl_target, effective_pnl_target)
     if pnl_target_meta:
         harness_meta["pnl_target_overlay"] = pnl_target_meta
+    from agent_reach.daily_run.rejected_whatif_policy import (
+        harness_weekly_whatif_overlay_meta,
+        resolve_harness_weekly_whatif_policy,
+        weekly_whatif_policy_base,
+    )
+
+    base_weekly_whatif = weekly_whatif_policy_base(cfg)
+    effective_weekly_whatif = resolve_harness_weekly_whatif_policy(state, settings=cfg)
+    harness_meta["weekly_whatif_policy"] = effective_weekly_whatif
+    weekly_whatif_meta = harness_weekly_whatif_overlay_meta(base_weekly_whatif, effective_weekly_whatif)
+    if weekly_whatif_meta:
+        harness_meta["weekly_whatif_overlay"] = weekly_whatif_meta
+    rejected_cfg = dict(cfg.get("rejected_strategies") or {})
+    rejected_cfg["weekly_whatif"] = {
+        **dict(rejected_cfg.get("weekly_whatif") or {}),
+        **{k: effective_weekly_whatif[k] for k in effective_weekly_whatif},
+    }
+    cfg["rejected_strategies"] = rejected_cfg
     base_trend = resolve_harness_base_trend_policy(cfg)
     effective_trend = resolve_harness_trend_policy(state, settings=cfg)
     harness_meta["trend_policy"] = effective_trend

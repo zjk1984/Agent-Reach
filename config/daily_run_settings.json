@@ -881,6 +881,8 @@
     "archive_expired": true,
     "auto_add_from_weekly": true,
     "weekly_whatif": {
+      "mode": "harness",
+      "llm_optimize": true,
       "buy_notional_delta_cny": 5000,
       "sell_pnl_delta_cny": 200,
       "friction_pass_min": 2,
@@ -1056,6 +1058,7 @@
       "intraday": true,
       "midday": true,
       "rejected_strategies": true,
+      "rejected_whatif": true,
       "skill_gates": true,
       "watchlist_adjust": true,
       "forecast_calibrate": true,

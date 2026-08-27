@@ -1561,6 +1561,20 @@ def run_weekly(
             steps.append(f"rejected_archived_{rejected_refresh['archived']}")
         if rejected_refresh.get("added"):
             steps.append(f"rejected_added_{len(rejected_refresh['added'])}")
+        try:
+            from agent_reach.daily_run.rejected_whatif_harness import (
+                apply_weekly_rejected_whatif_harness_refinement,
+            )
+
+            rejected_whatif_refine = apply_weekly_rejected_whatif_harness_refinement(
+                report.to_dict(),
+                refresh_result=rejected_refresh,
+                settings=cfg,
+            )
+            if not rejected_whatif_refine.get("skipped"):
+                steps.append("rejected_whatif_harness")
+        except Exception as exc:
+            _workflow_harness_error(harness_errors, "rejected_whatif_harness", exc)
         if skill_writeback.get("synced_skills"):
             steps.append(f"skill_sync_{len(skill_writeback['synced_skills'])}")
         if skill_writeback.get("applied_config"):
