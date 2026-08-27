@@ -886,7 +886,13 @@
       "friction_pass_min": 2,
       "trend_mismatch_min": 2,
       "intraday_sell_missed_min": 2,
-      "require_whatif_for_macro": true
+      "require_whatif_for_macro": true,
+      "deep_loss_lag_count_min": 1,
+      "deep_loss_share_delta_min": 100,
+      "sell_threshold_missed_min": 2,
+      "forecast_divergence_days_min": 3,
+      "optimizer_score_delta_min": 0.05,
+      "kronos_blocked_signals_min": 2
     }
   },
 

@@ -180,9 +180,78 @@ class TestSkillRejected:
                 "sell_share_delta": 0,
             },
         }
-        out = _candidates_from_weekly_report(report, {})
+        settings = {"rejected_strategies": {"weekly_whatif": {"sell_threshold_missed_min": 5}}}
+        out = _candidates_from_weekly_report(report, settings)
         assert len(out) == 1
         title, reason = out[0]
         assert title == "禁止接飞刀追涨"
         assert "买入 what-if" in reason
         assert "盘中卖出 what-if" in reason
+
+    def test_deep_loss_whatif_adds_candidate(self):
+        report = {
+            "weekly_pnl_pct": -2.0,
+            "sell_rules_whatif": {
+                "skipped": False,
+                "rows": [
+                    {
+                        "name": "澜起科技",
+                        "is_deep_loss": True,
+                        "actual_sold": 0,
+                        "hypothetical_sold": 300,
+                        "share_delta": 300,
+                    }
+                ],
+            },
+        }
+        titles = [t for t, _ in _candidates_from_weekly_report(report, {})]
+        assert "禁止延迟深亏止损" in titles
+
+    def test_sell_threshold_whatif_adds_candidate(self):
+        report = {
+            "weekly_pnl_pct": -1.5,
+            "sell_rules_whatif": {"skipped": True},
+            "intraday_sell_whatif": {
+                "skipped": False,
+                "missed_sell_signals": 4,
+            },
+        }
+        titles = [t for t, _ in _candidates_from_weekly_report(report, {})]
+        assert "禁止亏损周降低卖出门槛" in titles
+
+    def test_forecast_calibrate_whatif_adds_candidate(self):
+        report = {
+            "weekly_pnl_pct": -2.5,
+            "forecast_calibrate_whatif": {
+                "skipped": False,
+                "divergence_symbol_days": 5,
+            },
+        }
+        titles = [t for t, _ in _candidates_from_weekly_report(report, {})]
+        assert "禁止放宽MSS预测区间" in titles
+
+    def test_optimizer_whatif_adds_candidate(self):
+        report = {
+            "weekly_pnl_pct": -1.0,
+            "optimizer_whatif": {
+                "skipped": False,
+                "runtime_underperforms": True,
+                "score_delta": 0.12,
+                "objective": "sharpe",
+                "current_params": {"macro_veto": 42, "aggressive_entry": 52},
+                "best_params": {"macro_veto": 38, "aggressive_entry": 50},
+            },
+        }
+        titles = [t for t, _ in _candidates_from_weekly_report(report, {})]
+        assert "禁止忽视网格回测优参" in titles
+
+    def test_kronos_whatif_adds_candidate(self):
+        report = {
+            "weekly_pnl_pct": -2.0,
+            "kronos_whatif": {
+                "skipped": False,
+                "kronos_blocked_signals": 3,
+            },
+        }
+        titles = [t for t, _ in _candidates_from_weekly_report(report, {})]
+        assert "禁止无视Kronos放宽买入" in titles

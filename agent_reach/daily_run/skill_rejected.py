@@ -41,6 +41,14 @@ def _rejected_cfg(settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         "trend_mismatch_min": int(whatif.get("trend_mismatch_min", 2)),
         "intraday_sell_missed_min": int(whatif.get("intraday_sell_missed_min", 2)),
         "require_whatif_for_macro": whatif.get("require_whatif_for_macro", True) is not False,
+        "deep_loss_lag_count_min": int(whatif.get("deep_loss_lag_count_min", 1)),
+        "deep_loss_share_delta_min": int(whatif.get("deep_loss_share_delta_min", 100)),
+        "sell_threshold_missed_min": int(
+            whatif.get("sell_threshold_missed_min", whatif.get("intraday_sell_missed_min", 2))
+        ),
+        "forecast_divergence_days_min": int(whatif.get("forecast_divergence_days_min", 3)),
+        "optimizer_score_delta_min": float(whatif.get("optimizer_score_delta_min", 0.05)),
+        "kronos_blocked_signals_min": int(whatif.get("kronos_blocked_signals_min", 2)),
     }
 
 
@@ -389,6 +397,148 @@ def _candidates_from_intraday_sell_whatif(
     return out
 
 
+def _candidates_from_deep_loss_whatif(
+    report: dict[str, Any],
+    cfg: dict[str, Any],
+) -> list[tuple[str, str, str]]:
+    out: list[tuple[str, str, str]] = []
+    if not _weekly_loss(report):
+        return out
+    sell = report.get("sell_rules_whatif") or {}
+    if sell.get("skipped"):
+        return out
+
+    deep_rows = [row for row in sell.get("rows") or [] if row.get("is_deep_loss")]
+    lag_count = sum(
+        1
+        for row in deep_rows
+        if int(row.get("hypothetical_sold") or 0) > int(row.get("actual_sold") or 0)
+    )
+    share_delta = sum(max(0, int(row.get("share_delta") or 0)) for row in deep_rows)
+    if lag_count >= int(cfg.get("deep_loss_lag_count_min", 1)) or share_delta >= int(
+        cfg.get("deep_loss_share_delta_min", 100)
+    ):
+        out.append(
+            (
+                "禁止延迟深亏止损",
+                f"深亏 what-if：{lag_count} 只处置滞后，基准应多卖 {share_delta} 股",
+                "deep_loss_whatif",
+            )
+        )
+    return out
+
+
+def _candidates_from_sell_threshold_whatif(
+    report: dict[str, Any],
+    cfg: dict[str, Any],
+) -> list[tuple[str, str, str]]:
+    out: list[tuple[str, str, str]] = []
+    if not _weekly_loss(report):
+        return out
+
+    sell = report.get("sell_rules_whatif") or {}
+    intraday_sell = report.get("intraday_sell_whatif") or {}
+    missed = (
+        int(intraday_sell.get("missed_sell_signals") or 0)
+        if not intraday_sell.get("skipped")
+        else 0
+    )
+    pnl_delta = float(sell.get("realized_pnl_delta") or 0) if not sell.get("skipped") else 0.0
+    missed_min = int(cfg.get("sell_threshold_missed_min", 2))
+    pnl_thr = float(cfg.get("sell_pnl_delta_cny", 200))
+    if missed < missed_min and pnl_delta > -pnl_thr:
+        return out
+
+    parts: list[str] = []
+    if missed >= missed_min:
+        parts.append(f"盘中 scan 错失 {missed} 次")
+    if pnl_delta <= -pnl_thr:
+        parts.append(f"卖出盈亏差 {pnl_delta:+,.0f}")
+    out.append(
+        (
+            "禁止亏损周降低卖出门槛",
+            f"卖出阈值 what-if：{'，'.join(parts)}，不宜降低 macro_veto / aggressive_entry",
+            "sell_threshold_whatif",
+        )
+    )
+    return out
+
+
+def _candidates_from_forecast_calibrate_whatif(
+    report: dict[str, Any],
+    cfg: dict[str, Any],
+) -> list[tuple[str, str, str]]:
+    out: list[tuple[str, str, str]] = []
+    if not _weekly_loss(report):
+        return out
+    fc = report.get("forecast_calibrate_whatif") or {}
+    if fc.get("skipped"):
+        return out
+    div_days = int(fc.get("divergence_symbol_days") or 0)
+    if div_days >= int(cfg.get("forecast_divergence_days_min", 3)):
+        out.append(
+            (
+                "禁止放宽MSS预测区间",
+                f"forecast what-if：Kronos/MSS 分歧 {div_days} symbol-days，亏损周不宜放宽 base_spread",
+                "forecast_calibrate_whatif",
+            )
+        )
+    return out
+
+
+def _candidates_from_optimizer_whatif(
+    report: dict[str, Any],
+    cfg: dict[str, Any],
+) -> list[tuple[str, str, str]]:
+    out: list[tuple[str, str, str]] = []
+    if not _weekly_loss(report):
+        return out
+    opt = report.get("optimizer_whatif") or {}
+    if opt.get("skipped") or not opt.get("runtime_underperforms"):
+        return out
+    delta = float(opt.get("score_delta") or 0)
+    if delta < float(cfg.get("optimizer_score_delta_min", 0.05)):
+        return out
+    cur = opt.get("current_params") or {}
+    best = opt.get("best_params") or {}
+    objective = str(opt.get("objective") or "sharpe")
+    out.append(
+        (
+            "禁止忽视网格回测优参",
+            (
+                f"grid what-if（{objective}）：当前 veto={cur.get('macro_veto')} "
+                f"entry={cur.get('aggressive_entry')} 落后网格最优 "
+                f"veto={best.get('macro_veto')} entry={best.get('aggressive_entry')} "
+                f"（Δ{delta:.3f}）"
+            ),
+            "optimizer_whatif",
+        )
+    )
+    return out
+
+
+def _candidates_from_kronos_whatif(
+    report: dict[str, Any],
+    cfg: dict[str, Any],
+) -> list[tuple[str, str, str]]:
+    out: list[tuple[str, str, str]] = []
+    if not _weekly_loss(report):
+        return out
+    kronos = report.get("kronos_whatif") or {}
+    if kronos.get("skipped"):
+        return out
+    blocked = int(kronos.get("kronos_blocked_signals") or 0)
+    if blocked >= int(cfg.get("kronos_blocked_signals_min", 2)):
+        out.append(
+            (
+                "禁止无视Kronos放宽买入",
+                f"Kronos what-if：本周 {blocked} 次 Kronos 阻断买入，亏损后不宜无视预警",
+                "kronos_whatif",
+            )
+        )
+    return out
+
+
 def _candidates_from_macro(
     report: dict[str, Any],
     cfg: dict[str, Any],
@@ -436,8 +586,13 @@ def _candidates_from_weekly_report(
     tagged: list[tuple[str, str, str]] = []
     tagged.extend(_candidates_from_buy_whatif(report, cfg))
     tagged.extend(_candidates_from_sell_whatif(report, cfg))
+    tagged.extend(_candidates_from_deep_loss_whatif(report, cfg))
+    tagged.extend(_candidates_from_sell_threshold_whatif(report, cfg))
     tagged.extend(_candidates_from_intraday_friction_whatif(report, cfg))
     tagged.extend(_candidates_from_intraday_sell_whatif(report, cfg))
+    tagged.extend(_candidates_from_forecast_calibrate_whatif(report, cfg))
+    tagged.extend(_candidates_from_optimizer_whatif(report, cfg))
+    tagged.extend(_candidates_from_kronos_whatif(report, cfg))
     has_whatif = any(src != "macro" for _, _, src in tagged)
     tagged.extend(_candidates_from_macro(report, cfg, has_whatif_signal=has_whatif))
     return _dedupe_candidate_triples(tagged)

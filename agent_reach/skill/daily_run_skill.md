@@ -144,7 +144,7 @@ ${PY} -m agent_reach.cli doctor --json
 
 手工改 skill 前：`daily-run harness list-refinements`；与 cron 写回冲突时以 manifest 为准。
 
-**Rejected 库：** `~/.agent-reach/daily_run/rejected_strategies.jsonl` — 已证伪策略禁止写回 playbook / settings（周六审视自动过滤）；周六 weekly 刷新归档至 `rejected_strategies_archive.jsonl`，仅**当周**条目阻断买入（`rejected_strategies.active_week_only`）。自动入库读取 weekly **buy/sell/friction/intraday-sell what-if** + 宏观（需 what-if 佐证时可配 `rejected_strategies.weekly_whatif.require_whatif_for_macro`）。
+**Rejected 库：** `~/.agent-reach/daily_run/rejected_strategies.jsonl` — 已证伪策略禁止写回 playbook / settings（周六审视自动过滤）；周六 weekly 刷新归档至 `rejected_strategies_archive.jsonl`，仅**当周**条目阻断买入（`rejected_strategies.active_week_only`）。自动入库读取 weekly **buy/sell/deep-loss/sell-threshold/friction/intraday-sell/forecast/optimizer-grid/kronos what-if** + 宏观（需 what-if 佐证时可配 `rejected_strategies.weekly_whatif.require_whatif_for_macro`）。
 
 ## 🛡️ Phase-1 质量工程化 · `manual-ok`
 

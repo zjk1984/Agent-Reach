@@ -58,6 +58,9 @@ class WeeklyReport:
     buy_rules_whatif: Optional[dict[str, Any]] = None
     intraday_friction_whatif: Optional[dict[str, Any]] = None
     intraday_sell_whatif: Optional[dict[str, Any]] = None
+    forecast_calibrate_whatif: Optional[dict[str, Any]] = None
+    optimizer_whatif: Optional[dict[str, Any]] = None
+    kronos_whatif: Optional[dict[str, Any]] = None
     macro_signals: dict[str, Any] = field(default_factory=dict)
     watchlist_intel: dict[str, Any] = field(default_factory=dict)
 
@@ -102,6 +105,9 @@ class WeeklyReport:
             "buy_rules_whatif": self.buy_rules_whatif,
             "intraday_friction_whatif": self.intraday_friction_whatif,
             "intraday_sell_whatif": self.intraday_sell_whatif,
+            "forecast_calibrate_whatif": self.forecast_calibrate_whatif,
+            "optimizer_whatif": self.optimizer_whatif,
+            "kronos_whatif": self.kronos_whatif,
             "macro_signals": self.macro_signals,
             "watchlist_intel": self.watchlist_intel,
         }
@@ -1191,6 +1197,33 @@ def generate_weekly_report(
         settings=settings,
     ).to_dict()
 
+    from agent_reach.daily_run.weekly_extended_whatif import (
+        build_weekly_forecast_calibrate_whatif,
+        build_weekly_kronos_whatif,
+        build_weekly_optimizer_whatif,
+    )
+
+    forecast_calibrate_whatif = build_weekly_forecast_calibrate_whatif(
+        week_start=week_start,
+        week_end=week_end,
+        settings=settings,
+    ).to_dict()
+    optimizer_whatif = build_weekly_optimizer_whatif(
+        week_start=week_start,
+        week_end=week_end,
+        mss_summary=mss_summary,
+        daily_totals=daily_totals,
+        settings=settings,
+    ).to_dict()
+    kronos_whatif = build_weekly_kronos_whatif(
+        week_start=week_start,
+        week_end=week_end,
+        manifests=manifests,
+        buy_rules_whatif=buy_rules_whatif,
+        intraday_friction_whatif=intraday_friction_whatif,
+        settings=settings,
+    ).to_dict()
+
     from agent_reach.daily_run.macro_collector import fetch_xueqiu_hot_signals
 
     macro_signals = fetch_xueqiu_hot_signals(pf, settings=settings)
@@ -1245,6 +1278,9 @@ def generate_weekly_report(
         buy_rules_whatif=buy_rules_whatif,
         intraday_friction_whatif=intraday_friction_whatif,
         intraday_sell_whatif=intraday_sell_whatif,
+        forecast_calibrate_whatif=forecast_calibrate_whatif,
+        optimizer_whatif=optimizer_whatif,
+        kronos_whatif=kronos_whatif,
         macro_signals=macro_signals,
         watchlist_intel=watchlist_intel,
     )
