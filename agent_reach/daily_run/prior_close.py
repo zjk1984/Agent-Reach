@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -146,22 +146,54 @@ def _baseline_matches_day(row: Optional[dict[str, Any]], target_day: Optional[da
     return close_date == target_day.isoformat() or not close_date
 
 
+def _baseline_recency_key(row: dict[str, Any]) -> tuple[str, str]:
+    close_date = str(row.get("close_date") or "")[:10]
+    stamp = str(row.get("as_of") or row.get("_db_at") or row.get("_file_mtime") or close_date or "")
+    return close_date, stamp
+
+
+def _pick_newest_baseline(
+    rows: list[dict[str, Any]],
+    *,
+    target_day: Optional[date] = None,
+) -> Optional[dict[str, Any]]:
+    pool = [dict(row) for row in rows if row and row.get("mss_final") is not None]
+    if target_day is not None:
+        pool = [row for row in pool if _baseline_matches_day(row, target_day)]
+    if not pool:
+        return None
+    return max(pool, key=_baseline_recency_key)
+
+
 def load_close_baseline(
     code: str,
     *,
     target_day: Optional[date] = None,
     settings: Optional[dict[str, Any]] = None,
 ) -> Optional[dict[str, Any]]:
-    """Load close baseline; prefer on-disk file matching ``target_day`` over stale DB rows."""
+    """Load close baseline from DB + file and pick the newest row for ``target_day``."""
     norm = _normalize_code(str(code))
-    file_row = _read_file_close_baseline(norm)
-    db_row = _read_db_close_baseline(norm, target_day=target_day, settings=settings)
+    candidates: list[dict[str, Any]] = []
 
-    if _baseline_matches_day(file_row, target_day):
-        return file_row
-    if _baseline_matches_day(db_row, target_day):
-        return db_row
-    return file_row or db_row
+    per = close_baseline_path(norm)
+    file_row = _read_file_close_baseline(norm)
+    if file_row:
+        row = dict(file_row)
+        row.setdefault("_baseline_source", "close_baseline")
+        try:
+            row["_file_mtime"] = datetime.fromtimestamp(per.stat().st_mtime, timezone.utc).isoformat()
+        except OSError:
+            pass
+        candidates.append(row)
+
+    db_row = _read_db_close_baseline(norm, target_day=target_day, settings=settings)
+    if db_row:
+        candidates.append(dict(db_row))
+
+    picked = _pick_newest_baseline(candidates, target_day=target_day)
+    if picked:
+        return picked
+    return _pick_newest_baseline(candidates, target_day=None)
 
 
 def _mss_from_manifest(record: dict[str, Any]) -> Optional[float]:

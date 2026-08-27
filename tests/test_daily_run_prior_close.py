@@ -216,7 +216,7 @@ class TestPriorCloseReference:
         )
         assert "2026-08-25·S13" in line
 
-    def test_file_baseline_wins_over_stale_db(self, tmp_path, monkeypatch):
+    def test_newest_baseline_wins_over_stale_db_day(self, tmp_path, monkeypatch):
         close_dir = tmp_path / "baselines" / "close"
         close_dir.mkdir(parents=True)
         target = date(2026, 8, 26)
@@ -228,6 +228,7 @@ class TestPriorCloseReference:
                     "mss_final": 48.0,
                     "verdict": "观察",
                     "close_date": "2026-08-26",
+                    "as_of": "2026-08-26T10:15:08+00:00",
                     "_baseline_source": "close_baseline",
                 }
             ),
@@ -235,11 +236,14 @@ class TestPriorCloseReference:
         )
 
         def _fake_db(code, *, settings=None, day=None):
+            if day and day.isoformat() != "2026-08-26":
+                return None
             return {
                 "code": code,
-                "mss_final": 48.2,
+                "mss_final": 43.07,
                 "verdict": "观察",
-                "close_date": "2026-07-17",
+                "close_date": "2026-08-26",
+                "as_of": "2026-08-26T00:53:14+00:00",
                 "_baseline_source": "baseline_close_db",
             }
 
@@ -264,7 +268,52 @@ class TestPriorCloseReference:
         assert loaded is not None
         assert loaded["mss_final"] == 48.0
         assert loaded["source"] == "close_baseline"
-        assert loaded.get("scan_id") is None
+
+    def test_db_baseline_wins_when_newer_than_file(self, tmp_path, monkeypatch):
+        close_dir = tmp_path / "baselines" / "close"
+        close_dir.mkdir(parents=True)
+        target = date(2026, 8, 26)
+        (close_dir / "688008.json").write_text(
+            json.dumps(
+                {
+                    "code": "688008",
+                    "mss_final": 47.0,
+                    "close_date": "2026-08-26",
+                    "as_of": "2026-08-26T09:00:00+00:00",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        def _fake_db(code, *, settings=None, day=None):
+            return {
+                "code": code,
+                "mss_final": 48.5,
+                "close_date": "2026-08-26",
+                "as_of": "2026-08-26T10:15:08+00:00",
+                "_baseline_source": "baseline_close_db",
+            }
+
+        monkeypatch.setattr(
+            "agent_reach.daily_run.prior_close.close_baseline_path",
+            lambda code: close_dir / f"{code}.json",
+        )
+        monkeypatch.setattr(
+            "agent_reach.daily_run.prior_close._read_db_close_baseline",
+            lambda norm, *, target_day=None, settings=None: _fake_db(norm, day=target_day),
+        )
+        monkeypatch.setattr(
+            "agent_reach.daily_run.prior_close.prev_trading_day",
+            lambda *a, **k: target,
+        )
+        monkeypatch.setattr(
+            "agent_reach.daily_run.prior_close.runs_dir",
+            lambda: tmp_path / "runs",
+        )
+
+        loaded = load_prior_close_reference("688008", load_settings(), as_of=date(2026, 8, 27))
+        assert loaded["mss_final"] == 48.5
+        assert loaded["source"] == "baseline_close_db"
 
     def test_intraday_fallback_uses_last_scan_same_shanghai_day(self, tmp_path, monkeypatch):
         runs = tmp_path / "runs" / "2026-08-26"

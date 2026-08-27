@@ -313,8 +313,6 @@ def read_close_baseline_from_store(
     if not callable(query_l2):
         return None
     key = f"close/{norm}"
-    since = ""
-    until = ""
     target_day: Optional[date] = None
     if day is not None:
         if isinstance(day, date):
@@ -322,28 +320,41 @@ def read_close_baseline_from_store(
         else:
             text = str(day or "")[:10]
             target_day = date.fromisoformat(text) if text else None
-        if target_day is not None:
-            since, until = _shanghai_day_bounds(target_day)
     rows = query_l2(
         kind="baseline_close",
         scenario_key=key,
         code=norm,
-        since=since,
-        until=until,
-        limit=5,
+        limit=30,
     )
+    candidates: list[dict[str, Any]] = []
     for row in rows:
         payload = row.get("payload")
-        if isinstance(payload, dict) and payload.get("mss_final") is not None:
-            out = dict(payload)
-            out.setdefault("close_date", str(row.get("at") or out.get("close_date") or "")[:10])
-            out.setdefault("_baseline_source", "baseline_close_db")
-            if target_day is not None:
-                close_date = str(out.get("close_date") or "")[:10]
-                if close_date and close_date != target_day.isoformat():
-                    continue
-            return out
-    return None
+        if not isinstance(payload, dict) or payload.get("mss_final") is None:
+            continue
+        out = dict(payload)
+        out.setdefault("close_date", str(out.get("close_date") or row.get("at") or "")[:10])
+        out["_db_at"] = str(row.get("at") or "")
+        out.setdefault("_baseline_source", "baseline_close_db")
+        candidates.append(out)
+    if not candidates:
+        return None
+    if target_day is not None:
+        target_ds = target_day.isoformat()
+        matched = [
+            row
+            for row in candidates
+            if str(row.get("close_date") or "")[:10] == target_ds
+        ]
+        if not matched:
+            return None
+        candidates = matched
+
+    def _recency(row: dict[str, Any]) -> tuple[str, str]:
+        close_date = str(row.get("close_date") or "")[:10]
+        stamp = str(row.get("as_of") or row.get("_db_at") or close_date or "")
+        return close_date, stamp
+
+    return max(candidates, key=_recency)
 
 
 def read_harness_state_payload(

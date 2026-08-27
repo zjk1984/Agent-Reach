@@ -419,7 +419,7 @@ def on_daily_cache(payload: dict[str, Any], *, day: str, source_path: str = "") 
 
 
 def on_baseline(kind: str, code: str, record: dict[str, Any], *, source_path: str = "") -> None:
-    day = str(record.get("date") or record.get("as_of") or "")[:10]
+    day = str(record.get("close_date") or record.get("date") or record.get("as_of") or "")[:10]
     key = f"{kind}/{code}"
     on_l2_scenario(
         f"baseline_{kind}",
