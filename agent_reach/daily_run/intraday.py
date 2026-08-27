@@ -507,7 +507,17 @@ def should_evaluate_trade(
     state_path: Optional[Path] = None,
 ) -> bool:
     """Heuristic: trade after ≥ trade_min_scans scans, on trend shift or every N scans."""
-    cfg = effective_settings(settings)
+    from agent_reach.daily_run.intraday_rebound import (
+        apply_intraday_rebound_overlay,
+        intraday_rebound_active,
+    )
+
+    st = state or load_state(state_path)
+    if settings is not None and intraday_rebound_active(settings):
+        cfg = settings
+    else:
+        cfg = effective_settings(settings)
+        cfg = apply_intraday_rebound_overlay(cfg, st.scans)
     sched = cfg.get("schedule", {})
     if not sched.get("intraday_trade_enabled", True):
         return False
@@ -518,7 +528,6 @@ def should_evaluate_trade(
     if sched.get("intraday_session_gate_enabled", True) and not is_continuous_session():
         return False
 
-    st = state or load_state(state_path)
     if len(st.scans) < runtime_int_default(cfg, "schedule", "trade_min_scans"):
         return False
     if count_trade_evaluations(st.trades) >= max_trade_evaluations_per_symbol(cfg):
@@ -634,6 +643,9 @@ def evaluate_trade(
     """Evaluate T_n trade opportunity using lookback MSS over recent scans."""
     cfg = effective_settings(settings)
     st = state or load_state(state_path)
+    from agent_reach.daily_run.intraday_rebound import apply_intraday_rebound_overlay
+
+    cfg = apply_intraday_rebound_overlay(cfg, st.scans)
 
     eval_cap = max_trade_evaluations_per_symbol(cfg)
     if count_trade_evaluations(st.trades) >= eval_cap:
@@ -789,6 +801,9 @@ def run_intraday(
     steps.append("scan")
 
     st_after_scan = IntradayState.from_dict(scan_result["state"])
+    from agent_reach.daily_run.intraday_rebound import apply_intraday_rebound_overlay
+
+    cfg = apply_intraday_rebound_overlay(cfg, st_after_scan.scans)
     do_trade = trade or should_evaluate_trade(st_after_scan, cfg, state_path=state_path)
     if not do_trade:
         skip_reason = explain_trade_skip_reason(st_after_scan, cfg, state_path=state_path)

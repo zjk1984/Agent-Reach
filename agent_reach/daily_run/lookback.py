@@ -21,9 +21,10 @@ def compute_lookback_mss(
         return 0.0, []
 
     from agent_reach.daily_run.harness_policy import lookback_weights_default
+    from agent_reach.daily_run.intraday_rebound import intraday_rebound_active
     from agent_reach.daily_run.settings import effective_settings
 
-    cfg = effective_settings(settings)
+    cfg = settings if intraday_rebound_active(settings or {}) else effective_settings(settings)
     weights = lookback_weights_default(cfg)
     recent = list(reversed(scans[-3:]))  # newest → oldest
     used = weights[: len(recent)]

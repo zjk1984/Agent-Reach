@@ -711,6 +711,10 @@ def threshold_default(settings: dict[str, Any], key: str) -> float:
     """Effective threshold; harness-evolved keys ignore static ``thresholds.*`` pollution."""
     thresholds = settings.get("thresholds") or {}
     if key in _EVOLVED_THRESHOLD_KEYS and threshold_mode(settings, key) == "harness":
+        from agent_reach.daily_run.intraday_rebound import intraday_rebound_active
+
+        if intraday_rebound_active(settings):
+            return float(thresholds.get(key, _HARNESS_NEUTRAL[key]))
         from agent_reach.daily_run.settings import effective_settings
 
         eff = effective_settings(settings)

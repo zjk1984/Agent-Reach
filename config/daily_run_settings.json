@@ -46,6 +46,21 @@
     "kronos_bullish_entry_pts": 2.0,
     "defensive_trim_min_mss": 40,
     "defensive_trim_mss_buffer": 0,
+    "rebound": {
+      "enabled": true,
+      "min_mss_delta": 3.0,
+      "min_latest_mss": 50.0,
+      "min_session_scans": 2,
+      "lookback_scans": 4,
+      "require_defensive_trim": true,
+      "trend_delta_threshold": 0.8,
+      "aggressive_entry": 48.0,
+      "macro_veto": 38.0,
+      "defensive_trim_min_mss": 40.0,
+      "defensive_trim_mss_buffer": 0.0,
+      "deep_loss_sell_ratio": 0.75,
+      "non_deep_loss_sell_ratio": 0.85
+    },
     "expected_return": {
       "base": 0.015,
       "slope": 0.001,
