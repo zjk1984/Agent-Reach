@@ -46,6 +46,20 @@
     "kronos_bullish_entry_pts": 2.0,
     "defensive_trim_min_mss": 40,
     "defensive_trim_mss_buffer": 0,
+    "defensive_trim": {
+      "enabled": true,
+      "max_symbol_change_pct": 1.0,
+      "require_mss_pullback_pts": 2.0,
+      "memory_sell_ratio": 0.35,
+      "short_hold_sell_ratio": 0.25,
+      "short_hold_grace_days": 1,
+      "recovery_mixed_lookback_slack": 2.0,
+      "recovery_mixed_mss_slack": 1.0,
+      "recovery_mixed_delta_factor": 0.5,
+      "once_per_symbol_per_day": true,
+      "block_sell_in_recovery_zone": true,
+      "persist_macro_warming_intraday": true
+    },
     "rebound": {
       "mode": "harness",
       "enabled": true,

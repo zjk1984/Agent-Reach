@@ -780,7 +780,7 @@ class TestHarnessRuntimeExtensions:
             blocked=False,
         )
         decision = _decide_trade(
-            lookback_mss=54.0,
+            lookback_mss=45.0,
             trend="falling",
             verdict=verdict,
             report={"code": "688008", "name": "澜起科技", "blocked": False},
@@ -824,7 +824,7 @@ class TestHarnessRuntimeExtensions:
             blocked=False,
         )
         decision = _decide_trade(
-            lookback_mss=54.0,
+            lookback_mss=45.0,
             trend="falling",
             verdict=verdict,
             report={"code": "688008", "name": "澜起科技", "blocked": False},
@@ -866,7 +866,7 @@ class TestHarnessRuntimeExtensions:
             blocked=False,
         )
         decision = _decide_trade(
-            lookback_mss=54.0,
+            lookback_mss=45.0,
             trend="falling",
             verdict=verdict,
             report={"code": "002583", "name": "海能达", "blocked": False},

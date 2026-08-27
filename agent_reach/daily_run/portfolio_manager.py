@@ -447,12 +447,17 @@ def resolve_deep_loss_sell_shares(
     settings: dict[str, Any],
     *,
     is_deep_loss: bool,
+    sell_ratio_override: Optional[float] = None,
 ) -> int:
     """Shares to sell using harness-evolved sell_ratio (deep vs non-deep)."""
     if total_shares <= 0:
         return 0
     ratio_key = "sell_ratio" if is_deep_loss else "non_deep_loss_sell_ratio"
-    ratio = deep_loss_policy_default(settings, ratio_key)
+    ratio = (
+        float(sell_ratio_override)
+        if sell_ratio_override is not None
+        else deep_loss_policy_default(settings, ratio_key)
+    )
     if ratio >= 0.999:
         return total_shares
     sold = _round_lot(code, int(total_shares * ratio), total_shares=total_shares)
@@ -491,6 +496,23 @@ def deep_loss_sell_analysis(
     )
     ratio_key = "sell_ratio" if deep else "non_deep_loss_sell_ratio"
     effective_sell_ratio = float(policy.get(ratio_key, deep_loss_policy_default(settings, ratio_key)))
+    runtime = settings.get("harness_runtime") or {}
+    if runtime.get("trade_signals", {}).get("defensive_trim"):
+        from agent_reach.daily_run.defensive_trim_guards import defensive_trim_effective_sell_ratio
+
+        effective_sell_ratio = defensive_trim_effective_sell_ratio(
+            settings,
+            holding,
+            is_deep_loss=deep,
+            base_ratio=effective_sell_ratio,
+        )
+        sell_shares = resolve_deep_loss_sell_shares(
+            min(total_shares, sellable),
+            code,
+            settings,
+            is_deep_loss=deep,
+            sell_ratio_override=effective_sell_ratio,
+        )
     allowed = True
     block_reason: Optional[str] = None
     if deep and cover_ratio > 0 and loss_abs > 0 and coverable < required_cover:

@@ -10,8 +10,8 @@ from pathlib import Path
 from typing import Any, Optional
 
 from agent_reach.daily_run.lookback import compute_lookback_mss, detect_mss_trend
+from agent_reach.daily_run.defensive_trim_guards import evaluate_defensive_trim_sell
 from agent_reach.daily_run.intraday_policy import (
-    defensive_trim_allows_sell,
     effective_aggressive_entry,
     effective_friction_hurdle,
     estimate_expected_return,
@@ -646,6 +646,13 @@ def evaluate_trade(
     from agent_reach.daily_run.intraday_rebound import apply_intraday_rebound_overlay
 
     cfg = apply_intraday_rebound_overlay(cfg, st.scans)
+
+    try:
+        from agent_reach.daily_run.defensive_trim_guards import maybe_persist_intraday_macro_warming
+
+        maybe_persist_intraday_macro_warming(settings=cfg)
+    except Exception:
+        pass
 
     eval_cap = max_trade_evaluations_per_symbol(cfg)
     if count_trade_evaluations(st.trades) >= eval_cap:
@@ -1334,15 +1341,17 @@ def _decide_trade(
 
     runtime = settings.get("harness_runtime") or {}
     trade_signals = runtime.get("trade_signals") or {}
-    if (
-        trade_signals.get("defensive_trim")
-        and defensive_trim_allows_sell(
-            settings,
-            lookback_mss=lookback_mss,
-            macro_veto=macro_veto,
-            trend=trend,
-        )
-    ):
+    allow_defensive, defensive_block = evaluate_defensive_trim_sell(
+        settings,
+        lookback_mss=lookback_mss,
+        macro_veto=macro_veto,
+        trend=trend,
+        trade_signals=trade_signals,
+        report=report,
+        snapshot=snapshot,
+        prior_trades=prior_trades,
+    )
+    if allow_defensive:
         if _decision_symbol_sellable(snapshot, settings, report.get("code")):
             return TradeDecision(
                 action="sell",
@@ -1372,6 +1381,19 @@ def _decide_trade(
                 friction_blocked=False,
                 expected_return_pct=exp_ret,
             )
+    elif defensive_block:
+        return TradeDecision(
+            action="hold",
+            trade_id=trade_id,
+            lookback_mss=lookback_mss,
+            lookback_detail=[],
+            trend=trend,
+            reasoning=f"{defensive_block}{overlay_note}",
+            blocked=True,
+            block_kind="sell_defensive_trim",
+            friction_blocked=False,
+            expected_return_pct=exp_ret,
+        )
 
     return TradeDecision(
         action="hold",
