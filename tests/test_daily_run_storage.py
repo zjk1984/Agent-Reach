@@ -373,3 +373,98 @@ def test_run_forecast_runs_storage_prune(monkeypatch):
     assert prune_called["ok"] is True
     assert "storage_prune" in out["steps"]
     assert "push_storage_prune" in out["steps"]
+
+
+def test_blocks_synthetic_trade_on_canonical_prod_db(monkeypatch, tmp_path):
+    prod_db = tmp_path / "daily_run.db"
+    settings = {
+        "storage": {
+            "enabled": True,
+            "backend": "sqlite",
+            "sqlite_path": str(prod_db),
+            "block_synthetic_on_prod": True,
+        }
+    }
+    monkeypatch.setenv("AGENT_REACH_STORAGE", "1")
+    monkeypatch.setattr(
+        "agent_reach.daily_run.storage.guard.canonical_prod_sqlite_path",
+        lambda: prod_db,
+    )
+    monkeypatch.setattr(
+        "agent_reach.daily_run.settings.load_settings",
+        lambda path=None: settings,
+    )
+    reset_store()
+    on_trade_ledger(
+        {
+            "at": "2026-08-27T11:36:19+00:00",
+            "trade_id": "T1",
+            "decision_action": "buy",
+            "actions": [
+                {
+                    "side": "buy",
+                    "code": "000725",
+                    "shares": 5300,
+                    "price": 7.5,
+                    "reasoning": "test",
+                }
+            ],
+        }
+    )
+    store = get_store(settings)
+    assert store.status()["counts"]["l0_events"] == 0
+    reset_store()
+
+
+def test_allows_synthetic_trade_on_isolated_sqlite(storage_env):
+    on_trade_ledger(
+        {
+            "at": "2026-08-27T11:36:19+00:00",
+            "trade_id": "T1",
+            "decision_action": "buy",
+            "actions": [
+                {
+                    "side": "buy",
+                    "code": "000725",
+                    "shares": 100,
+                    "price": 7.5,
+                    "reasoning": "test",
+                }
+            ],
+        }
+    )
+    store = get_store(storage_env["settings"])
+    assert store.status()["counts"]["l0_events"] >= 1
+
+
+def test_blocks_pytest_writes_to_canonical_prod_db(monkeypatch, tmp_path):
+    prod_db = tmp_path / "daily_run.db"
+    settings = {
+        "storage": {
+            "enabled": True,
+            "backend": "sqlite",
+            "sqlite_path": str(prod_db),
+        }
+    }
+    monkeypatch.setenv("AGENT_REACH_STORAGE", "1")
+    monkeypatch.setenv("PYTEST_CURRENT_TEST", "test_daily_run_storage.py::test_blocks_pytest_writes_to_canonical_prod_db")
+    monkeypatch.setattr(
+        "agent_reach.daily_run.storage.guard.canonical_prod_sqlite_path",
+        lambda: prod_db,
+    )
+    monkeypatch.setattr(
+        "agent_reach.daily_run.settings.load_settings",
+        lambda path=None: settings,
+    )
+    reset_store()
+    on_trade_ledger(
+        {
+            "at": "2026-08-27T01:46:12+00:00",
+            "trade_id": "T1",
+            "decision_action": "sell",
+            "actions": [{"side": "sell", "code": "000725", "shares": 600, "price": 5.8, "reasoning": "real sell"}],
+        }
+    )
+    store = get_store(settings)
+    assert store.status()["counts"]["l0_events"] == 0
+    reset_store()

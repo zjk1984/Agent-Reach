@@ -55,5 +55,10 @@ Non-obvious environment notes:
   avoid a rare torch-MKL/numpy-MKL segfault race observed when both run in one process; don't
   remove these when touching that file/script.
 - **Abandoned branches (do not merge or remind):** `cursor/local-setup-scripts` — deleted
-  2026-08-25; superseded by `scripts/daily-run-local-{setup,cron}.sh`. Local setup uses repo-relative
-  paths; no need to resurrect `env.sh` / `tools/daily-run-wrapper.sh`.
+ 2026-08-25; superseded by `scripts/daily-run-local-{setup,cron}.sh`. Local setup uses repo-relative
+ paths; no need to resurrect `env.sh` / `tools/daily-run-wrapper.sh`.
+- **SQLite prod guard:** canonical DB is `~/.agent-reach/daily_run/daily_run.db`. Storage dual-write
+ hooks refuse (a) any write while `PYTEST_CURRENT_TEST` is set unless `storage.sqlite_path` points
+ at an isolated file, and (b) obvious synthetic payloads on the canonical DB (`reasoning: "test"`,
+ `evidence: "test"`, `portfolio source: "test"`). Tests must use `tests/test_daily_run_storage.py::storage_env`
+ (tmp `sqlite_path`). One-off maintenance may set `AGENT_REACH_STORAGE_ALLOW_PROD=1`.

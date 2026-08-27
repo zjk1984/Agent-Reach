@@ -878,6 +878,7 @@
     "enabled": false,
     "backend": "sqlite",
     "sqlite_path": "",
+    "block_synthetic_on_prod": true,
     "dual_write": true,
     "distill": {
       "enabled": true,

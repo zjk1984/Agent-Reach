@@ -20,10 +20,33 @@ def _safe(label: str, fn) -> None:
         logger.warning("daily-run storage {} failed: {}", label, exc)
 
 
-def on_trade_ledger(entry: dict[str, Any], *, source_path: str = "") -> None:
-    from agent_reach.daily_run.storage import get_store, storage_enabled
+def _allow_storage_write(
+    *,
+    kind: str,
+    payload: Any = None,
+    source: str = "",
+    settings: Optional[dict[str, Any]] = None,
+) -> bool:
+    from agent_reach.daily_run.storage.guard import storage_write_blocked_reason
 
-    if not storage_enabled():
+    reason = storage_write_blocked_reason(
+        settings,
+        kind=kind,
+        payload=payload,
+        source=source,
+    )
+    if reason == "storage_disabled":
+        return False
+    if reason:
+        logger.warning("daily-run storage write blocked ({}): {}", reason, kind)
+        return False
+    return True
+
+
+def on_trade_ledger(entry: dict[str, Any], *, source_path: str = "") -> None:
+    from agent_reach.daily_run.storage import get_store
+
+    if not _allow_storage_write(kind="trade", payload=entry):
         return
     at = str(entry.get("at") or "")
     trade_id = str(entry.get("trade_id") or "")
@@ -43,9 +66,9 @@ def on_trade_ledger(entry: dict[str, Any], *, source_path: str = "") -> None:
 
 
 def on_portfolio_save(portfolio: dict[str, Any], *, source: str = "save") -> None:
-    from agent_reach.daily_run.storage import get_store, storage_enabled
+    from agent_reach.daily_run.storage import get_store
 
-    if not storage_enabled():
+    if not _allow_storage_write(kind="portfolio", payload=portfolio, source=source):
         return
 
     def _write() -> None:
@@ -66,9 +89,9 @@ def on_portfolio_save(portfolio: dict[str, Any], *, source: str = "save") -> Non
 
 
 def on_experience_entry(entry: dict[str, Any], *, source_path: str = "") -> None:
-    from agent_reach.daily_run.storage import get_store, storage_enabled
+    from agent_reach.daily_run.storage import get_store
 
-    if not storage_enabled():
+    if not _allow_storage_write(kind="experience", payload=entry):
         return
     at = str(entry.get("at") or entry.get("date") or "")
     code = str(entry.get("code") or "")
@@ -88,9 +111,9 @@ def on_experience_entry(entry: dict[str, Any], *, source_path: str = "") -> None
 
 
 def on_harness_refinement(event: dict[str, Any], *, source_path: str = "") -> None:
-    from agent_reach.daily_run.storage import get_store, storage_enabled
+    from agent_reach.daily_run.storage import get_store
 
-    if not storage_enabled():
+    if not _allow_storage_write(kind="harness_refinement", payload=event):
         return
     event_id = str(event.get("id") or "")
     at = str(event.get("created_at") or "")
@@ -120,9 +143,9 @@ def on_harness_refinement(event: dict[str, Any], *, source_path: str = "") -> No
 
 
 def on_harness_state_save(state_payload: dict[str, Any]) -> None:
-    from agent_reach.daily_run.storage import get_store, storage_enabled
+    from agent_reach.daily_run.storage import get_store
 
-    if not storage_enabled():
+    if not _allow_storage_write(kind="harness_state", payload=state_payload):
         return
 
     def _write() -> None:
@@ -134,9 +157,9 @@ def on_harness_state_save(state_payload: dict[str, Any]) -> None:
 
 
 def on_harness_diff(diff: dict[str, Any], *, kind: str, source_path: str = "") -> None:
-    from agent_reach.daily_run.storage import get_store, storage_enabled
+    from agent_reach.daily_run.storage import get_store
 
-    if not storage_enabled():
+    if not _allow_storage_write(kind=kind, payload=diff):
         return
     at = str(diff.get("at") or "")
     job = str(diff.get("job") or kind)
@@ -156,9 +179,9 @@ def on_harness_diff(diff: dict[str, Any], *, kind: str, source_path: str = "") -
 
 
 def on_apply_audit(event: dict[str, Any], *, source_path: str = "") -> None:
-    from agent_reach.daily_run.storage import get_store, storage_enabled
+    from agent_reach.daily_run.storage import get_store
 
-    if not storage_enabled():
+    if not _allow_storage_write(kind="harness_audit", payload=event):
         return
     at = str(event.get("at") or "")
     job = str(event.get("job") or "apply")
@@ -197,9 +220,9 @@ def on_l0_event(
     source_path: str = "",
     dedupe_key: str = "",
 ) -> None:
-    from agent_reach.daily_run.storage import get_store, storage_enabled
+    from agent_reach.daily_run.storage import get_store
 
-    if not storage_enabled():
+    if not _allow_storage_write(kind=kind, payload=payload):
         return
 
     def _write() -> None:
@@ -216,9 +239,9 @@ def on_l0_event(
 
 
 def on_l1_state(state_key: str, kind: str, payload: dict[str, Any], *, at: str = "") -> None:
-    from agent_reach.daily_run.storage import get_store, storage_enabled
+    from agent_reach.daily_run.storage import get_store
 
-    if not storage_enabled():
+    if not _allow_storage_write(kind=kind, payload=payload):
         return
 
     def _write() -> None:
@@ -239,9 +262,9 @@ def on_l2_scenario(
     source_path: str = "",
     dedupe_key: str = "",
 ) -> None:
-    from agent_reach.daily_run.storage import get_store, storage_enabled
+    from agent_reach.daily_run.storage import get_store
 
-    if not storage_enabled():
+    if not _allow_storage_write(kind=kind, payload=payload):
         return
 
     def _write() -> None:
@@ -271,9 +294,9 @@ def on_l3_document(
     dedupe_key: str = "",
     version: int = 1,
 ) -> None:
-    from agent_reach.daily_run.storage import get_store, storage_enabled
+    from agent_reach.daily_run.storage import get_store
 
-    if not storage_enabled():
+    if not _allow_storage_write(kind=kind, payload=payload or {"content": content}):
         return
 
     def _write() -> None:
@@ -358,9 +381,9 @@ def on_trade_case(
 ) -> None:
     code = str(trade_record.get("code") or "")
     at = str(trade_record.get("as_of") or "")
-    from agent_reach.daily_run.storage import get_store, storage_enabled
+    from agent_reach.daily_run.storage import get_store
 
-    if not storage_enabled():
+    if not _allow_storage_write(kind="trade_case", payload=trade_record):
         return
 
     def _write() -> None:
