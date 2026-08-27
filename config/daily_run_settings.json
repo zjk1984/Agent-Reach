@@ -360,6 +360,7 @@
     "mss_experts": false,
     "exclude_from_trend": true,
     "lookback_weight_scale": 0.25,
+    "record_scan": false,
     "llm_narrative": {
       "enabled": true,
       "planner": "deterministic"

@@ -18,6 +18,7 @@ def midday_cfg(settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         "mss_experts": raw.get("mss_experts", False) is True,
         "exclude_from_trend": raw.get("exclude_from_trend", True) is not False,
         "lookback_weight_scale": float(raw.get("lookback_weight_scale", 0.25)),
+        "record_scan": raw.get("record_scan", False) is not False,
     }
 
 
@@ -109,6 +110,49 @@ def _morning_session_lines(state: dict[str, Any], baseline: Optional[dict[str, A
     return lines
 
 
+def _build_macro_only_scan_result(
+    enriched: dict[str, Any],
+    st: Any,
+    *,
+    settings: dict[str, Any],
+) -> dict[str, Any]:
+    """Build midday card payload without appending an intraday MSS scan."""
+    from agent_reach.daily_run.intraday_scan_filters import last_session_scan, scans_for_trend_detection
+    from agent_reach.daily_run.lookback import compute_lookback_mss, detect_mss_trend
+    from agent_reach.daily_run.macro_collector import fetch_intraday_xueqiu_cross_alerts
+
+    scans = list(st.scans or [])
+    session = last_session_scan(scans)
+    lookback_mss, lookback_detail = compute_lookback_mss(scans, settings)
+    trend = detect_mss_trend(scans, settings)
+    anchor_trend = detect_mss_trend(scans_for_trend_detection(scans), settings)
+    pf = enriched.get("portfolio") or {}
+    xueqiu_cross = fetch_intraday_xueqiu_cross_alerts(pf, settings=settings)
+    ref_id = session.get("scan_id") if session else "—"
+    scan = {
+        "scan_id": "12:30",
+        "as_of": enriched.get("as_of"),
+        "code": enriched.get("code") or (session or {}).get("code"),
+        "name": enriched.get("name") or (session or {}).get("name"),
+        "mss_final": (session or {}).get("mss_final"),
+        "verdict": (session or {}).get("verdict") or "观察",
+        "source": "midday_macro",
+        "record_scan_skipped": True,
+        "reference_scan_id": ref_id,
+    }
+    return {
+        "scan": scan,
+        "state": st.to_dict(),
+        "lookback_mss": lookback_mss,
+        "lookback_detail": lookback_detail,
+        "trend": trend,
+        "anchor_trend": anchor_trend,
+        "xueqiu_cross": xueqiu_cross,
+        "enriched": enriched,
+        "macro_only": True,
+    }
+
+
 def render_midday_markdown(
     scan_result: dict[str, Any],
     *,
@@ -124,6 +168,7 @@ def render_midday_markdown(
     state = scan_result.get("state") or {}
     enriched = scan_result.get("enriched") or {}
     xueqiu_cross = scan_result.get("xueqiu_cross") or {}
+    macro_only = bool(scan_result.get("macro_only"))
 
     trend_map = {
         "rising": "上升",
@@ -143,17 +188,28 @@ def render_midday_markdown(
     except (FileNotFoundError, OSError, ValueError):
         baseline = None
 
-    lines = [
-        f"**☀️ 午盘分析 · {scan.get('scan_id', '—')}**",
-        "",
-        f"**即时 MSS：** {scan.get('mss_final', '—')} 分 · **标签：** {scan.get('verdict', '—')}",
-        f"**Lookback MSS：** {lookback_mss} 分 · **趋势：** {trend_map.get(trend, trend)}",
-    ]
-    if scan.get("trend_excluded"):
-        lines.append(
-            "**说明：** 本扫描为午休锚点（11:30 停价），不参与拐点判定；"
-            f"会话趋势 {trend_map.get(anchor_trend, anchor_trend)}，13:00 后扫描确认"
-        )
+    ref_scan = scan.get("reference_scan_id") or "—"
+    if macro_only:
+        lines = [
+            f"**☀️ 午盘宏观 refresh · {scan.get('scan_id', '12:30')}**",
+            "",
+            f"**参考 MSS（{ref_scan}）：** {scan.get('mss_final', '—')} 分 · **标签：** {scan.get('verdict', '—')}",
+            f"**会话 Lookback MSS：** {lookback_mss} 分 · **趋势：** {trend_map.get(anchor_trend, anchor_trend)}",
+            "",
+            "**说明：** 12:30 不写入 intraday 扫描（11:30 停价）；仅刷新宏观/舆情，13:05 起常规扫描确认。",
+        ]
+    else:
+        lines = [
+            f"**☀️ 午盘分析 · {scan.get('scan_id', '—')}**",
+            "",
+            f"**即时 MSS：** {scan.get('mss_final', '—')} 分 · **标签：** {scan.get('verdict', '—')}",
+            f"**Lookback MSS：** {lookback_mss} 分 · **趋势：** {trend_map.get(trend, trend)}",
+        ]
+        if scan.get("trend_excluded"):
+            lines.append(
+                "**说明：** 本扫描为午休锚点（11:30 停价），不参与拐点判定；"
+                f"会话趋势 {trend_map.get(anchor_trend, anchor_trend)}，13:00 后扫描确认"
+            )
     lines.extend(
         [
             "",
@@ -194,7 +250,9 @@ def render_midday_markdown(
         lines.append("- 数据不足")
 
     lines.extend(["", "## 📌 午后策略"])
-    if report.get("reasoning"):
+    if macro_only:
+        lines.append("- 13:05 开盘后以首个下午扫描（通常 S8）确认量价与 MSS 拐点")
+    elif report.get("reasoning"):
         lines.append(f"- {report['reasoning']}")
     else:
         lines.append("- 13:00 开盘后以 S_n+1 扫描确认，Lookback 已含本午盘锚点")
@@ -206,12 +264,12 @@ def render_midday_markdown(
         if n_md.strip():
             lines.extend(["", n_md])
 
-    lines.extend(
-        [
-            "",
-            "_说明：12:30 行情与 11:30 相同；本卡侧重午休资讯刷新与午后 Lookback 锚点，13:00 仍有一次常规盘中扫描。_",
-        ]
+    footer = (
+        "_说明：12:30 仅宏观/舆情 refresh，未写入 intraday MSS；13:05 起常规盘中扫描。_"
+        if macro_only
+        else "_说明：12:30 行情与 11:30 相同；本卡侧重午休资讯刷新与午后 Lookback 锚点，13:00 仍有一次常规盘中扫描。_"
     )
+    lines.extend(["", footer])
     return "\n".join(lines)
 
 
@@ -228,18 +286,27 @@ def _midday_narrative_deterministic(
     verdict = str(scan.get("verdict") or report.get("verdict") or "观察")
     mss = scan.get("mss_final") or report.get("mss_final")
     session_trend = str(anchor_trend or trend)
-    focus.append(f"午后 Lookback MSS {lookback_mss:.1f}（会话趋势 {session_trend}）")
-    if mss is not None:
-        focus.append(f"午盘即时 MSS {float(mss):.1f} · {verdict}")
-    if scan.get("quote_stale"):
-        focus.append("12:30 行情仍等于 11:30 收盘价，午休锚点仅刷新宏观/舆情")
-    focus.append("13:00 开盘后关注量价确认，勿仅凭午休资讯激进调仓")
-    if verdict in {"回避", "观察"} and session_trend in {"falling", "turning_down"}:
-        risks.append("上午会话 MSS 未确认进攻，午后宜守现金或轻仓试探")
-    elif scan.get("quote_stale") and session_trend not in {"falling", "turning_down"}:
-        risks.append("午休锚点不参与拐点判定，午后以 S9+ 扫描为准")
+    if scan.get("record_scan_skipped"):
+        focus.append(f"会话 Lookback MSS {lookback_mss:.1f}（趋势 {session_trend}，12:30 未写入扫描）")
+        ref = scan.get("reference_scan_id") or "上午末扫"
+        if mss is not None:
+            focus.append(f"参考 MSS {float(mss):.1f}（{ref}）· {verdict}")
+        focus.append("13:05 起常规 intraday 扫描确认，勿仅凭午休资讯激进调仓")
+        risks.append("12:30 不写入 MSS 扫描，午后决策以 S8+ 扫描为准")
+    else:
+        focus.append(f"午后 Lookback MSS {lookback_mss:.1f}（会话趋势 {session_trend}）")
+        if mss is not None:
+            focus.append(f"午盘即时 MSS {float(mss):.1f} · {verdict}")
+        if scan.get("quote_stale"):
+            focus.append("12:30 行情仍等于 11:30 收盘价，午休锚点仅刷新宏观/舆情")
+        focus.append("13:00 开盘后关注量价确认，勿仅凭午休资讯激进调仓")
+        if verdict in {"回避", "观察"} and session_trend in {"falling", "turning_down"}:
+            risks.append("上午会话 MSS 未确认进攻，午后宜守现金或轻仓试探")
+        elif scan.get("quote_stale") and session_trend not in {"falling", "turning_down"}:
+            risks.append("午休锚点不参与拐点判定，午后以 S9+ 扫描为准")
+    summary_verdict = verdict if not scan.get("record_scan_skipped") else f"宏观refresh·{verdict}"
     return {
-        "summary": f"午盘 refresh · {verdict} · Lookback {lookback_mss:.1f}",
+        "summary": f"午盘 refresh · {summary_verdict} · Lookback {lookback_mss:.1f}",
         "focus_points": focus[:3],
         "divergence_notes": [],
         "risk_alerts": risks[:2],
@@ -294,26 +361,31 @@ def run_midday(
         )
         steps.extend(expert_steps or ["mss_experts"])
 
-    evaluation = evaluate_snapshot(enriched, cfg, doctor_channels=doctor_channels)
-    steps.append("evaluate")
+    evaluation: Optional[dict[str, Any]] = None
+    if mcfg["record_scan"]:
+        evaluation = evaluate_snapshot(enriched, cfg, doctor_channels=doctor_channels)
+        steps.append("evaluate")
 
-    from agent_reach.daily_run.intraday import record_scan_from_evaluation
+        from agent_reach.daily_run.intraday import record_scan_from_evaluation
 
-    scan_result = record_scan_from_evaluation(
-        enriched,
-        evaluation,
-        settings=cfg,
-        source="midday",
-    )
-    scan_result["enriched"] = enriched
-    scan_result["evaluation"] = evaluation
-    steps.append("record_scan")
+        scan_result = record_scan_from_evaluation(
+            enriched,
+            evaluation,
+            settings=cfg,
+            source="midday",
+        )
+        scan_result["enriched"] = enriched
+        scan_result["evaluation"] = evaluation
+        steps.append("record_scan")
+    else:
+        scan_result = _build_macro_only_scan_result(enriched, st, settings=cfg)
+        steps.append("macro_only")
 
     scan = scan_result.get("scan") or {}
     anchor_trend = scan_result.get("anchor_trend") or scan_result.get("trend") or "flat"
     narrative = _midday_narrative_deterministic(
         scan,
-        evaluation.get("report") or {},
+        (evaluation or {}).get("report") or {},
         lookback_mss=float(scan_result.get("lookback_mss") or 0),
         trend=str(scan_result.get("trend") or "flat"),
         anchor_trend=str(anchor_trend),
@@ -330,7 +402,11 @@ def run_midday(
     # Midday never blocks (it's a light-touch check-in, unlike morning's hard
     # fail / close's push-block), but readers should still see the same audit
     # warning banner intraday scans already show.
-    audit = evaluation.get("audit")
+    audit = (evaluation or {}).get("audit") if evaluation else None
+    if audit is None and not mcfg["record_scan"]:
+        from agent_reach.daily_run.auditor import run_data_audit
+
+        audit = run_data_audit(enriched, cfg, doctor_channels=doctor_channels)
     if audit is not None and (not audit.passed or audit.warnings):
         warn_lines = ["**⚠️ 数据审计提示**"]
         if not audit.passed:
@@ -348,7 +424,10 @@ def run_midday(
         cfg_obj = config or Config()
         tpl = cfg.get("report", {}).get("feishu_template_midday", "blue")
         name = scan.get("name") or scan.get("code") or "大盘"
-        card_title = title or f"☀️ 午盘分析 · {scan.get('scan_id', '—')} · {name}"
+        if scan.get("record_scan_skipped"):
+            card_title = title or f"☀️ 午盘宏观 refresh · 12:30 · {name}"
+        else:
+            card_title = title or f"☀️ 午盘分析 · {scan.get('scan_id', '—')} · {name}"
         try:
             feishu_result = send_card(cfg_obj, card_title, markdown, template=tpl)
             steps.append("push")

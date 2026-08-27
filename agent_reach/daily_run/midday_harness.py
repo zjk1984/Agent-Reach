@@ -32,6 +32,7 @@ def midday_to_harness_evidence(run_result: dict[str, Any]) -> dict[str, Any]:
     scan_result = run_result.get("scan_result") or {}
     scan = run_result.get("scan") or scan_result.get("scan") or {}
     evaluation = run_result.get("evaluation") or {}
+    macro_only = bool(scan_result.get("macro_only") or scan.get("record_scan_skipped"))
     scan_id = scan.get("scan_id") or "midday"
     name = scan.get("name") or scan.get("code") or "标的"
     mss = scan.get("mss_final")
@@ -39,7 +40,10 @@ def midday_to_harness_evidence(run_result: dict[str, Any]) -> dict[str, Any]:
     trend = scan_result.get("trend") or "flat"
     lookback_mss = scan_result.get("lookback_mss")
 
-    if mss is not None:
+    if macro_only:
+        ref = scan.get("reference_scan_id") or "上午末扫"
+        memory.append(f"午盘 12:30 宏观 refresh（未写入 MSS 扫描）· 参考 {ref} MSS={mss}")
+    elif mss is not None:
         memory.append(f"午盘 {scan_id} {name} MSS={mss} verdict={verdict or '—'} trend={trend}")
 
     audit = evaluation.get("audit")
@@ -72,7 +76,7 @@ def midday_to_harness_evidence(run_result: dict[str, Any]) -> dict[str, Any]:
             )
             plan.append(f"intraday：{name} 午后关注 MSS 是否延续午盘方向，避免早盘惯性判断")
 
-    if trend in ("turning_up", "turning_down") and lookback_mss is not None:
+    if trend in ("turning_up", "turning_down") and lookback_mss is not None and not macro_only:
         playbook.append(f"午盘 Lookback 拐点 {trend}（{lookback_mss:.1f} 分），午后重点验证 S_n+1")
 
     xueqiu_cross = scan_result.get("xueqiu_cross") or {}

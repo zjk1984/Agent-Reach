@@ -26,6 +26,7 @@ def test_midday_cfg_enabled_by_default():
     assert cfg["enabled"] is True
     assert cfg["exclude_from_trend"] is True
     assert cfg["lookback_weight_scale"] == 0.25
+    assert cfg["record_scan"] is False
 
 
 def test_apply_midday_macro_refresh_merges():
@@ -90,7 +91,7 @@ def test_apply_midday_macro_refresh_preserves_session_technical():
 @patch("agent_reach.daily_run.midday.apply_midday_macro_refresh", side_effect=lambda s, **_: s)
 @patch("agent_reach.daily_run.intraday.record_scan_from_evaluation")
 @patch("agent_reach.daily_run.pipeline.evaluate_snapshot")
-def test_run_midday_records_source_midday(mock_eval, mock_record, _mock_macro):
+def test_run_midday_records_source_midday_when_record_scan_enabled(mock_eval, mock_record, _mock_macro):
     mock_eval.return_value = {
         "audit": type("A", (), {"passed": True, "warnings": []})(),
         "report": {"verdict": "观察", "mss_final": 44, "reasoning": "午后宜观望"},
@@ -107,12 +108,43 @@ def test_run_midday_records_source_midday(mock_eval, mock_record, _mock_macro):
     }
     result = run_midday(
         {"code": "688008", "name": "澜起", "portfolio": {}},
-        settings={"midday": {"enabled": True}},
+        settings={"midday": {"enabled": True, "record_scan": True}},
         push=False,
     )
     assert mock_record.call_args.kwargs["source"] == "midday"
     assert "record_scan" in result["steps"]
     assert "午盘分析" in result["markdown"]
+
+
+@patch("agent_reach.daily_run.midday.apply_midday_macro_refresh", side_effect=lambda s, **_: s)
+@patch("agent_reach.daily_run.intraday.record_scan_from_evaluation")
+@patch("agent_reach.daily_run.pipeline.evaluate_snapshot")
+def test_run_midday_macro_only_skips_record_scan(mock_eval, mock_record, _mock_macro):
+    from agent_reach.daily_run.intraday import IntradayState
+
+    state = IntradayState(
+        date="2026-08-27",
+        scans=[{"scan_id": "S7", "mss_final": 55.0, "verdict": "观察"}],
+    )
+    with patch("agent_reach.daily_run.intraday.load_state", return_value=state), patch(
+        "agent_reach.daily_run.macro_collector.fetch_intraday_xueqiu_cross_alerts",
+        return_value={},
+    ), patch(
+        "agent_reach.daily_run.auditor.run_data_audit",
+        return_value=type("A", (), {"passed": True, "warnings": [], "issues": []})(),
+    ):
+        result = run_midday(
+            {"code": "688008", "name": "澜起", "portfolio": {}},
+            settings={"midday": {"enabled": True, "record_scan": False}},
+            push=False,
+        )
+    mock_eval.assert_not_called()
+    mock_record.assert_not_called()
+    assert "macro_only" in result["steps"]
+    assert "record_scan" not in result["steps"]
+    assert result["scan"]["record_scan_skipped"] is True
+    assert "未写入 intraday" in result["markdown"]
+    assert len(state.scans) == 1
 
 
 @patch("agent_reach.daily_run.midday.apply_midday_macro_refresh", side_effect=lambda s, **_: s)
@@ -137,7 +169,7 @@ def test_run_midday_shows_audit_warning_without_blocking(mock_eval, mock_record,
     }
     result = run_midday(
         {"code": "688008", "name": "澜起", "portfolio": {}},
-        settings={"midday": {"enabled": True}},
+        settings={"midday": {"enabled": True, "record_scan": True}},
         push=False,
     )
     assert "数据审计提示" in result["markdown"]
