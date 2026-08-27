@@ -43,6 +43,18 @@ def is_continuous_session(dt: Optional[datetime] = None) -> bool:
     return any(start <= t < end for start, end in CONTINUOUS_SESSIONS)
 
 
+def is_lunch_break(dt: Optional[datetime] = None) -> bool:
+    """True during A-share lunch break (11:30-13:00 Asia/Shanghai).
+
+    Quotes are frozen at the morning close; MSS/trend must not treat 12:30
+    snapshots as a new intraday inflection.
+    """
+    now = dt or datetime.now(_SH_TZ)
+    now = now.replace(tzinfo=_SH_TZ) if now.tzinfo is None else now.astimezone(_SH_TZ)
+    t = now.time()
+    return time(11, 30) <= t < time(13, 0)
+
+
 def load_holiday_overrides(path: Optional[Path] = None) -> set[str]:
     """Optional JSON: { "holidays": ["2026-01-01"], "workdays": ["2026-02-14"] }"""
     p = path or (Path.home() / ".agent-reach" / "daily_run" / "holidays.json")

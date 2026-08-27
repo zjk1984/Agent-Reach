@@ -453,11 +453,23 @@ def record_scan_from_evaluation(
     }
     if source:
         entry["source"] = source
+    if source == "midday":
+        from agent_reach.daily_run.midday import midday_cfg
+        from agent_reach.daily_run.trade_calendar import is_lunch_break
+
+        mcfg = midday_cfg(cfg)
+        if mcfg.get("exclude_from_trend", True) or is_lunch_break():
+            entry["trend_excluded"] = True
+            entry["quote_stale"] = True
+            entry["lookback_weight_scale"] = float(mcfg.get("lookback_weight_scale", 0.25))
     st.scans.append(entry)
     save_state(st, resolved_path)
 
     lookback_mss, lookback_detail = compute_lookback_mss(st.scans, cfg)
     trend = detect_mss_trend(st.scans, cfg)
+    from agent_reach.daily_run.intraday_scan_filters import scans_for_trend_detection
+
+    anchor_trend = detect_mss_trend(scans_for_trend_detection(st.scans), cfg)
 
     from agent_reach.daily_run.macro_collector import fetch_intraday_xueqiu_cross_alerts
 
@@ -482,6 +494,7 @@ def record_scan_from_evaluation(
         "lookback_mss": lookback_mss,
         "lookback_detail": lookback_detail,
         "trend": trend,
+        "anchor_trend": anchor_trend,
         "xueqiu_cross": xueqiu_cross,
         "markdown": markdown,
     }

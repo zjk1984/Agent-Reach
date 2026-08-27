@@ -16,6 +16,8 @@ def midday_cfg(settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         "enabled": raw.get("enabled", True) is not False,
         "macro_refresh": raw.get("macro_refresh", True) is not False,
         "mss_experts": raw.get("mss_experts", False) is True,
+        "exclude_from_trend": raw.get("exclude_from_trend", True) is not False,
+        "lookback_weight_scale": float(raw.get("lookback_weight_scale", 0.25)),
     }
 
 
@@ -51,13 +53,10 @@ def apply_midday_macro_refresh(
 
     live_bd = dict(macro_ctx.get("mss_breakdown") or {})
     if live_bd:
+        from agent_reach.daily_run.intraday_scan_filters import merge_midday_breakdown
+
         base_bd = dict(out.get("mss_breakdown") or {})
-        for key, val in live_bd.items():
-            if key.startswith("_") or key.endswith("_ref"):
-                base_bd[key] = val
-            elif key in {"fx", "flow", "global", "sentiment", "technical", "quant", "risk"}:
-                base_bd[key] = val
-        out["mss_breakdown"] = base_bd
+        out["mss_breakdown"] = merge_midday_breakdown(base_bd, live_bd)
 
     cache = load_daily_cache()
     cache["macro_ctx"] = {
@@ -121,6 +120,7 @@ def render_midday_markdown(
     lookback_mss = scan_result.get("lookback_mss", 0)
     lookback_detail = scan_result.get("lookback_detail") or []
     trend = scan_result.get("trend") or "flat"
+    anchor_trend = scan_result.get("anchor_trend") or trend
     state = scan_result.get("state") or {}
     enriched = scan_result.get("enriched") or {}
     xueqiu_cross = scan_result.get("xueqiu_cross") or {}
@@ -148,12 +148,21 @@ def render_midday_markdown(
         "",
         f"**即时 MSS：** {scan.get('mss_final', '—')} 分 · **标签：** {scan.get('verdict', '—')}",
         f"**Lookback MSS：** {lookback_mss} 分 · **趋势：** {trend_map.get(trend, trend)}",
-        "",
-        "## 🌅 上午回顾",
-        *_morning_session_lines(state, baseline),
-        "",
-        "## 🔄 午休宏观刷新",
     ]
+    if scan.get("trend_excluded"):
+        lines.append(
+            "**说明：** 本扫描为午休锚点（11:30 停价），不参与拐点判定；"
+            f"会话趋势 {trend_map.get(anchor_trend, anchor_trend)}，13:00 后扫描确认"
+        )
+    lines.extend(
+        [
+            "",
+            "## 🌅 上午回顾",
+            *_morning_session_lines(state, baseline),
+            "",
+            "## 🔄 午休宏观刷新",
+        ]
+    )
     macro_summary = str(enriched.get("macro_summary") or "").strip()
     if macro_summary:
         lines.append(f"- {macro_summary[:240]}")
@@ -212,17 +221,23 @@ def _midday_narrative_deterministic(
     *,
     lookback_mss: float,
     trend: str,
+    anchor_trend: Optional[str] = None,
 ) -> dict[str, Any]:
     focus: list[str] = []
     risks: list[str] = []
     verdict = str(scan.get("verdict") or report.get("verdict") or "观察")
     mss = scan.get("mss_final") or report.get("mss_final")
-    focus.append(f"午后 Lookback MSS {lookback_mss:.1f}（趋势 {trend}）")
+    session_trend = str(anchor_trend or trend)
+    focus.append(f"午后 Lookback MSS {lookback_mss:.1f}（会话趋势 {session_trend}）")
     if mss is not None:
         focus.append(f"午盘即时 MSS {float(mss):.1f} · {verdict}")
+    if scan.get("quote_stale"):
+        focus.append("12:30 行情仍等于 11:30 收盘价，午休锚点仅刷新宏观/舆情")
     focus.append("13:00 开盘后关注量价确认，勿仅凭午休资讯激进调仓")
-    if verdict in {"回避", "观察"}:
-        risks.append("上午至午盘 MSS 未确认进攻，午后宜守现金或轻仓试探")
+    if verdict in {"回避", "观察"} and session_trend in {"falling", "turning_down"}:
+        risks.append("上午会话 MSS 未确认进攻，午后宜守现金或轻仓试探")
+    elif scan.get("quote_stale") and session_trend not in {"falling", "turning_down"}:
+        risks.append("午休锚点不参与拐点判定，午后以 S9+ 扫描为准")
     return {
         "summary": f"午盘 refresh · {verdict} · Lookback {lookback_mss:.1f}",
         "focus_points": focus[:3],
@@ -253,6 +268,16 @@ def run_midday(
     enriched = dict(snapshot)
     enriched.setdefault("report_type", "midday")
     enriched.setdefault("as_of", __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat())
+
+    from agent_reach.daily_run.intraday import default_state_path, load_state
+    from agent_reach.daily_run.intraday_scan_filters import last_session_scan, preserve_session_price_fields
+    from agent_reach.daily_run.trade_calendar import is_lunch_break
+
+    sym = enriched.get("code")
+    st = load_state(default_state_path(sym) if sym else default_state_path(), code=sym)
+    session_scan = last_session_scan(list(st.scans or []))
+    if is_lunch_break() or mcfg.get("exclude_from_trend"):
+        enriched = preserve_session_price_fields(enriched, session_scan)
 
     if mcfg["macro_refresh"]:
         enriched = apply_midday_macro_refresh(enriched, settings=cfg, config=config)
@@ -285,11 +310,13 @@ def run_midday(
     steps.append("record_scan")
 
     scan = scan_result.get("scan") or {}
+    anchor_trend = scan_result.get("anchor_trend") or scan_result.get("trend") or "flat"
     narrative = _midday_narrative_deterministic(
         scan,
         evaluation.get("report") or {},
         lookback_mss=float(scan_result.get("lookback_mss") or 0),
         trend=str(scan_result.get("trend") or "flat"),
+        anchor_trend=str(anchor_trend),
     )
     llm_cfg = (cfg.get("midday") or {}).get("llm_narrative") or {}
     if llm_cfg.get("enabled") is True and llm_cfg.get("planner") == "llm":

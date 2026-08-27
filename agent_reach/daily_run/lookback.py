@@ -31,7 +31,13 @@ def compute_lookback_mss(
     if total_w <= 0:
         return float(recent[0].get("mss_final", 0)), []
 
-    norm = [w / total_w for w in used]
+    scales = [float(scan.get("lookback_weight_scale", 1.0)) for scan in recent]
+    scaled = [w * s for w, s in zip(used, scales)]
+    total_scaled = sum(scaled)
+    if total_scaled <= 0:
+        norm = [w / total_w for w in used]
+    else:
+        norm = [w / total_scaled for w in scaled]
     contributions: list[dict[str, Any]] = []
     final = 0.0
     for scan, weight in zip(recent, norm):
@@ -44,6 +50,7 @@ def compute_lookback_mss(
                 "mss_final": mss,
                 "weight": round(weight, 4),
                 "weighted": round(mss * weight, 2),
+                "anchor": bool(scan.get("trend_excluded") or scan.get("source") == "midday"),
             }
         )
 
@@ -58,5 +65,7 @@ def detect_mss_trend(
 ) -> str:
     """Simple trend label from recent scan MSS values."""
     from agent_reach.daily_run.intraday_policy import detect_mss_trend as _detect
+    from agent_reach.daily_run.intraday_scan_filters import scans_for_trend_detection
 
-    return _detect(scans, settings, min_points=min_points)
+    trend_scans = scans_for_trend_detection(scans)
+    return _detect(trend_scans, settings, min_points=min_points)

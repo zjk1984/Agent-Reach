@@ -27,6 +27,12 @@ class TestIsContinuousSession:
         dt = datetime(2026, 8, 24, 12, 0, tzinfo=_SH_TZ)
         assert is_continuous_session(dt) is False
 
+    def test_is_lunch_break_helper(self):
+        from agent_reach.daily_run.trade_calendar import is_lunch_break
+
+        assert is_lunch_break(datetime(2026, 8, 24, 12, 30, tzinfo=_SH_TZ)) is True
+        assert is_lunch_break(datetime(2026, 8, 24, 13, 0, tzinfo=_SH_TZ)) is False
+
     def test_closing_call_auction_excluded(self):
         dt = datetime(2026, 8, 24, 14, 58, tzinfo=_SH_TZ)
         assert is_continuous_session(dt) is False

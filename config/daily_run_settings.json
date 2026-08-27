@@ -358,6 +358,8 @@
     "enabled": true,
     "macro_refresh": true,
     "mss_experts": false,
+    "exclude_from_trend": true,
+    "lookback_weight_scale": 0.25,
     "llm_narrative": {
       "enabled": true,
       "planner": "deterministic"

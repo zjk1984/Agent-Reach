@@ -22,7 +22,10 @@ def test_default_crontab_has_midday():
 
 
 def test_midday_cfg_enabled_by_default():
-    assert midday_cfg({})["enabled"] is True
+    cfg = midday_cfg({})
+    assert cfg["enabled"] is True
+    assert cfg["exclude_from_trend"] is True
+    assert cfg["lookback_weight_scale"] == 0.25
 
 
 def test_apply_midday_macro_refresh_merges():
@@ -34,7 +37,7 @@ def test_apply_midday_macro_refresh_merges():
     macro = {
         "macro_summary": "北向 +12 亿",
         "macro_signals": {"northbound_flow_yi": 12.0},
-        "mss_breakdown": {"flow": 55, "global": 48, "sentiment": 52},
+        "mss_breakdown": {"flow": 55, "global": 48, "sentiment": 52, "technical": 40, "quant": 40},
         "sources": {"flow": {"summary": "北向净流入 12 亿"}},
     }
     with patch(
@@ -53,6 +56,35 @@ def test_apply_midday_macro_refresh_merges():
     assert out["macro_summary"] == "北向 +12 亿"
     assert out["mss_breakdown"]["flow"] == 55
     mock_save.assert_called_once()
+
+
+def test_apply_midday_macro_refresh_preserves_session_technical():
+    snapshot = {
+        "portfolio": {"holdings": [], "watchlist": []},
+        "mss_breakdown": {"fx": 40, "flow": 40, "technical": 58, "quant": 57, "risk": 55},
+        "sources": {},
+    }
+    macro = {
+        "macro_summary": "宏观 refresh",
+        "macro_signals": {},
+        "mss_breakdown": {"flow": 44, "global": 46, "sentiment": 46, "technical": 40, "quant": 40},
+        "sources": {},
+    }
+    with patch(
+        "agent_reach.daily_run.macro_collector.collect_macro_context",
+        return_value=macro,
+    ), patch(
+        "agent_reach.daily_run.macro_collector.enrich_macro_sources",
+        side_effect=lambda _pf, sources, _cfg: sources,
+    ), patch(
+        "agent_reach.daily_run.snapshot_cache.load_daily_cache",
+        return_value={},
+    ), patch(
+        "agent_reach.daily_run.snapshot_cache.save_daily_cache",
+    ):
+        out = apply_midday_macro_refresh(snapshot, settings={})
+    assert out["mss_breakdown"]["flow"] == 44
+    assert out["mss_breakdown"]["technical"] == 58
 
 
 @patch("agent_reach.daily_run.midday.apply_midday_macro_refresh", side_effect=lambda s, **_: s)
@@ -116,12 +148,19 @@ def test_run_midday_shows_audit_warning_without_blocking(mock_eval, mock_record,
 def test_render_midday_markdown_sections():
     md = render_midday_markdown(
         {
-            "scan": {"scan_id": "S10", "mss_final": 44, "verdict": "观察"},
+            "scan": {
+                "scan_id": "S8",
+                "mss_final": 55.0,
+                "verdict": "观察",
+                "source": "midday",
+                "trend_excluded": True,
+            },
             "evaluation": {"report": {"reasoning": "午后观望"}},
-            "lookback_mss": 43.5,
-            "lookback_detail": [{"scan_id": "S10", "mss_final": 44, "weight": 1.0, "weighted": 44}],
-            "trend": "flat",
-            "state": {"scans": [{"scan_id": "S10", "source": "midday", "mss_final": 44}]},
+            "lookback_mss": 54.0,
+            "lookback_detail": [{"scan_id": "S8", "mss_final": 55.0, "weight": 0.25, "weighted": 13.75}],
+            "trend": "rising",
+            "anchor_trend": "rising",
+            "state": {"scans": [{"scan_id": "S8", "source": "midday", "mss_final": 55.0}]},
             "enriched": {"macro_summary": "午休宏观 refresh"},
             "xueqiu_cross": {},
         }
@@ -130,3 +169,4 @@ def test_render_midday_markdown_sections():
     assert "上午回顾" in md
     assert "午休宏观刷新" in md
     assert "午后 Lookback" in md
+    assert "午休锚点" in md
