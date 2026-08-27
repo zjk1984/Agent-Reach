@@ -11,6 +11,7 @@ from agent_reach.daily_run.skill_rejected import (
     load_active_rejected_records,
     refresh_rejected_strategies_for_week,
     trade_blocked_by_rejected,
+    _candidates_from_weekly_report,
 )
 
 
@@ -110,6 +111,11 @@ class TestSkillRejected:
             "weekly_pnl_pct": -1.5,
             "macro_signals": {"verdict": "回避"},
             "buy_rules_whatif": {"skipped": True},
+            "intraday_friction_whatif": {
+                "skipped": False,
+                "friction_would_pass": 3,
+                "trend_mismatch": 0,
+            },
         }
         result = refresh_rejected_strategies_for_week(report, settings)
         assert result.get("skipped") is False
@@ -130,3 +136,53 @@ class TestSkillRejected:
         second = add_rejected_strategy("dup", "two", week_start="2026-08-10", week_end="2026-08-14", settings=settings)
         assert first["id"] == second["id"]
         assert path.read_text(encoding="utf-8").count("\n") == 1
+
+    def test_macro_requires_whatif_signal_by_default(self):
+        report = {
+            "weekly_pnl_pct": -2.0,
+            "macro_signals": {"verdict": "回避"},
+            "buy_rules_whatif": {"skipped": True},
+        }
+        assert _candidates_from_weekly_report(report, {}) == []
+
+    def test_sell_whatif_adds_rejected_candidate(self):
+        report = {
+            "weekly_pnl_pct": -1.2,
+            "sell_rules_whatif": {
+                "skipped": False,
+                "actual_realized_pnl": 800,
+                "hypothetical_realized_pnl": 1200,
+                "realized_pnl_delta": -400,
+                "rows": [],
+            },
+        }
+        titles = [t for t, _ in _candidates_from_weekly_report(report, {})]
+        assert "禁止接飞刀追涨" in titles
+
+    def test_buy_and_sell_whatif_merge(self):
+        report = {
+            "weekly_pnl_pct": -3.0,
+            "buy_rules_whatif": {
+                "skipped": False,
+                "buy_notional_delta": -6000,
+                "rows": [
+                    {
+                        "name": "澜起科技",
+                        "actual_bought": 200,
+                        "hypothetical_bought": 0,
+                        "block_reason": "已证伪策略阻断买入：接飞刀",
+                    }
+                ],
+            },
+            "intraday_sell_whatif": {
+                "skipped": False,
+                "missed_sell_signals": 3,
+                "sell_share_delta": 0,
+            },
+        }
+        out = _candidates_from_weekly_report(report, {})
+        assert len(out) == 1
+        title, reason = out[0]
+        assert title == "禁止接飞刀追涨"
+        assert "买入 what-if" in reason
+        assert "盘中卖出 what-if" in reason

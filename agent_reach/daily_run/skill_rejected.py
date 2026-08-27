@@ -28,12 +28,19 @@ def _normalize_title(title: str) -> str:
 
 def _rejected_cfg(settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     cfg = dict((settings or {}).get("rejected_strategies") or {})
+    whatif = dict(cfg.get("weekly_whatif") or {})
     return {
         "harness_evolve": cfg.get("harness_evolve", True),
         "weekly_refresh": cfg.get("weekly_refresh", True),
         "active_week_only": cfg.get("active_week_only", True),
         "archive_expired": cfg.get("archive_expired", True),
         "auto_add_from_weekly": cfg.get("auto_add_from_weekly", True),
+        "buy_notional_delta_cny": float(whatif.get("buy_notional_delta_cny", 5000)),
+        "sell_pnl_delta_cny": float(whatif.get("sell_pnl_delta_cny", 200)),
+        "friction_pass_min": int(whatif.get("friction_pass_min", 2)),
+        "trend_mismatch_min": int(whatif.get("trend_mismatch_min", 2)),
+        "intraday_sell_missed_min": int(whatif.get("intraday_sell_missed_min", 2)),
+        "require_whatif_for_macro": whatif.get("require_whatif_for_macro", True) is not False,
     }
 
 
@@ -228,57 +235,212 @@ def _append_archive_rows(rows: list[dict[str, Any]]) -> int:
     return len(rows)
 
 
-def _dedupe_candidates(candidates: list[tuple[str, str]]) -> list[tuple[str, str]]:
-    seen: set[str] = set()
-    out: list[tuple[str, str]] = []
-    for title, reason in candidates:
-        key = _normalize_title(title)
-        if not key or key in seen:
+def _weekly_loss(report: dict[str, Any]) -> bool:
+    pnl_pct = report.get("weekly_pnl_pct")
+    if pnl_pct is None:
+        return False
+    return float(pnl_pct) < 0
+
+
+def _buy_block_title(blob: str, name: str = "") -> str:
+    if "接飞刀" in blob:
+        return "禁止接飞刀追涨"
+    if name:
+        return f"禁止{name}逆势加仓"
+    return "禁止逆势加仓"
+
+
+def _candidates_from_buy_whatif(
+    report: dict[str, Any],
+    cfg: dict[str, Any],
+) -> list[tuple[str, str, str]]:
+    """Return (title, reason, source_tag) from buy what-if."""
+    out: list[tuple[str, str, str]] = []
+    buy = report.get("buy_rules_whatif") or {}
+    if buy.get("skipped"):
+        return out
+
+    for row in buy.get("rows") or []:
+        actual = int(row.get("actual_bought") or 0)
+        hypo = int(row.get("hypothetical_bought") or 0)
+        block = str(row.get("block_reason") or "").strip()
+        if actual <= 0 or actual <= hypo:
             continue
-        seen.add(key)
-        out.append((title.strip(), reason.strip()))
+        name = str(row.get("name") or row.get("code") or "").strip()
+        blob = f"{block} {name}"
+        if not any(p in blob for p in _BUY_BLOCK_PHRASES):
+            continue
+        title = _buy_block_title(blob, name)
+        reason = block or f"买入 what-if：基准多买 {actual - hypo} 股（自进化阻断）"
+        out.append((title, reason, "buy_whatif"))
+
+    if _weekly_loss(report):
+        delta = float(buy.get("buy_notional_delta") or 0)
+        threshold = float(cfg.get("buy_notional_delta_cny", 5000))
+        if delta <= -threshold:
+            pnl_pct = float(report.get("weekly_pnl_pct") or 0)
+            out.append(
+                (
+                    "禁止接飞刀追涨",
+                    f"买入 what-if：本周亏损 {pnl_pct:+.2f}% 且基准超自进化 ¥{abs(delta):,.0f}",
+                    "buy_whatif",
+                )
+            )
     return out
 
 
-def _candidates_from_weekly_report(report: dict[str, Any]) -> list[tuple[str, str]]:
-    candidates: list[tuple[str, str]] = []
-    buy = report.get("buy_rules_whatif") or {}
-    if not buy.get("skipped"):
-        for row in buy.get("rows") or []:
-            actual = int(row.get("actual_bought") or 0)
-            hypo = int(row.get("hypothetical_bought") or 0)
-            block = str(row.get("block_reason") or "").strip()
-            if actual <= 0 or actual <= hypo:
-                continue
-            name = str(row.get("name") or row.get("code") or "").strip()
-            blob = f"{block} {name}"
-            if any(p in blob for p in _BUY_BLOCK_PHRASES):
-                if "接飞刀" in blob:
-                    title = "禁止接飞刀追涨"
-                elif name:
-                    title = f"禁止{name}逆势加仓"
-                else:
-                    title = "禁止逆势加仓"
-                reason = block or f"本周基准多买 {actual - hypo} 股（自进化阻断）"
-                candidates.append((title, reason))
+def _candidates_from_sell_whatif(
+    report: dict[str, Any],
+    cfg: dict[str, Any],
+) -> list[tuple[str, str, str]]:
+    out: list[tuple[str, str, str]] = []
+    sell = report.get("sell_rules_whatif") or {}
+    if sell.get("skipped") or not _weekly_loss(report):
+        return out
 
-        pnl_pct = report.get("weekly_pnl_pct")
-        delta = float(buy.get("buy_notional_delta") or 0)
-        if pnl_pct is not None and float(pnl_pct) < 0 and delta <= -5000:
-            candidates.append(
-                (
-                    "禁止接飞刀追涨",
-                    f"本周亏损 {float(pnl_pct):+.2f}% 且基准买入超自进化 ¥{abs(delta):,.0f}",
-                )
+    actual_pnl = float(sell.get("actual_realized_pnl") or 0)
+    hypo_pnl = float(sell.get("hypothetical_realized_pnl") or 0)
+    pnl_delta = float(sell.get("realized_pnl_delta") or 0)
+    threshold = float(cfg.get("sell_pnl_delta_cny", 200))
+
+    for row in sell.get("rows") or []:
+        actual = int(row.get("actual_sold") or 0)
+        hypo = int(row.get("hypothetical_sold") or 0)
+        if actual <= hypo:
+            continue
+        name = str(row.get("name") or row.get("code") or "").strip()
+        block = str(row.get("block_reason") or "").strip()
+        reason = block or f"卖出 what-if：基准多卖 {actual - hypo} 股"
+        title = _buy_block_title(f"逆势加仓 {reason}", name)
+        out.append((title, f"{reason}，亏损后不宜逆势加仓", "sell_whatif"))
+
+    if pnl_delta <= -threshold:
+        out.append(
+            (
+                "禁止接飞刀追涨",
+                f"卖出 what-if：基准已实现 {actual_pnl:+,.0f} vs 自进化 {hypo_pnl:+,.0f}（差 {pnl_delta:+,.0f}），逆势回补已证伪",
+                "sell_whatif",
             )
+        )
+    return out
 
+
+def _candidates_from_intraday_friction_whatif(
+    report: dict[str, Any],
+    cfg: dict[str, Any],
+) -> list[tuple[str, str, str]]:
+    out: list[tuple[str, str, str]] = []
+    friction = report.get("intraday_friction_whatif") or {}
+    if friction.get("skipped") or not _weekly_loss(report):
+        return out
+
+    friction_pass = int(friction.get("friction_would_pass") or 0)
+    trend_miss = int(friction.get("trend_mismatch") or 0)
+    pass_min = int(cfg.get("friction_pass_min", 2))
+    trend_min = int(cfg.get("trend_mismatch_min", 2))
+
+    if friction_pass >= pass_min:
+        out.append(
+            (
+                "禁止接飞刀追涨",
+                f"盘中摩擦 what-if：自进化可放行 {friction_pass} 次，摩擦门槛过严导致错失后不宜追涨",
+                "intraday_friction_whatif",
+            )
+        )
+    if trend_miss >= trend_min:
+        out.append(
+            (
+                "禁止接飞刀追涨",
+                f"盘中摩擦 what-if：趋势误判 {trend_miss} 次，逆势加仓已证伪",
+                "intraday_friction_whatif",
+            )
+        )
+    return out
+
+
+def _candidates_from_intraday_sell_whatif(
+    report: dict[str, Any],
+    cfg: dict[str, Any],
+) -> list[tuple[str, str, str]]:
+    out: list[tuple[str, str, str]] = []
+    intraday_sell = report.get("intraday_sell_whatif") or {}
+    if intraday_sell.get("skipped") or not _weekly_loss(report):
+        return out
+
+    missed = int(intraday_sell.get("missed_sell_signals") or 0)
+    missed_min = int(cfg.get("intraday_sell_missed_min", 2))
+    delta = int(intraday_sell.get("sell_share_delta") or 0)
+    if missed >= missed_min:
+        out.append(
+            (
+                "禁止接飞刀追涨",
+                f"盘中卖出 what-if：错失防御卖出 {missed} 次，卖晚后追涨已证伪",
+                "intraday_sell_whatif",
+            )
+        )
+    elif delta < -500:
+        out.append(
+            (
+                "禁止接飞刀追涨",
+                f"盘中卖出 what-if：基准少卖 {abs(delta)} 股，亏损后不宜接飞刀",
+                "intraday_sell_whatif",
+            )
+        )
+    return out
+
+
+def _candidates_from_macro(
+    report: dict[str, Any],
+    cfg: dict[str, Any],
+    *,
+    has_whatif_signal: bool,
+) -> list[tuple[str, str, str]]:
+    if not _weekly_loss(report):
+        return []
+    if cfg.get("require_whatif_for_macro", True) and not has_whatif_signal:
+        return []
     macro = report.get("macro_signals") or {}
     verdict = str(macro.get("verdict") or macro.get("macro_verdict") or "")
-    pnl_pct = report.get("weekly_pnl_pct")
-    if pnl_pct is not None and float(pnl_pct) < 0 and ("回避" in verdict or macro.get("macro_veto")):
-        candidates.append(("禁止接飞刀追涨", "宏观回避期逆势加仓已证伪"))
+    if "回避" not in verdict and not macro.get("macro_veto"):
+        return []
+    return [
+        (
+            "禁止接飞刀追涨",
+            "宏观回避期逆势加仓已证伪",
+            "macro",
+        )
+    ]
 
-    return _dedupe_candidates(candidates)
+
+def _dedupe_candidate_triples(candidates: list[tuple[str, str, str]]) -> list[tuple[str, str]]:
+    merged: dict[str, tuple[str, list[str]]] = {}
+    order: list[str] = []
+    for title, reason, _source in candidates:
+        key = _normalize_title(title)
+        if not key:
+            continue
+        reason = reason.strip()
+        if key not in merged:
+            merged[key] = (title.strip(), [])
+            order.append(key)
+        if reason and reason not in merged[key][1]:
+            merged[key][1].append(reason)
+    return [(merged[k][0], "；".join(merged[k][1])) for k in order]
+
+
+def _candidates_from_weekly_report(
+    report: dict[str, Any],
+    settings: Optional[dict[str, Any]] = None,
+) -> list[tuple[str, str]]:
+    cfg = _rejected_cfg(settings)
+    tagged: list[tuple[str, str, str]] = []
+    tagged.extend(_candidates_from_buy_whatif(report, cfg))
+    tagged.extend(_candidates_from_sell_whatif(report, cfg))
+    tagged.extend(_candidates_from_intraday_friction_whatif(report, cfg))
+    tagged.extend(_candidates_from_intraday_sell_whatif(report, cfg))
+    has_whatif = any(src != "macro" for _, _, src in tagged)
+    tagged.extend(_candidates_from_macro(report, cfg, has_whatif_signal=has_whatif))
+    return _dedupe_candidate_triples(tagged)
 
 
 def add_rejected_strategy(
@@ -383,7 +545,7 @@ def refresh_rejected_strategies_for_week(
 
     added_titles: list[str] = []
     if cfg.get("auto_add_from_weekly", True):
-        for title, reason in _candidates_from_weekly_report(report):
+        for title, reason in _candidates_from_weekly_report(report, settings):
             dup = _find_same_week_title(
                 title,
                 week_start=target_start_s,
