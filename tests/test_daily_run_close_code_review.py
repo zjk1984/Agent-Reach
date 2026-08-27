@@ -2,6 +2,7 @@
 """Tests for close code walkthrough and bug fixes."""
 
 from agent_reach.daily_run.close_code_review import (
+    CodeReviewResult,
     render_code_review_markdown,
     run_close_code_review,
 )
@@ -42,6 +43,27 @@ def test_render_code_review_markdown():
     )
     md = render_code_review_markdown(result)
     assert "代码走读" in md
+
+
+def test_code_review_from_dict_rehydrates_findings():
+    raw = CodeReviewResult(
+        findings=[],
+        fixes_applied=["fix one"],
+    ).to_dict()
+    raw["findings"] = [
+        {
+            "area": "portfolio",
+            "severity": "medium",
+            "title": "示例 finding",
+            "detail": "detail text",
+            "fixed": False,
+            "fix_note": "",
+        }
+    ]
+    restored = CodeReviewResult.from_dict(raw)
+    md = render_code_review_markdown(restored)
+    assert "示例 finding" in md
+    assert restored.fixes_applied == ["fix one"]
 
 
 def test_detect_cash_ratio_mismatch():

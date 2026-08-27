@@ -113,6 +113,23 @@ class CodeReviewResult:
             out["harness_refinement"] = self.harness_refinement
         return out
 
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> CodeReviewResult:
+        findings: list[CodeFinding] = []
+        for item in raw.get("findings") or []:
+            if isinstance(item, CodeFinding):
+                findings.append(item)
+            elif isinstance(item, dict):
+                findings.append(CodeFinding(**item))
+        return cls(
+            findings=findings,
+            fixes_applied=list(raw.get("fixes_applied") or []),
+            portfolio=raw.get("portfolio"),
+            portfolio_changed=bool(raw.get("portfolio_changed")),
+            smoke_tests=raw.get("smoke_tests"),
+            harness_refinement=raw.get("harness_refinement"),
+        )
+
 
 def run_close_code_review(
     *,

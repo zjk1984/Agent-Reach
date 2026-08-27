@@ -763,7 +763,7 @@ def run_close(
         cr_obj = (
             code_review
             if isinstance(code_review, CodeReviewResult)
-            else CodeReviewResult(**code_review)
+            else CodeReviewResult.from_dict(code_review)
         )
         cr_md = render_code_review_markdown(cr_obj)
         if cr_md:
