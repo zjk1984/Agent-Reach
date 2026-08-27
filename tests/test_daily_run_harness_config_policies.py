@@ -182,6 +182,7 @@ def test_apply_harness_policy_overlay_includes_new_policies(mock_load, mock_over
     assert "watchlist_score_policy" in runtime
     assert "xueqiu_hit_policy" in runtime
     assert "rebound_policy" in runtime
+    assert "reading_policy" in runtime
     assert out["intraday"]["rebound"]["min_mss_delta"] == 3.0
     assert out["watchlist"].get("announcement_score_boost") is not None
 

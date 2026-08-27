@@ -969,7 +969,11 @@
     "loss_streak_max_mode": "harness",
     "min_mss_delta_mode": "harness",
     "min_latest_mss_mode": "harness",
+    "recovery_min_mss_mode": "harness",
+    "recovery_min_lookback_mode": "harness",
+    "recovery_macro_veto_mode": "harness",
     "reading_signals": {
+      "mode": "harness",
       "enabled": true,
       "suppress_defensive_on_recovery": true,
       "persist_macro_warming_on_close": true,

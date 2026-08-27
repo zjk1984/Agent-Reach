@@ -15,6 +15,12 @@ _READING_NEUTRAL: dict[str, float] = {
 
 
 def reading_signals_cfg(settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    from agent_reach.daily_run.harness_reading_policy import (
+        _EVOLVED_READING_KEYS,
+        reading_effective_cfg,
+        reading_mode,
+    )
+
     harness = dict((settings or {}).get("harness") or {})
     block = dict(harness.get("reading_signals") or {})
     out = {**_READING_NEUTRAL, **block}
@@ -26,6 +32,10 @@ def reading_signals_cfg(settings: Optional[dict[str, Any]] = None) -> dict[str, 
         out["recovery_trends"] = [str(x) for x in trends]
     else:
         out["recovery_trends"] = ["rising", "turning_up"]
+    if reading_mode(settings) == "harness":
+        evolved = reading_effective_cfg(settings)
+        for key in _EVOLVED_READING_KEYS:
+            out[key] = float(evolved.get(key, out[key]))
     return out
 
 

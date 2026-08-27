@@ -1640,6 +1640,25 @@ def apply_harness_policy_overlay(settings: dict[str, Any]) -> dict[str, Any]:
         if weight_meta:
             harness_meta["mss_weights_overlay"] = weight_meta
 
+    from agent_reach.daily_run.harness_reading_policy import (
+        harness_reading_overlay_meta,
+        reading_effective_cfg,
+        reading_policy_base,
+        resolve_harness_reading_policy,
+    )
+
+    base_reading = reading_policy_base(cfg)
+    effective_reading = resolve_harness_reading_policy(state, settings=cfg)
+    harness_meta["reading_policy"] = effective_reading
+    reading_policy_meta = harness_reading_overlay_meta(base_reading, effective_reading)
+    if reading_policy_meta:
+        harness_meta["reading_overlay"] = reading_policy_meta
+    harness_block = dict(cfg.get("harness") or {})
+    reading_block = dict(harness_block.get("reading_signals") or {})
+    reading_block.update(reading_effective_cfg({**cfg, "harness_runtime": harness_meta}))
+    harness_block["reading_signals"] = reading_block
+    cfg["harness"] = harness_block
+
     trade_signals = resolve_harness_trade_signals(state, settings=cfg)
     from agent_reach.daily_run.harness_reading_signals import resolve_harness_reading_signals
 
@@ -1905,17 +1924,14 @@ def apply_harness_policy_overlay(settings: dict[str, Any]) -> dict[str, Any]:
     harness_block["bad_trade_weekly_pnl_pct"] = float(effective_bad_trade["bad_trade_weekly_pnl_pct"])
     cfg["harness"] = harness_block
     harness_meta["trade_signals"] = {
-        k: trade_signals[k]
-        for k in (
-            "mss_forecast_miss",
-            "defensive_trim",
-            "deviation_active",
-            "pnl_target_hit",
-            "pnl_target_miss",
-            "mss_recovery",
-            "macro_warming",
-            "reading_suppressed_defensive",
-        )
+        "mss_forecast_miss": bool(trade_signals.get("mss_forecast_miss")),
+        "defensive_trim": bool(trade_signals.get("defensive_trim")),
+        "deviation_active": bool(trade_signals.get("deviation_active")),
+        "pnl_target_hit": bool(trade_signals.get("pnl_target_hit")),
+        "pnl_target_miss": bool(trade_signals.get("pnl_target_miss")),
+        "mss_recovery": bool(trade_signals.get("mss_recovery")),
+        "macro_warming": bool(trade_signals.get("macro_warming")),
+        "reading_suppressed_defensive": bool(trade_signals.get("reading_suppressed_defensive")),
     }
 
     try:
