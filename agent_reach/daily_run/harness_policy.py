@@ -1442,14 +1442,22 @@ def resolve_harness_trade_signals(
     blobs += _collect_text_blobs(state, sources=sources, kind="policy", settings=cfg)
 
     mss_miss = any(any(p in blob for p in _MSS_MISS_PHRASES) for blob in blobs)
+    macro_warming_mem = any("宏观回暖" in blob for blob in blobs)
     deviation = _has_deviation_signal(state, sources=sources, settings=cfg)
     bullish, bearish = resolve_harness_kronos_bias(state, settings=settings)
     pnl_hit = any("盈亏目标达成" in blob for blob in blobs)
     pnl_miss = any("盈亏目标未达" in blob for blob in blobs)
+    if macro_warming_mem and not pnl_miss:
+        mss_miss = False
+        deviation = any(
+            any(p in blob for p in _DEVIATION_PHRASES if p != "MSS 预测偏离")
+            for blob in blobs
+        )
 
     memory_signals = {
         "mss_forecast_miss": mss_miss,
         "defensive_trim": mss_miss or deviation or pnl_miss,
+        "macro_warming_memory": macro_warming_mem,
         "deviation_active": deviation,
         "kronos_bullish": bullish,
         "kronos_bearish": bearish,

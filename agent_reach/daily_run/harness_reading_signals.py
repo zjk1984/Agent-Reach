@@ -133,7 +133,16 @@ def resolve_harness_reading_signals(
         and trend in allowed_trends
     )
     v_recovery = latest_mss >= min_mss and delta_from_low >= min_delta and trend in allowed_trends
-    mss_recovery = bool(trend_confirmed or v_recovery)
+    from agent_reach.daily_run.defensive_trim_guards import mixed_early_mss_recovery
+
+    mixed_recovery = mixed_early_mss_recovery(
+        trend=trend,
+        lookback_mss=lookback_mss,
+        latest_mss=latest_mss,
+        delta_from_low=delta_from_low,
+        settings=settings,
+    )
+    mss_recovery = bool(trend_confirmed or v_recovery or mixed_recovery)
 
     return {
         "reading_available": True,
@@ -144,6 +153,7 @@ def resolve_harness_reading_signals(
         "delta_from_low": round(delta_from_low, 2),
         "trend": trend,
         "mss_recovery": mss_recovery,
+        "mixed_early_recovery": mixed_recovery,
         "recovery_macro_veto": float(cfg["recovery_macro_veto"]),
         "recovery_aggressive_entry": float(cfg["recovery_aggressive_entry"]),
     }
