@@ -38,6 +38,19 @@ def _day_bounds(day: str | date) -> tuple[str, str]:
     return ds, next_day
 
 
+def _shanghai_day_bounds(day: str | date) -> tuple[str, str]:
+    from agent_reach.daily_run.trade_calendar import shanghai_day_iso_bounds
+
+    if isinstance(day, date):
+        target = day
+    else:
+        text = str(day or "")[:10]
+        if not text:
+            return "", ""
+        target = date.fromisoformat(text)
+    return shanghai_day_iso_bounds(target)
+
+
 def _date_filter_bounds(
     start: Optional[date] = None,
     end: Optional[date] = None,
@@ -205,11 +218,19 @@ def read_intraday_scan_best_for_day(
     settings: Optional[dict[str, Any]] = None,
 ) -> Optional[dict[str, Any]]:
     from agent_reach.daily_run.snapshot_builder import _normalize_code
+    from agent_reach.daily_run.trade_calendar import shanghai_date_of_iso
 
     if not storage_prefer_db(settings):
         return None
     norm = _normalize_code(code)
-    since, until = _day_bounds(day)
+    if isinstance(day, date):
+        trading_day = day
+    else:
+        text = str(day or "")[:10]
+        if not text:
+            return None
+        trading_day = date.fromisoformat(text)
+    since, until = _shanghai_day_bounds(trading_day)
     if not since or not norm:
         return None
     store = _get_store(settings)
@@ -228,6 +249,8 @@ def read_intraday_scan_best_for_day(
         if payload.get("mss_final") is None:
             continue
         as_of = str(payload.get("as_of") or event.get("at") or "")
+        if shanghai_date_of_iso(as_of) != trading_day:
+            continue
         if best is None or as_of >= best[0]:
             best = (
                 as_of,
@@ -237,7 +260,7 @@ def read_intraday_scan_best_for_day(
                     "mss_final": float(payload["mss_final"]),
                     "mss_breakdown": payload.get("mss_breakdown") or {},
                     "verdict": payload.get("verdict"),
-                    "close_date": since[:10],
+                    "close_date": trading_day.isoformat(),
                     "scan_id": payload.get("scan_id"),
                     "as_of": as_of or None,
                     "source": "intraday_scan_db",
@@ -254,6 +277,8 @@ def read_intraday_scan_best_for_day(
         as_of = str(row.get("at") or "")
         if until and as_of >= until:
             continue
+        if shanghai_date_of_iso(as_of) != trading_day:
+            continue
         if best is None or as_of >= best[0]:
             best = (
                 as_of,
@@ -263,7 +288,7 @@ def read_intraday_scan_best_for_day(
                     "mss_final": float(mss),
                     "mss_breakdown": payload.get("mss_breakdown") or {},
                     "verdict": payload.get("verdict"),
-                    "close_date": since[:10],
+                    "close_date": trading_day.isoformat(),
                     "scan_id": payload.get("scan_id"),
                     "as_of": as_of or None,
                     "source": "intraday_scan_db",
@@ -290,8 +315,15 @@ def read_close_baseline_from_store(
     key = f"close/{norm}"
     since = ""
     until = ""
+    target_day: Optional[date] = None
     if day is not None:
-        since, until = _day_bounds(day)
+        if isinstance(day, date):
+            target_day = day
+        else:
+            text = str(day or "")[:10]
+            target_day = date.fromisoformat(text) if text else None
+        if target_day is not None:
+            since, until = _shanghai_day_bounds(target_day)
     rows = query_l2(
         kind="baseline_close",
         scenario_key=key,
@@ -306,6 +338,10 @@ def read_close_baseline_from_store(
             out = dict(payload)
             out.setdefault("close_date", str(row.get("at") or out.get("close_date") or "")[:10])
             out.setdefault("_baseline_source", "baseline_close_db")
+            if target_day is not None:
+                close_date = str(out.get("close_date") or "")[:10]
+                if close_date and close_date != target_day.isoformat():
+                    continue
             return out
     return None
 

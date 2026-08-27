@@ -204,3 +204,27 @@ def next_trading_day(
             return cursor
         cursor += timedelta(days=1)
     return (d or today_shanghai()) + timedelta(days=1)
+
+
+def shanghai_day_iso_bounds(day: date) -> tuple[str, str]:
+    """Inclusive start / exclusive end ISO timestamps for one Shanghai calendar day."""
+    start = datetime(day.year, day.month, day.day, tzinfo=_SH_TZ)
+    end = start + timedelta(days=1)
+    return start.isoformat(), end.isoformat()
+
+
+def shanghai_date_of_iso(raw: str) -> Optional[date]:
+    """Map an ISO timestamp (or date prefix) to its Asia/Shanghai calendar date."""
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    try:
+        if len(text) == 10 and text[4] == "-" and text[7] == "-":
+            return date.fromisoformat(text)
+        normalized = text.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(normalized)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=_SH_TZ)
+        return dt.astimezone(_SH_TZ).date()
+    except ValueError:
+        return None

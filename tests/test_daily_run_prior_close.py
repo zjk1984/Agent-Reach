@@ -4,6 +4,7 @@
 import json
 from datetime import date, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -214,3 +215,117 @@ class TestPriorCloseReference:
             }
         )
         assert "2026-08-25·S13" in line
+
+    def test_file_baseline_wins_over_stale_db(self, tmp_path, monkeypatch):
+        close_dir = tmp_path / "baselines" / "close"
+        close_dir.mkdir(parents=True)
+        target = date(2026, 8, 26)
+        (close_dir / "688008.json").write_text(
+            json.dumps(
+                {
+                    "code": "688008",
+                    "name": "澜起科技",
+                    "mss_final": 48.0,
+                    "verdict": "观察",
+                    "close_date": "2026-08-26",
+                    "_baseline_source": "close_baseline",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        def _fake_db(code, *, settings=None, day=None):
+            return {
+                "code": code,
+                "mss_final": 48.2,
+                "verdict": "观察",
+                "close_date": "2026-07-17",
+                "_baseline_source": "baseline_close_db",
+            }
+
+        monkeypatch.setattr(
+            "agent_reach.daily_run.prior_close.close_baseline_path",
+            lambda code: close_dir / f"{code}.json",
+        )
+        monkeypatch.setattr(
+            "agent_reach.daily_run.prior_close._read_db_close_baseline",
+            lambda norm, *, target_day=None, settings=None: _fake_db(norm, day=target_day),
+        )
+        monkeypatch.setattr(
+            "agent_reach.daily_run.prior_close.prev_trading_day",
+            lambda *a, **k: target,
+        )
+        monkeypatch.setattr(
+            "agent_reach.daily_run.prior_close.runs_dir",
+            lambda: tmp_path / "runs",
+        )
+
+        loaded = load_prior_close_reference("688008", load_settings(), as_of=date(2026, 8, 27))
+        assert loaded is not None
+        assert loaded["mss_final"] == 48.0
+        assert loaded["source"] == "close_baseline"
+        assert loaded.get("scan_id") is None
+
+    def test_intraday_fallback_uses_last_scan_same_shanghai_day(self, tmp_path, monkeypatch):
+        runs = tmp_path / "runs" / "2026-08-26"
+        runs.mkdir(parents=True)
+        target = date(2026, 8, 26)
+
+        def _manifest(scan_id: str, mss: float, as_of: str) -> dict[str, Any]:
+            return {
+                "at": as_of,
+                "payload": {
+                    "symbol_results": [
+                        {
+                            "code": "688008",
+                            "result": {
+                                "scan": {
+                                    "scan": {
+                                        "scan_id": scan_id,
+                                        "code": "688008",
+                                        "mss_final": mss,
+                                        "verdict": "观察",
+                                        "as_of": as_of,
+                                    }
+                                }
+                            },
+                        }
+                    ]
+                },
+            }
+
+        (runs / "intraday_070000.json").write_text(
+            json.dumps(_manifest("S1", 51.96, "2026-08-27T07:23:51+08:00")),
+            encoding="utf-8",
+        )
+        (runs / "intraday_150000.json").write_text(
+            json.dumps(_manifest("S11", 48.89, "2026-08-26T15:00:50+08:00")),
+            encoding="utf-8",
+        )
+
+        monkeypatch.setattr(
+            "agent_reach.daily_run.prior_close.close_baseline_path",
+            lambda code: tmp_path / "missing" / f"{code}.json",
+        )
+        monkeypatch.setattr(
+            "agent_reach.daily_run.prior_close._read_db_close_baseline",
+            lambda *a, **k: None,
+        )
+        monkeypatch.setattr(
+            "agent_reach.daily_run.prior_close.prev_trading_day",
+            lambda *a, **k: target,
+        )
+        monkeypatch.setattr(
+            "agent_reach.daily_run.prior_close.runs_dir",
+            lambda: tmp_path / "runs",
+        )
+        monkeypatch.setattr(
+            "agent_reach.daily_run.storage.config.path_under_daily_run_data",
+            lambda path: False,
+        )
+
+        loaded = load_prior_close_reference("688008", load_settings(), as_of=date(2026, 8, 27))
+        assert loaded is not None
+        assert loaded["mss_final"] == 48.89
+        assert loaded["scan_id"] == "S11"
+        assert loaded["source"] == "intraday_scan"

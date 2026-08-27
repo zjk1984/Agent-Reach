@@ -10,7 +10,11 @@ from typing import Any, Optional
 
 from agent_reach.daily_run.run_manifest import runs_dir
 from agent_reach.daily_run.snapshot_builder import _normalize_code
-from agent_reach.daily_run.trade_calendar import is_trading_day, today_shanghai
+from agent_reach.daily_run.trade_calendar import (
+    is_trading_day,
+    shanghai_date_of_iso,
+    today_shanghai,
+)
 
 
 def prior_close_enabled(settings: dict[str, Any]) -> bool:
@@ -94,21 +98,8 @@ def save_close_baseline(
     return out
 
 
-def load_close_baseline(code: str) -> Optional[dict[str, Any]]:
-    norm = _normalize_code(str(code))
+def _read_file_close_baseline(norm: str) -> Optional[dict[str, Any]]:
     per = close_baseline_path(norm)
-    try:
-        from agent_reach.daily_run.storage.config import path_under_daily_run_data
-
-        if path_under_daily_run_data(per.parent):
-            from agent_reach.daily_run.settings import load_settings
-            from agent_reach.daily_run.storage.readers import read_close_baseline_from_store
-
-            db_row = read_close_baseline_from_store(norm, settings=load_settings())
-            if db_row:
-                return db_row
-    except Exception:
-        pass
     if per.exists():
         try:
             return json.loads(per.read_text(encoding="utf-8"))
@@ -123,6 +114,54 @@ def load_close_baseline(code: str) -> Optional[dict[str, Any]]:
         except (json.JSONDecodeError, OSError):
             pass
     return None
+
+
+def _read_db_close_baseline(
+    norm: str,
+    *,
+    target_day: Optional[date] = None,
+    settings: Optional[dict[str, Any]] = None,
+) -> Optional[dict[str, Any]]:
+    per = close_baseline_path(norm)
+    try:
+        from agent_reach.daily_run.storage.config import path_under_daily_run_data
+
+        if not path_under_daily_run_data(per.parent):
+            return None
+        from agent_reach.daily_run.settings import load_settings
+        from agent_reach.daily_run.storage.readers import read_close_baseline_from_store
+
+        cfg = settings or load_settings()
+        return read_close_baseline_from_store(norm, settings=cfg, day=target_day)
+    except Exception:
+        return None
+
+
+def _baseline_matches_day(row: Optional[dict[str, Any]], target_day: Optional[date]) -> bool:
+    if not row:
+        return False
+    if target_day is None:
+        return True
+    close_date = str(row.get("close_date") or "")[:10]
+    return close_date == target_day.isoformat() or not close_date
+
+
+def load_close_baseline(
+    code: str,
+    *,
+    target_day: Optional[date] = None,
+    settings: Optional[dict[str, Any]] = None,
+) -> Optional[dict[str, Any]]:
+    """Load close baseline; prefer on-disk file matching ``target_day`` over stale DB rows."""
+    norm = _normalize_code(str(code))
+    file_row = _read_file_close_baseline(norm)
+    db_row = _read_db_close_baseline(norm, target_day=target_day, settings=settings)
+
+    if _baseline_matches_day(file_row, target_day):
+        return file_row
+    if _baseline_matches_day(db_row, target_day):
+        return db_row
+    return file_row or db_row
 
 
 def _mss_from_manifest(record: dict[str, Any]) -> Optional[float]:
@@ -218,6 +257,8 @@ def _intraday_best_scans_for_day(day: date) -> dict[str, dict[str, Any]]:
                 if not isinstance(scan, dict) or scan.get("mss_final") is None:
                     continue
                 as_of = str(scan.get("as_of") or record.get("at") or "")
+                if shanghai_date_of_iso(as_of) != day:
+                    continue
                 prev = best.get(norm)
                 if prev is None or as_of >= prev[0]:
                     best[norm] = (as_of, scan)
@@ -292,7 +333,7 @@ def load_prior_close_reference(
     target_day = prev_trading_day(as_of, settings=settings or {})
     target_ds = target_day.isoformat()
 
-    baseline = load_close_baseline(norm)
+    baseline = load_close_baseline(norm, target_day=target_day, settings=settings)
     if baseline:
         close_date = str(baseline.get("close_date") or "")[:10]
         if close_date == target_ds or not close_date:
