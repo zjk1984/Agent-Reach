@@ -222,7 +222,7 @@ def render_close_sections(
         sec.title = section_title(
             report_kind="close",
             category=sec.category,
-            name=label,
+            name="组合" if sec.category == "daily_portfolio" else label,
             index=i,
             total=total,
         )

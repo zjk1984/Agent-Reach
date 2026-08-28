@@ -92,7 +92,15 @@ def verify_snapshots(
     max_dev = float(threshold_default(cfg, "max_price_deviation_pct"))
 
     code = current.get("code") or baseline.get("code")
-    name = current.get("name") or baseline.get("name")
+    from agent_reach.daily_run.symbols import resolve_symbol_name
+
+    portfolio = current.get("portfolio") or baseline.get("portfolio") or {}
+    name = resolve_symbol_name(
+        portfolio,
+        str(code or ""),
+        fallback=current.get("name") or baseline.get("name"),
+        snapshot=current,
+    )
 
     pb = _f(baseline.get("price"))
     pc = _f(current.get("price"))

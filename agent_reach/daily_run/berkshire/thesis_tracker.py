@@ -10,6 +10,7 @@ from typing import Any, Optional
 
 from agent_reach.daily_run.berkshire.config import berkshire_enabled, thesis_dir, thesis_snapshot_dir
 from agent_reach.daily_run.snapshot_builder import _normalize_code
+from agent_reach.daily_run.symbols import format_symbol_reference, is_redundant_symbol_name, resolve_symbol_name
 
 
 def _now_iso() -> str:
@@ -71,21 +72,23 @@ def build_thesis_from_snapshot(
     portfolio: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     code = _normalize_code(str(snapshot.get("code", "")))
-    name = str(snapshot.get("name") or code)
+    name = resolve_symbol_name(portfolio, code, fallback=snapshot.get("name"), snapshot=snapshot)
+    label = format_symbol_reference(name, code, portfolio=portfolio, snapshot=snapshot)
     mss = snapshot.get("mss_final")
     verdict = snapshot.get("verdict") or "观察"
     price = snapshot.get("price")
     reasoning = str(snapshot.get("reasoning") or snapshot.get("macro_summary") or "")[:200]
 
     holding = None
-    for h in (portfolio or {}).get("holdings") or []:
+    pf_rows = list((portfolio or {}).get("holdings") or []) + list((portfolio or {}).get("watchlist") or [])
+    for h in pf_rows:
         if _normalize_code(str(h.get("code", ""))) == code:
             holding = h
             break
 
     core = (
-        f"跟踪 {name}({code})：MSS {mss} · {verdict}。"
-        f"{'持仓 ' + str(holding.get('shares')) + ' 股' if holding else '观察池/候选'}。"
+        f"跟踪 {label}：MSS {mss} · {verdict}。"
+        f"{'持仓 ' + str(holding.get('shares')) + ' 股' if holding and holding.get('shares') else '观察池/候选'}。"
         f"{reasoning[:120]}"
     ).strip()
 
@@ -150,6 +153,18 @@ def sync_thesis_from_snapshot(
         action = "created"
     else:
         doc = dict(existing)
+        resolved_name = resolve_symbol_name(
+            portfolio,
+            code,
+            fallback=snapshot.get("name") or doc.get("name"),
+            snapshot=snapshot,
+        )
+        doc["name"] = resolved_name
+        label = format_symbol_reference(resolved_name, code, portfolio=portfolio, snapshot=snapshot)
+        old_core = str(doc.get("core_thesis") or "")
+        if is_redundant_symbol_name(existing.get("name"), code) or f"({code})" in old_core[:40]:
+            doc["core_thesis"] = _refresh_core_thesis_prefix(doc, label)
+            doc["mirror_test"] = doc["core_thesis"][:200]
         doc["valuation_anchor"] = {
             "price": snapshot.get("price"),
             "mss": snapshot.get("mss_final"),
@@ -209,10 +224,20 @@ def thesis_health_score(doc: dict[str, Any]) -> tuple[int, str]:
     return score, label
 
 
+def _refresh_core_thesis_prefix(doc: dict[str, Any], label: str) -> str:
+    core = str(doc.get("core_thesis") or "")
+    if "：" in core:
+        _, tail = core.split("：", 1)
+        return f"跟踪 {label}：{tail}"
+    return f"跟踪 {label}：{core.removeprefix('跟踪 ').lstrip()}"
+
+
 def render_thesis_markdown(doc: dict[str, Any]) -> str:
     score, label = thesis_health_score(doc)
+    code = _normalize_code(str(doc.get("code") or ""))
+    ref = format_symbol_reference(doc.get("name"), code)
     lines = [
-        f"**投资论文** · {doc.get('name')} ({doc.get('code')})",
+        f"**投资论文** · {ref}",
         f"- 健康度：**{score}/10**（{label}）",
         f"- 核心论文：{doc.get('core_thesis', '')[:300]}",
     ]

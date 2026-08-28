@@ -771,13 +771,16 @@ def build_snapshot(
     from agent_reach.daily_run.trade_calendar import today_shanghai
 
     today = today_shanghai().isoformat()
-    if report_type == "premarket" and primary_code:
-        for row in holdings + watchlist:
-            if _normalize_code(str(row.get("code", ""))) == code_norm:
-                primary_name = str(row.get("name") or primary_name)
-                break
-        snapshot_name = primary_name
-    elif report_type == "premarket":
+    if code_norm and code_norm != "MARKET":
+        from agent_reach.daily_run.symbols import resolve_symbol_name
+
+        primary_name = resolve_symbol_name(
+            pf,
+            code_norm,
+            fallback=primary_name,
+            snapshot={"portfolio": portfolio_block, "watchlist": watchlist},
+        )
+    if report_type == "premarket" and not primary_code:
         snapshot_name = f"{today} 早盘"
     else:
         snapshot_name = primary_name
