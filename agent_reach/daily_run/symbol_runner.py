@@ -149,7 +149,7 @@ def run_morning_for_symbols(
                     (name, morning_sections_from_run(run_result, include_xueqiu_hot=False))
                 )
                 report = (run_result.get("evaluation") or {}).get("report") or {}
-                decision_entries.append((name, code, report))
+                decision_entries.append((name, code, report, run_result["snapshot"]))
                 if expert_card_enabled(cfg, workflow="morning"):
                     expert_snapshots.append((name, code, run_result["snapshot"]))
             symbol_results.append(
@@ -580,6 +580,7 @@ def run_close_for_symbols(
                             run_result,
                             verify_name=name,
                             include_xueqiu_hot=False,
+                            include_market_review=idx == 1,
                         ),
                     )
                 )

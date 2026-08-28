@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from agent_reach.daily_run.pipeline import evaluate_snapshot, render_markdown
+from agent_reach.daily_run.pipeline import evaluate_snapshot, render_symbol_decision_markdown
 from agent_reach.daily_run.report_push import (
     push_report_sections,
     render_close_sections,
@@ -274,7 +274,7 @@ def run_morning(
         _workflow_harness_error(morning_harness_errors, "xueqiu_hit_record", exc)
 
     team_md = render_team_markdown(enriched) if expert_card_enabled(cfg, workflow="morning") else ""
-    report_md = render_markdown(report)
+    report_md = render_symbol_decision_markdown(report, snapshot=enriched)
     morning_narrative: dict[str, Any] = {"skipped": True, "reason": "deferred"}
     if not skip_narrative:
         from agent_reach.daily_run.report_narrative import generate_morning_narrative

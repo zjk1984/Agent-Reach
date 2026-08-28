@@ -43,6 +43,9 @@ _CATEGORY_LABELS: dict[str, str] = {
     "technical_watch": "技术情景",
 }
 
+# Portfolio-wide sections: only one card body when merging per-symbol runs.
+_PORTFOLIO_WIDE_ONCE: frozenset[str] = frozenset({"close_market", "eastmoney"})
+
 
 def section_title(
     *,
@@ -159,6 +162,7 @@ def render_close_sections(
     technical_watch_markdown: str = "",
     narrative: Optional[dict[str, Any]] = None,
     macro_signals: Optional[dict[str, Any]] = None,
+    snapshot: Optional[dict[str, Any]] = None,
 ) -> list[ReportSection]:
     label = verify_name or "大盘"
     sections: list[ReportSection] = []
@@ -197,8 +201,19 @@ def render_close_sections(
         )
     if experience_markdown.strip():
         sections.append(ReportSection(category="experience", title="", body=experience_markdown.strip()))
-    if verify_markdown.strip():
-        sections.append(ReportSection(category="verify", title="", body=verify_markdown.strip()))
+    verify_body = verify_markdown.strip()
+    if verify_body and snapshot and snapshot.get("code"):
+        from agent_reach.daily_run.symbol_news import render_symbol_news_markdown
+
+        news_md = render_symbol_news_markdown(
+            str(snapshot.get("code") or ""),
+            snapshot,
+            name=str(snapshot.get("name") or verify_name or ""),
+        )
+        if news_md:
+            verify_body = verify_body + "\n\n" + news_md
+    if verify_body:
+        sections.append(ReportSection(category="verify", title="", body=verify_body))
     from agent_reach.daily_run.xueqiu_hot_display import render_xueqiu_hot_markdown
 
     xueqiu_md = render_xueqiu_hot_markdown(macro_signals)
@@ -307,7 +322,7 @@ def merged_category_title(
 
 
 def render_merged_decision_markdown(
-    entries: list[tuple[str, str, dict[str, Any]]],
+    entries: list[tuple],
     *,
     report_kind: str = "morning",
 ) -> str:
@@ -315,12 +330,14 @@ def render_merged_decision_markdown(
     if not entries:
         return ""
     if len(entries) == 1:
-        from agent_reach.daily_run.pipeline import render_markdown
+        from agent_reach.daily_run.pipeline import render_symbol_decision_markdown
 
-        return render_markdown(entries[0][2])
+        name, code, report = entries[0][0], entries[0][1], entries[0][2]
+        snapshot = entries[0][3] if len(entries[0]) > 3 else None
+        return render_symbol_decision_markdown(report, snapshot=snapshot)
 
     kind_label = {"morning": "早盘", "close": "收盘"}.get(report_kind, report_kind)
-    has_prior = any(r.get("prior_close_mss") is not None for _, _, r in entries)
+    has_prior = any(r.get("prior_close_mss") is not None for _, _, r, *_ in entries)
     lines = [
         f"**📊 {kind_label} MSS 决策 · {len(entries)} 只标的**",
         "",
@@ -332,7 +349,7 @@ def render_merged_decision_markdown(
                 "|------|------|---------|---------|---|------|",
             ]
         )
-        for name, code, report in entries:
+        for name, code, report, *_ in entries:
             prior = report.get("prior_close_mss", "—")
             current = report.get("mss_final", "—")
             delta = report.get("prior_close_delta")
@@ -353,14 +370,16 @@ def render_merged_decision_markdown(
                 "|------|------|-----|------|--------|",
             ]
         )
-        for name, code, report in entries:
+        for name, code, report, *_ in entries:
             lines.append(
                 f"| {name} | {code} | {report.get('mss_final', '—')} "
                 f"| {report.get('verdict', '—')} | {report.get('confidence', '—')} |"
             )
 
     lines.extend(["", "**逐标的研判**", ""])
-    for name, code, report in entries:
+    for entry in entries:
+        name, code, report = entry[0], entry[1], entry[2]
+        snapshot = entry[3] if len(entry) > 3 else None
         lines.append(f"### {name} ({code})")
         lines.append(
             f"- **结论：** {report.get('verdict', '—')}（{report.get('confidence', '—')}）"
@@ -381,11 +400,13 @@ def render_merged_decision_markdown(
             lines.append(
                 "- **审计警告：** " + "；".join(str(w) for w in report["audit_warnings"][:2])
             )
-        lines.append("")
+        if snapshot:
+            from agent_reach.daily_run.symbol_news import render_symbol_news_markdown
 
-    macro = next((r.get("macro_summary") for _, _, r in entries if r.get("macro_summary")), None)
-    if macro:
-        lines.extend(["**宏观摘要**", str(macro)])
+            news_md = render_symbol_news_markdown(code, snapshot, name=name)
+            if news_md:
+                lines.append(news_md.replace("\n", "\n  "))
+        lines.append("")
 
     return "\n".join(lines).strip()
 
@@ -517,9 +538,13 @@ def merge_sections_by_category(
             symbol_count = len(decision_entries)
         else:
             rows = buckets.get(cat) or []
-            body_parts = [f"## {name}\n\n{content}" for name, content in rows]
-            body = "\n\n---\n\n".join(body_parts)
-            symbol_count = len(rows)
+            if cat in _PORTFOLIO_WIDE_ONCE and rows:
+                body = rows[0][1]
+                symbol_count = 1
+            else:
+                body_parts = [f"## {name}\n\n{content}" for name, content in rows]
+                body = "\n\n---\n\n".join(body_parts)
+                symbol_count = len(rows)
         if not body.strip():
             continue
         symbol_counts[cat] = symbol_count
@@ -560,12 +585,13 @@ def close_sections_from_run(
     *,
     verify_name: str,
     include_xueqiu_hot: bool = True,
+    include_market_review: bool = True,
 ) -> list[ReportSection]:
     snapshot = run_result.get("snapshot") or {}
     macro_signals = snapshot.get("macro_signals") if include_xueqiu_hot else None
     return render_close_sections(
         verify_name=verify_name,
-        market_markdown=run_result.get("market_review_markdown") or "",
+        market_markdown=(run_result.get("market_review_markdown") or "") if include_market_review else "",
         team_markdown=run_result.get("team_markdown") or "",
         curve_markdown=run_result.get("curve_markdown") or "",
         research_markdown=run_result.get("research_markdown") or "",
@@ -579,6 +605,7 @@ def close_sections_from_run(
         technical_watch_markdown=run_result.get("technical_watch_markdown") or "",
         narrative=run_result.get("llm_narrative"),
         macro_signals=macro_signals,
+        snapshot=snapshot,
     )
 
 

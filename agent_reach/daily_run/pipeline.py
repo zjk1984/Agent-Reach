@@ -127,8 +127,7 @@ def build_report(
     }
 
 
-def render_markdown(report: dict[str, Any]) -> str:
-    """Render Feishu lark_md body from structured report."""
+def _render_decision_core_lines(report: dict[str, Any]) -> list[str]:
     from agent_reach.daily_run.prior_close import format_prior_close_line
 
     lines = [
@@ -175,6 +174,35 @@ def render_markdown(report: dict[str, Any]) -> str:
     if report.get("evidence_chain"):
         lines.extend(["", "**证据链：**", report["evidence_chain"]])
 
+    if report.get("blocked"):
+        lines.extend(["", "⚠️ **交易阻断：** 当前标签不允许执行买入操作"])
+    return lines
+
+
+def render_symbol_decision_markdown(
+    report: dict[str, Any],
+    snapshot: Optional[dict[str, Any]] = None,
+) -> str:
+    """Per-symbol MSS card: no portfolio macro/hot JSON; append symbol-scoped news."""
+    lines = _render_decision_core_lines(report)
+    code = str(report.get("code") or (snapshot or {}).get("code") or "")
+    if snapshot and code:
+        from agent_reach.daily_run.symbol_news import render_symbol_news_markdown
+
+        news_md = render_symbol_news_markdown(
+            code,
+            snapshot,
+            name=str(report.get("name") or snapshot.get("name") or ""),
+        )
+        if news_md:
+            lines.extend(["", news_md])
+    return "\n".join(lines)
+
+
+def render_markdown(report: dict[str, Any]) -> str:
+    """Render Feishu lark_md body from structured report."""
+    lines = _render_decision_core_lines(report)
+
     if report.get("macro_summary"):
         lines.extend(["", "**宏观摘要：**", str(report["macro_summary"])])
 
@@ -183,9 +211,6 @@ def render_markdown(report: dict[str, Any]) -> str:
 
     if report.get("watchlist"):
         lines.extend(["", "**观察池：**", _fmt_json_block(report["watchlist"])])
-
-    if report.get("blocked"):
-        lines.extend(["", "⚠️ **交易阻断：** 当前标签不允许执行买入操作"])
 
     return "\n".join(lines)
 
