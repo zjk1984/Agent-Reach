@@ -50,6 +50,7 @@ def analyze_emotion(
     north: dict[str, Any],
     *,
     indices: Optional[dict[str, Any]] = None,
+    settings: Optional[dict[str, Any]] = None,
 ) -> MarketEmotion:
     """Score market emotion from full A-share snapshot (upstream analyzeEmotion)."""
     _ = indices  # reserved for future index-weighted scoring
@@ -69,6 +70,7 @@ def analyze_emotion(
         north=north,
         include_limit_scoring=True,
         include_breadth_scoring=True,
+        settings=settings,
     )
 
 
@@ -76,6 +78,8 @@ def enrich_emotion_with_limit_pools(
     emotion: MarketEmotion | dict[str, Any],
     pool: dict[str, Any],
     north: dict[str, Any],
+    *,
+    settings: Optional[dict[str, Any]] = None,
 ) -> MarketEmotion:
     """Re-score emotion after attaching akshare limit pool stats."""
     if isinstance(emotion, dict):
@@ -106,6 +110,7 @@ def enrich_emotion_with_limit_pools(
         north=north,
         include_limit_scoring=True,
         include_breadth_scoring=include_breadth,
+        settings=settings,
     )
     limit_keywords = ("涨停", "跌停", "炸板率")
     if not include_breadth:
@@ -133,6 +138,7 @@ def analyze_emotion_from_counts(
     *,
     indices: Optional[dict[str, Any]] = None,
     by_market: Optional[dict[str, Any]] = None,
+    settings: Optional[dict[str, Any]] = None,
 ) -> MarketEmotion:
     """Score emotion from aggregate rise/fall/flat (Xueqiu index detail fallback)."""
     _ = indices
@@ -146,6 +152,7 @@ def analyze_emotion_from_counts(
         north=north,
         include_limit_scoring=False,
         include_breadth_scoring=True,
+        settings=settings,
     )
     em.warnings.append("涨跌停/炸板率需 Eastmoney clist，当前为雪球宽度回退")
     if by_market:
@@ -173,8 +180,25 @@ def _score_market_emotion(
     north: dict[str, Any],
     include_limit_scoring: bool,
     include_breadth_scoring: bool = True,
+    settings: Optional[dict[str, Any]] = None,
 ) -> MarketEmotion:
+    from agent_reach.daily_run.market_emotion_policy import (
+        market_emotion_policy_default,
+        rating_position_from_score,
+    )
+
     broken_rate = near_limit / (limit_up + near_limit) if (limit_up + near_limit) > 0 else 0.0
+
+    ratio_strong = float(market_emotion_policy_default(settings, "ratio_strong"))
+    ratio_neutral = float(market_emotion_policy_default(settings, "ratio_neutral"))
+    limit_up_hot = int(round(market_emotion_policy_default(settings, "limit_up_hot")))
+    limit_up_normal = int(round(market_emotion_policy_default(settings, "limit_up_normal")))
+    limit_down_panic = int(round(market_emotion_policy_default(settings, "limit_down_panic")))
+    limit_down_local = int(round(market_emotion_policy_default(settings, "limit_down_local")))
+    broken_rate_weak = float(market_emotion_policy_default(settings, "broken_rate_weak"))
+    broken_rate_moderate = float(market_emotion_policy_default(settings, "broken_rate_moderate"))
+    north_inflow_strong = float(market_emotion_policy_default(settings, "north_inflow_strong"))
+    north_outflow_strong = float(market_emotion_policy_default(settings, "north_outflow_strong"))
 
     score = 0
     reasons: list[str] = []
@@ -182,10 +206,10 @@ def _score_market_emotion(
     ratio_num = up_count / down_count if down_count > 0 else float(up_count)
 
     if include_breadth_scoring:
-        if ratio_num > 2:
+        if ratio_num > ratio_strong:
             score += 3
             reasons.append(f"涨跌比 {up_count}:{down_count}，赚钱效应强")
-        elif ratio_num > 1:
+        elif ratio_num > ratio_neutral:
             score += 1
             reasons.append(f"涨跌比 {up_count}:{down_count}，偏中性")
         else:
@@ -193,51 +217,46 @@ def _score_market_emotion(
             reasons.append(f"涨跌比 {up_count}:{down_count}，亏钱效应明显")
 
     if include_limit_scoring:
-        if limit_up >= 80:
+        if limit_up >= limit_up_hot:
             score += 2
             reasons.append(f"涨停 {limit_up} 家，情绪火爆")
-        elif limit_up >= 40:
+        elif limit_up >= limit_up_normal:
             score += 1
             reasons.append(f"涨停 {limit_up} 家，情绪正常")
         else:
             reasons.append(f"涨停仅 {limit_up} 家")
 
-        if limit_down >= 50:
+        if limit_down >= limit_down_panic:
             score -= 2
             warnings.append(f"跌停 {limit_down} 家，恐慌蔓延")
             reasons.append(f"跌停 {limit_down} 家")
-        elif limit_down >= 20:
+        elif limit_down >= limit_down_local:
             score -= 1
             reasons.append(f"跌停 {limit_down} 家，局部恐慌")
         else:
             reasons.append(f"跌停 {limit_down} 家")
 
-        if broken_rate > 0.3:
+        if broken_rate > broken_rate_weak:
             score -= 2
             reasons.append(f"炸板率 {broken_rate * 100:.0f}%，追高意愿弱")
-        elif broken_rate > 0.2:
+        elif broken_rate > broken_rate_moderate:
             score -= 1
             reasons.append(f"炸板率 {broken_rate * 100:.0f}%，封板一般")
 
     net = float(north.get("net_yi") or north.get("net_100m") or 0)
-    if net > 50:
+    if net > north_inflow_strong:
         score += 1
         reasons.append(f"北向大幅流入 {net:.0f} 亿")
     elif net > 0:
         reasons.append(f"北向小幅流入 {net:.0f} 亿")
-    elif net < -50:
+    elif net < -north_outflow_strong:
         score -= 1
         warnings.append(f"北向大幅流出 {abs(net):.0f} 亿")
         reasons.append(f"北向大幅流出 {abs(net):.0f} 亿")
     elif net < 0:
         reasons.append(f"北向小幅流出 {abs(net):.0f} 亿")
 
-    if score >= 4:
-        rating, position = "强", "7-8成"
-    elif score >= 1:
-        rating, position = "中", "5成"
-    else:
-        rating, position = "弱", "2-3成"
+    rating, position = rating_position_from_score(score, settings=settings)
 
     return MarketEmotion(
         up_count=up_count,
@@ -263,8 +282,9 @@ def collect_market_breadth(
     north: dict[str, Any],
     *,
     indices: Optional[dict[str, Any]] = None,
+    settings: Optional[dict[str, Any]] = None,
 ) -> MarketEmotion:
-    return analyze_emotion(stocks, north, indices=indices)
+    return analyze_emotion(stocks, north, indices=indices, settings=settings)
 
 
 def emotion_conclusion_supported(emotion: Optional[dict[str, Any]]) -> bool:

@@ -696,6 +696,8 @@
   "market_review": {
     "enabled": true,
     "persist": true,
+    "emotion_mode": "harness",
+    "harness_evolve": true,
     "fetch_timeout_seconds": 15,
     "emotion_mss_fusion_enabled": true,
     "macro_fallback_enabled": true,
@@ -1174,6 +1176,7 @@
       "verify": true,
       "close_improve": true,
       "data_audit": true,
+      "market_emotion": true,
       "skill_closure": true,
       "optimize": true,
       "experience": true,

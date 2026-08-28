@@ -1840,6 +1840,20 @@ def apply_harness_policy_overlay(settings: dict[str, Any]) -> dict[str, Any]:
         float(effective_data_audit.get("block_on_price_deviation", 1.0)) > 0.5
     )
     cfg["data_audit"] = data_audit
+    from agent_reach.daily_run.market_emotion_policy import (
+        harness_market_emotion_overlay_meta,
+        market_emotion_cfg,
+        market_emotion_policy_base,
+        resolve_harness_market_emotion_policy,
+    )
+
+    base_market_emotion = market_emotion_policy_base(cfg)
+    effective_market_emotion = resolve_harness_market_emotion_policy(state, settings=cfg)
+    harness_meta["market_emotion_policy"] = effective_market_emotion
+    market_emotion_meta = harness_market_emotion_overlay_meta(base_market_emotion, effective_market_emotion)
+    if market_emotion_meta:
+        harness_meta["market_emotion_overlay"] = market_emotion_meta
+    cfg["market_review"] = market_emotion_cfg({**cfg, "harness_runtime": harness_meta})
     from agent_reach.daily_run.optimizer_grid_policy import (
         harness_optimizer_grid_overlay_meta,
         optimizer_grid_cfg,

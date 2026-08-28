@@ -1003,6 +1003,7 @@ def run_close(
             portfolio_summary=portfolio_summary_obj.to_dict() if portfolio_summary_obj else None,
             pnl_target_cycle=pnl_target_cycle,
             snapshot=enriched,
+            market_review=market_review_obj,
             settings=cfg,
         )
         enriched["harness_skills"] = harness_skills_report.to_dict()

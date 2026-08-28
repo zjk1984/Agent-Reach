@@ -198,42 +198,47 @@ def _attach_macro_collector_fallback(
 def _macro_breadth_fallback(
     indices: dict[str, Any],
     north: dict[str, Any],
+    *,
+    settings: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Minimal emotion when full A-share list is unavailable."""
     from agent_reach.daily_run.market_breadth_collector import MarketEmotion
+    from agent_reach.daily_run.market_emotion_policy import (
+        market_emotion_policy_default,
+        rating_position_from_score,
+    )
 
     reasons: list[str] = ["全 A 宽度不可用，仅指数+北向估算"]
     warnings = ["市场宽度降级：缺少涨跌家数/涨跌停统计"]
     score = 0
+    index_pct_bull = float(market_emotion_policy_default(settings, "index_pct_bull"))
+    index_pct_bear = float(market_emotion_policy_default(settings, "index_pct_bear"))
+    north_inflow_strong = float(market_emotion_policy_default(settings, "north_inflow_strong"))
+    north_outflow_strong = float(market_emotion_policy_default(settings, "north_outflow_strong"))
     sh = indices.get("sh000001") or {}
     pct = sh.get("change_pct")
     if pct is not None:
         pct_f = float(pct)
         reasons.append(f"上证 {pct_f:+.2f}%")
-        if pct_f > 1:
+        if pct_f > index_pct_bull:
             score += 1
-        elif pct_f < -1:
+        elif pct_f < index_pct_bear:
             score -= 1
 
     net = float(north.get("net_yi") or 0)
-    if net > 50:
+    if net > north_inflow_strong:
         score += 1
         reasons.append(f"北向大幅流入 {net:.0f} 亿")
     elif net > 0:
         reasons.append(f"北向小幅流入 {net:.0f} 亿")
-    elif net < -50:
+    elif net < -north_outflow_strong:
         score -= 1
         warnings.append(f"北向大幅流出 {abs(net):.0f} 亿")
         reasons.append(f"北向大幅流出 {abs(net):.0f} 亿")
     elif net < 0:
         reasons.append(f"北向小幅流出 {abs(net):.0f} 亿")
 
-    if score >= 4:
-        rating, position = "强", "7-8成"
-    elif score >= 1:
-        rating, position = "中", "5成"
-    else:
-        rating, position = "弱", "2-3成"
+    rating, position = rating_position_from_score(score, settings=settings)
 
     em = MarketEmotion(
         score=score,
@@ -255,6 +260,7 @@ def _try_xueqiu_breadth_emotion(
     *,
     timeout: float,
     enabled: bool = True,
+    settings: Optional[dict[str, Any]] = None,
 ) -> tuple[Optional[dict[str, Any]], list[str], Optional[dict[str, Any]]]:
     """Return (emotion_dict, warnings, breadth_meta) from Xueqiu SH+SZ detail."""
     if not enabled:
@@ -270,6 +276,7 @@ def _try_xueqiu_breadth_emotion(
             north,
             indices=indices,
             by_market=breadth.get("by_market"),
+            settings=settings,
         )
         out = em.to_dict()
         out["breadth_source"] = "xueqiu"
@@ -292,6 +299,7 @@ def _try_limit_pool_enrichment(
     review_date: str,
     *,
     enabled: bool = True,
+    settings: Optional[dict[str, Any]] = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]], list[str], Optional[dict[str, Any]]]:
     """Attach akshare limit pools when full A-share clist is unavailable."""
     if not enabled:
@@ -300,7 +308,7 @@ def _try_limit_pool_enrichment(
         from agent_reach.daily_run.limit_pool_collector import fetch_akshare_limit_pools
 
         pool = fetch_akshare_limit_pools(review_date)
-        em = enrich_emotion_with_limit_pools(emotion, pool, north)
+        em = enrich_emotion_with_limit_pools(emotion, pool, north, settings=settings)
         out = em.to_dict()
         for key in ("breadth_partial", "breadth_degraded", "breadth_source"):
             if key in emotion:
@@ -325,9 +333,9 @@ def collect_market_review(
     settings: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Fetch market data with Eastmoney → akshare → xueqiu → macro fallbacks."""
-    from agent_reach.daily_run.settings import load_settings
+    from agent_reach.daily_run.settings import effective_settings, load_settings
 
-    cfg = settings or load_settings()
+    cfg = effective_settings(settings or load_settings())
     mr_cfg = cfg.get("market_review") or {}
     timeout = float(mr_cfg.get("fetch_timeout_seconds", 15))
     akshare_ttl = int((cfg.get("akshare") or {}).get("spot_ttl", 60))
@@ -372,7 +380,7 @@ def collect_market_review(
     limit_meta: Optional[dict[str, Any]] = None
     if stocks:
         limit_up_stocks = [s for s in stocks if float(s.get("change_pct") or 0) >= 9.8]
-        emotion = analyze_emotion(stocks, north, indices=indices).to_dict()
+        emotion = analyze_emotion(stocks, north, indices=indices, settings=cfg).to_dict()
         if stock_source == "akshare":
             emotion.setdefault("warnings", []).append("宽度数据来自 akshare 回退")
         breadth_meta = None
@@ -384,13 +392,14 @@ def collect_market_review(
             indices,
             timeout=timeout,
             enabled=xq_enabled,
+            settings=cfg,
         )
         warnings.extend(xq_warns)
         if xq_emotion:
             emotion = xq_emotion
             source_parts.append("xueqiu")
         else:
-            emotion = _macro_breadth_fallback(indices, north)
+            emotion = _macro_breadth_fallback(indices, north, settings=cfg)
             breadth_meta = None
 
         limit_enabled = mr_cfg.get("akshare_limit_pool_fallback", True) is not False
@@ -400,6 +409,7 @@ def collect_market_review(
             north,
             ds,
             enabled=limit_enabled,
+            settings=cfg,
         )
         warnings.extend(lp_warns)
         if limit_meta:
@@ -452,9 +462,9 @@ def get_or_collect_market_review(
     force: bool = False,
 ) -> Optional[dict[str, Any]]:
     """Load cached daily review or fetch once (dedup per trading day)."""
-    from agent_reach.daily_run.settings import load_settings
+    from agent_reach.daily_run.settings import effective_settings, load_settings
 
-    cfg = settings or load_settings()
+    cfg = effective_settings(settings or load_settings())
     if not market_review_enabled(cfg):
         return None
 
@@ -470,7 +480,7 @@ def get_or_collect_market_review(
         review = {
             "date": ds,
             "error": str(exc),
-            "emotion": mark_emotion_data_quality(_macro_breadth_fallback({}, {"net_yi": 0})),
+            "emotion": mark_emotion_data_quality(_macro_breadth_fallback({}, {"net_yi": 0}, settings=cfg)),
             "sector_analysis": analyze_sectors([]).to_dict(),
             "lhb_analysis": analyze_lhb([]).to_dict(),
             "warnings": [str(exc)],
