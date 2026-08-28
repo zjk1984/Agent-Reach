@@ -7,22 +7,38 @@ from typing import Any, Optional
 
 from agent_reach.daily_run.snapshot_builder import _normalize_code
 
-_PROFIT_LOCK_NEUTRAL: dict[str, Any] = {
+_PROFIT_LOCK_STATIC_DEFAULTS: dict[str, Any] = {
     "enabled": True,
-    "min_intraday_gain_pct": 4.0,
-    "min_position_20d": 0.70,
-    "min_unrealized_gain_pct": 3.0,
-    "sell_ratio": 0.30,
-    "pullback_from_high_pct": 1.5,
     "trigger_mode": "threshold",
     "once_per_symbol_per_day": True,
 }
 
 
+def profit_lock_policy(settings: Optional[dict[str, Any]] = None) -> dict[str, float]:
+    from agent_reach.daily_run.harness_policy import _profit_lock_policy
+
+    return _profit_lock_policy(settings or {})
+
+
 def profit_lock_cfg(settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:
-    intraday = dict((settings or {}).get("intraday") or {})
+    from agent_reach.daily_run.harness_policy import profit_lock_policy_default
+
+    cfg_settings = settings or {}
+    intraday = dict(cfg_settings.get("intraday") or {})
     block = dict(intraday.get("profit_lock") or {})
-    out = {**_PROFIT_LOCK_NEUTRAL, **block}
+    out: dict[str, Any] = {
+        **_PROFIT_LOCK_STATIC_DEFAULTS,
+        **block,
+        "min_intraday_gain_pct": profit_lock_policy_default(cfg_settings, "min_intraday_gain_pct"),
+        "min_position_20d": profit_lock_policy_default(cfg_settings, "min_position_20d"),
+        "min_unrealized_gain_pct": profit_lock_policy_default(
+            cfg_settings, "min_unrealized_gain_pct"
+        ),
+        "sell_ratio": profit_lock_policy_default(cfg_settings, "sell_ratio"),
+        "pullback_from_high_pct": profit_lock_policy_default(
+            cfg_settings, "pullback_from_high_pct"
+        ),
+    }
     out["enabled"] = block.get("enabled", out.get("enabled", True))
     return out
 
@@ -198,5 +214,4 @@ def profit_lock_effective_sell_ratio(
 ) -> float:
     if sell_ratio_override is not None:
         return min(float(base_ratio), float(sell_ratio_override))
-    cfg = profit_lock_cfg(settings)
-    return min(float(base_ratio), float(cfg.get("sell_ratio", 0.30)))
+    return min(float(base_ratio), profit_lock_policy_default(settings, "sell_ratio"))

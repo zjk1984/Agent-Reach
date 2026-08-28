@@ -251,6 +251,22 @@ _DEFENSIVE_TRIM_NEUTRAL: dict[str, float] = {
     "defensive_trim_mss_buffer": 0.0,
 }
 
+_EVOLVED_PROFIT_LOCK_KEYS: tuple[str, ...] = (
+    "min_intraday_gain_pct",
+    "min_position_20d",
+    "min_unrealized_gain_pct",
+    "sell_ratio",
+    "pullback_from_high_pct",
+)
+
+_PROFIT_LOCK_NEUTRAL: dict[str, float] = {
+    "min_intraday_gain_pct": 4.0,
+    "min_position_20d": 0.70,
+    "min_unrealized_gain_pct": 3.0,
+    "sell_ratio": 0.30,
+    "pullback_from_high_pct": 1.5,
+}
+
 _DEFAULT_EVAL_TRENDS: tuple[str, ...] = (
     "turning_up",
     "turning_down",
@@ -377,6 +393,10 @@ HARNESS_CONSUMER_HELPERS: dict[str, str] = {
     "deep_loss_consecutive_buy": (
         "intraday_buy_policy_default(settings, 'deep_loss_consecutive_buy')"
     ),
+    "min_intraday_gain_pct": "profit_lock_policy_default(settings, 'min_intraday_gain_pct')",
+    "min_position_20d": "profit_lock_policy_default(settings, 'min_position_20d')",
+    "min_unrealized_gain_pct": "profit_lock_policy_default(settings, 'min_unrealized_gain_pct')",
+    "pullback_from_high_pct": "profit_lock_policy_default(settings, 'pullback_from_high_pct')",
 }
 
 
@@ -1921,6 +1941,18 @@ def apply_harness_policy_overlay(settings: dict[str, Any]) -> dict[str, Any]:
     defensive_meta = harness_defensive_trim_overlay_meta(base_defensive_trim, effective_defensive_trim)
     if defensive_meta:
         harness_meta["defensive_trim_overlay"] = defensive_meta
+    base_profit_lock = resolve_harness_base_profit_lock_policy(cfg)
+    effective_profit_lock = resolve_harness_profit_lock_policy(state, settings=cfg)
+    harness_meta["profit_lock_policy"] = effective_profit_lock
+    profit_lock_meta = harness_profit_lock_overlay_meta(base_profit_lock, effective_profit_lock)
+    if profit_lock_meta:
+        harness_meta["profit_lock_overlay"] = profit_lock_meta
+    intraday = dict(cfg.get("intraday") or {})
+    profit_lock_block = dict(intraday.get("profit_lock") or {})
+    for key in _EVOLVED_PROFIT_LOCK_KEYS:
+        profit_lock_block[key] = float(effective_profit_lock.get(key, _PROFIT_LOCK_NEUTRAL[key]))
+    intraday["profit_lock"] = profit_lock_block
+    cfg["intraday"] = intraday
     base_bad_trade = resolve_harness_base_bad_trade_policy(cfg)
     effective_bad_trade = resolve_harness_bad_trade_policy(state, settings=cfg)
     harness_meta["bad_trade_policy"] = effective_bad_trade
@@ -3217,6 +3249,160 @@ def harness_defensive_trim_overlay_meta(
         if abs(eff_val - base_val) >= 0.5:
             changed[key] = {"base": base_val, "effective": eff_val}
     return changed
+
+
+def _profit_lock_evolution_key(key: str) -> str:
+    return f"profit_lock_{key}"
+
+
+def profit_lock_policy_base(settings: dict[str, Any], key: str) -> float:
+    block = dict(((settings.get("intraday") or {}).get("profit_lock") or {}))
+    if key in block:
+        return float(block[key])
+    return float(_PROFIT_LOCK_NEUTRAL.get(key, 0.0))
+
+
+def resolve_harness_base_profit_lock_policy(settings: dict[str, Any]) -> dict[str, float]:
+    return {key: profit_lock_policy_base(settings, key) for key in _EVOLVED_PROFIT_LOCK_KEYS}
+
+
+def _profit_lock_mode(settings: dict[str, Any], key: str) -> str:
+    return evolution_mode(settings, _profit_lock_evolution_key(key))
+
+
+def _apply_profit_lock_policy_evolution(
+    merged: dict[str, float],
+    state: Any,
+    *,
+    settings: dict[str, Any],
+) -> dict[str, float]:
+    signals = resolve_harness_trade_signals(state, settings=settings)
+
+    def _adjust_gain(delta: float) -> None:
+        if _profit_lock_mode(settings, "min_intraday_gain_pct") != "harness":
+            return
+        merged["min_intraday_gain_pct"] = float(merged.get("min_intraday_gain_pct", 4.0)) + delta
+
+    def _adjust_position(delta: float) -> None:
+        if _profit_lock_mode(settings, "min_position_20d") != "harness":
+            return
+        merged["min_position_20d"] = float(merged.get("min_position_20d", 0.70)) + delta
+
+    def _adjust_unrealized(delta: float) -> None:
+        if _profit_lock_mode(settings, "min_unrealized_gain_pct") != "harness":
+            return
+        merged["min_unrealized_gain_pct"] = float(
+            merged.get("min_unrealized_gain_pct", 3.0)
+        ) + delta
+
+    def _adjust_ratio(delta: float) -> None:
+        if _profit_lock_mode(settings, "sell_ratio") != "harness":
+            return
+        merged["sell_ratio"] = float(merged.get("sell_ratio", 0.30)) + delta
+
+    def _adjust_pullback(delta: float) -> None:
+        if _profit_lock_mode(settings, "pullback_from_high_pct") != "harness":
+            return
+        merged["pullback_from_high_pct"] = float(
+            merged.get("pullback_from_high_pct", 1.5)
+        ) + delta
+
+    if _overlay_has_phrase(state, "止盈参考", settings=settings):
+        _adjust_gain(-0.5)
+        _adjust_position(-0.03)
+        _adjust_unrealized(-0.5)
+        _adjust_ratio(0.05)
+    if _overlay_has_phrase(state, "卖晚了", settings=settings):
+        _adjust_gain(-1.0)
+        _adjust_position(-0.05)
+        _adjust_ratio(0.10)
+        _adjust_pullback(-0.3)
+    if signals.get("pnl_target_miss"):
+        _adjust_gain(-0.5)
+        _adjust_ratio(0.05)
+    elif signals.get("pnl_target_hit"):
+        _adjust_gain(0.5)
+        _adjust_ratio(-0.05)
+    if signals.get("defensive_trim") or signals.get("mss_forecast_miss"):
+        _adjust_gain(-0.3)
+        _adjust_ratio(0.05)
+    if signals.get("mss_recovery") or signals.get("macro_warming"):
+        _adjust_gain(0.3)
+        _adjust_ratio(-0.03)
+    return merged
+
+
+def resolve_harness_profit_lock_policy(
+    state: Any,
+    *,
+    settings: dict[str, Any],
+) -> dict[str, float]:
+    merged = resolve_harness_base_profit_lock_policy(settings)
+    if not _overlay_enabled(settings):
+        return merged
+    merged = _apply_profit_lock_policy_evolution(merged, state, settings=settings)
+    if _profit_lock_mode(settings, "min_intraday_gain_pct") == "harness":
+        merged["min_intraday_gain_pct"] = max(
+            2.0, min(8.0, float(merged.get("min_intraday_gain_pct", 4.0)))
+        )
+    else:
+        merged["min_intraday_gain_pct"] = profit_lock_policy_base(settings, "min_intraday_gain_pct")
+    if _profit_lock_mode(settings, "min_position_20d") == "harness":
+        merged["min_position_20d"] = max(
+            0.55, min(0.95, float(merged.get("min_position_20d", 0.70)))
+        )
+    else:
+        merged["min_position_20d"] = profit_lock_policy_base(settings, "min_position_20d")
+    if _profit_lock_mode(settings, "min_unrealized_gain_pct") == "harness":
+        merged["min_unrealized_gain_pct"] = max(
+            0.0, min(15.0, float(merged.get("min_unrealized_gain_pct", 3.0)))
+        )
+    else:
+        merged["min_unrealized_gain_pct"] = profit_lock_policy_base(
+            settings, "min_unrealized_gain_pct"
+        )
+    if _profit_lock_mode(settings, "sell_ratio") == "harness":
+        merged["sell_ratio"] = max(0.15, min(0.60, float(merged.get("sell_ratio", 0.30))))
+    else:
+        merged["sell_ratio"] = profit_lock_policy_base(settings, "sell_ratio")
+    if _profit_lock_mode(settings, "pullback_from_high_pct") == "harness":
+        merged["pullback_from_high_pct"] = max(
+            0.5, min(5.0, float(merged.get("pullback_from_high_pct", 1.5)))
+        )
+    else:
+        merged["pullback_from_high_pct"] = profit_lock_policy_base(
+            settings, "pullback_from_high_pct"
+        )
+    return merged
+
+
+def harness_profit_lock_overlay_meta(
+    base_policy: dict[str, float],
+    effective_policy: dict[str, float],
+) -> dict[str, Any]:
+    changed: dict[str, dict[str, float]] = {}
+    for key in _EVOLVED_PROFIT_LOCK_KEYS:
+        base_val = float(base_policy.get(key, _PROFIT_LOCK_NEUTRAL.get(key, 0.0)))
+        eff_val = float(effective_policy.get(key, base_val))
+        if abs(eff_val - base_val) >= 0.01:
+            changed[key] = {"base": base_val, "effective": eff_val}
+    return changed
+
+
+def _profit_lock_policy(settings: dict[str, Any]) -> dict[str, float]:
+    runtime = settings.get("harness_runtime") or {}
+    policy = runtime.get("profit_lock_policy")
+    if policy:
+        return {k: float(v) for k, v in policy.items()}
+    if _overlay_enabled(settings):
+        from agent_reach.daily_run.harness import load_harness
+
+        return resolve_harness_profit_lock_policy(load_harness(), settings=settings)
+    return resolve_harness_base_profit_lock_policy(settings)
+
+
+def profit_lock_policy_default(settings: dict[str, Any], key: str) -> float:
+    return float(_profit_lock_policy(settings).get(key, _PROFIT_LOCK_NEUTRAL.get(key, 0.0)))
 
 
 def symbol_score_weight_base(settings: dict[str, Any], key: str) -> float:

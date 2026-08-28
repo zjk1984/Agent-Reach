@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """Tests for intraday profit-lock (dynamic take-profit)."""
 
+import pytest
+
 from agent_reach.daily_run.intraday import TradeDecision, _decide_trade
 from agent_reach.daily_run.portfolio_manager import apply_auto_adjust, deep_loss_sell_analysis
 from agent_reach.daily_run.profit_lock import evaluate_profit_lock_sell
@@ -192,7 +194,6 @@ def test_apply_sell_uses_profit_lock_ratio():
     settings = _base_settings()
     snapshot = _holding_snapshot()
     pf = snapshot["portfolio"]
-    enriched = {"300308": {"price": 915.88, "change_pct": 5.74}}
     decision = TradeDecision(
         action="sell",
         trade_id="T1",
@@ -203,9 +204,66 @@ def test_apply_sell_uses_profit_lock_ratio():
         sell_kind="profit_lock",
         sell_ratio_override=0.30,
     )
+    enriched = {"300308": {"price": 915.88, "change_pct": 5.74}}
     analysis = deep_loss_sell_analysis(pf, pf["holdings"][0], enriched, settings)
     assert analysis["allowed"] is True
 
     result = apply_auto_adjust(pf, decision, snapshot, settings)
     assert result.applied is True
     assert result.actions[0].shares == 100
+
+
+def test_profit_lock_harness_evolve_on_take_profit_reference():
+    from agent_reach.daily_run.harness import HarnessEntry, HarnessState
+    from agent_reach.daily_run.harness_policy import resolve_harness_profit_lock_policy
+
+    state = HarnessState()
+    state.entries["playbook"]["tp"] = HarnessEntry(
+        id="tp",
+        kind="playbook",
+        title="止盈参考",
+        content="止盈参考：中际旭创 已实现 +800，同类标的可分批兑现",
+        source="deterministic",
+        job="close",
+        evidence="close",
+        created_at="2026-08-28T00:00:00+00:00",
+        updated_at="2026-08-28T00:00:00+00:00",
+    )
+    settings = {
+        "harness": {"runtime_overlay_sources": ["playbook"]},
+        "intraday": {
+            "profit_lock": {
+                "min_intraday_gain_pct": 4.0,
+                "min_position_20d": 0.70,
+                "min_unrealized_gain_pct": 3.0,
+                "sell_ratio": 0.30,
+                "pullback_from_high_pct": 1.5,
+            }
+        },
+    }
+    policy = resolve_harness_profit_lock_policy(state, settings=settings)
+    assert policy["min_intraday_gain_pct"] == 3.5
+    assert policy["min_position_20d"] == pytest.approx(0.67, abs=0.001)
+    assert policy["sell_ratio"] == 0.35
+
+
+def test_profit_lock_harness_evolve_on_sell_late_phrase():
+    from agent_reach.daily_run.harness import HarnessEntry, HarnessState
+    from agent_reach.daily_run.harness_policy import resolve_harness_profit_lock_policy
+
+    state = HarnessState()
+    state.entries["memory"]["late"] = HarnessEntry(
+        id="late",
+        kind="memory",
+        title="卖晚了",
+        content="中际旭创高位 +5.7% 未减仓，卖晚了",
+        source="deterministic",
+        job="intraday",
+        evidence="intraday",
+        created_at="2026-08-28T00:00:00+00:00",
+        updated_at="2026-08-28T00:00:00+00:00",
+    )
+    settings = {"harness": {"runtime_overlay_sources": ["memory"]}}
+    policy = resolve_harness_profit_lock_policy(state, settings=settings)
+    assert policy["min_intraday_gain_pct"] == 3.0
+    assert policy["sell_ratio"] == 0.40
