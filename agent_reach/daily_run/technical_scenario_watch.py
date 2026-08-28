@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Technical scenario watch — upper-shadow reversal setups and follow-up eval."""
+"""Technical scenario watch — upper-shadow and limit-up shrink-pullback follow-ups."""
 
 from __future__ import annotations
 
 import json
+import math
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Optional
@@ -14,6 +15,7 @@ from agent_reach.daily_run.trade_calendar import next_trading_day, today_shangha
 
 def technical_watch_cfg(settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     block = dict((settings or {}).get("technical_watch") or {})
+    shrink = dict(block.get("limit_up_shrink_pullback") or {})
     return {
         "enabled": block.get("enabled", True),
         "min_upper_shadow_ratio": float(block.get("min_upper_shadow_ratio", 0.35)),
@@ -21,6 +23,15 @@ def technical_watch_cfg(settings: Optional[dict[str, Any]] = None) -> dict[str, 
         "eval_days": int(block.get("eval_days", 5)),
         "reclaim_high_tolerance_pct": float(block.get("reclaim_high_tolerance_pct", 1.5)),
         "gap_up_pct": float(block.get("gap_up_pct", 1.0)),
+        "limit_up_shrink_pullback": {
+            "enabled": shrink.get("enabled", True),
+            "max_volume_ratio": float(shrink.get("max_volume_ratio", 0.85)),
+            "min_pullback_pct": float(shrink.get("min_pullback_pct", -1.0)),
+            "support_round_to": int(shrink.get("support_round_to", 10)),
+            "support_tolerance_pct": float(shrink.get("support_tolerance_pct", 2.5)),
+            "bearish_volume_ratio": float(shrink.get("bearish_volume_ratio", 1.1)),
+            "open_near_prior_tolerance_pct": float(shrink.get("open_near_prior_tolerance_pct", 2.0)),
+        },
     }
 
 
@@ -48,8 +59,64 @@ def save_scenarios(scenarios: list[dict[str, Any]], path: Optional[Path] = None)
     return p
 
 
-def _scenario_key(code: str, setup_date: str) -> str:
-    return f"{_normalize_code(code)}/{setup_date}"
+def _scenario_key(code: str, setup_date: str, scenario_type: str = "upper_shadow") -> str:
+    return f"{_normalize_code(code)}/{str(setup_date)[:10]}/{scenario_type}"
+
+
+def _row_key(row: dict[str, Any]) -> str:
+    return _scenario_key(
+        str(row.get("code") or ""),
+        str(row.get("setup_date") or ""),
+        str(row.get("scenario_type") or "upper_shadow"),
+    )
+
+
+def _eval_window(
+    setup_date: str,
+    *,
+    settings: Optional[dict[str, Any]] = None,
+) -> tuple[str, str]:
+    cfg = technical_watch_cfg(settings)
+    setup = date.fromisoformat(str(setup_date)[:10])
+    eval_from_d = next_trading_day(setup, settings=settings)
+    eval_from = eval_from_d.isoformat()
+    eval_until = (eval_from_d + timedelta(days=max(1, cfg["eval_days"]))).isoformat()
+    return eval_from, eval_until
+
+
+def _save_scenario_row(
+    scenario: dict[str, Any],
+    *,
+    path: Optional[Path] = None,
+    l2_title: str = "",
+    l2_content: str = "",
+) -> dict[str, Any]:
+    rows = load_scenarios(path)
+    key = _row_key(scenario)
+    rows = [row for row in rows if _row_key(row) != key]
+    rows.append(scenario)
+    save_scenarios(rows, path)
+    try:
+        from agent_reach.daily_run.storage.hooks import on_l2_scenario
+
+        on_l2_scenario(
+            "technical_watch",
+            key,
+            scenario,
+            code=str(scenario.get("code") or ""),
+            at=str(scenario.get("setup_date") or "")[:10],
+            title=l2_title or f"{scenario.get('name')} 技术情景",
+            content=l2_content or str(scenario.get("note") or ""),
+            dedupe_key=f"l2:technical_watch:{key}",
+        )
+    except Exception:
+        pass
+    return scenario
+
+
+def _default_support_level(session_low: float, *, round_to: int = 10) -> float:
+    step = max(1, int(round_to))
+    return float(math.floor(float(session_low) / step) * step)
 
 
 def register_upper_shadow_scenario(
@@ -68,9 +135,7 @@ def register_upper_shadow_scenario(
     cfg = technical_watch_cfg(settings)
     norm = _normalize_code(code)
     setup = date.fromisoformat(str(setup_date)[:10])
-    eval_from_d = next_trading_day(setup, settings=settings)
-    eval_from = eval_from_d.isoformat()
-    eval_until = (eval_from_d + timedelta(days=max(1, cfg["eval_days"]))).isoformat()
+    eval_from, eval_until = _eval_window(setup.isoformat(), settings=settings)
     shadow = float(session_high) - max(float(session_close), float(session_low))
     span = max(float(session_high) - float(session_low), 0.01)
     scenario = {
@@ -97,31 +162,85 @@ def register_upper_shadow_scenario(
         "status": "pending",
         "note": note.strip(),
     }
-    rows = load_scenarios(path)
-    key = _scenario_key(norm, setup.isoformat())
-    rows = [row for row in rows if _scenario_key(str(row.get("code") or ""), str(row.get("setup_date") or "")) != key]
-    rows.append(scenario)
-    save_scenarios(rows, path)
+    return _save_scenario_row(
+        scenario,
+        path=path,
+        l2_title=f"{name} 长上影情景",
+        l2_content=(
+            f"高 {scenario['session_high']} 收 {scenario['session_close']} 低 {scenario['session_low']}；"
+            f"周一<{scenario['session_low']}见顶，反包>{scenario['session_high']}洗盘"
+        ),
+    )
 
-    try:
-        from agent_reach.daily_run.storage.hooks import on_l2_scenario
 
-        on_l2_scenario(
-            "technical_watch",
-            key,
-            scenario,
-            code=norm,
-            at=setup.isoformat(),
-            title=f"{name} 长上影情景",
-            content=(
-                f"高 {scenario['session_high']} 收 {scenario['session_close']} 低 {scenario['session_low']}；"
-                f"周一<{scenario['session_low']}见顶，反包>{scenario['session_high']}洗盘"
-            ),
-            dedupe_key=f"l2:technical_watch:{key}",
+def register_limit_up_shrink_pullback_scenario(
+    *,
+    code: str,
+    name: str,
+    setup_date: str,
+    prior_close: float,
+    session_close: float,
+    session_low: float,
+    session_high: float,
+    support_level: Optional[float] = None,
+    prior_day_change_pct: Optional[float] = None,
+    volume_ratio: Optional[float] = None,
+    settings: Optional[dict[str, Any]] = None,
+    path: Optional[Path] = None,
+    note: str = "",
+) -> dict[str, Any]:
+    """Persist a limit-up-then-shrink-volume pullback scenario for follow-up."""
+    cfg = technical_watch_cfg(settings)
+    shrink_cfg = cfg["limit_up_shrink_pullback"]
+    norm = _normalize_code(code)
+    setup = date.fromisoformat(str(setup_date)[:10])
+    eval_from, eval_until = _eval_window(setup.isoformat(), settings=settings)
+    support = (
+        round(float(support_level), 2)
+        if support_level is not None
+        else round(
+            _default_support_level(session_low, round_to=int(shrink_cfg["support_round_to"])),
+            2,
         )
-    except Exception:
-        pass
-    return scenario
+    )
+    scenario = {
+        "scenario_type": "limit_up_shrink_pullback",
+        "code": norm,
+        "name": name,
+        "setup_date": setup.isoformat(),
+        "eval_from": eval_from,
+        "eval_until": eval_until,
+        "prior_close": round(float(prior_close), 2),
+        "session_high": round(float(session_high), 2),
+        "session_close": round(float(session_close), 2),
+        "session_low": round(float(session_low), 2),
+        "support_level": support,
+        "prior_day_change_pct": round(float(prior_day_change_pct), 2)
+        if prior_day_change_pct is not None
+        else None,
+        "setup_volume_ratio": round(float(volume_ratio), 2) if volume_ratio is not None else None,
+        "bearish": {
+            "condition": "volume_expansion_breakdown",
+            "level": support,
+            "label": "继续放量下跌，调整空间打开",
+        },
+        "bullish": {
+            "condition": "hold_near_support",
+            "level": support,
+            "label": f"在 {support:.0f} 元附近缩量企稳",
+        },
+        "status": "pending",
+        "note": note.strip(),
+    }
+    return _save_scenario_row(
+        scenario,
+        path=path,
+        l2_title=f"{name} 涨停后缩量回调",
+        l2_content=(
+            f"昨收 {scenario['prior_close']} 涨停后今日收 {scenario['session_close']}；"
+            f"周一关注 {support:.0f} 元附近企稳，放量跌破则调整空间打开"
+        ),
+    )
 
 
 def _session_stats(
@@ -213,6 +332,90 @@ def maybe_register_upper_shadow_from_session(
     )
 
 
+def maybe_register_limit_up_shrink_pullback_from_session(
+    *,
+    code: str,
+    name: str,
+    snapshot: dict[str, Any],
+    session_scans: Optional[list[dict[str, Any]]] = None,
+    settings: Optional[dict[str, Any]] = None,
+    setup_date: Optional[str] = None,
+    path: Optional[Path] = None,
+) -> Optional[dict[str, Any]]:
+    cfg = technical_watch_cfg(settings)
+    shrink_cfg = cfg["limit_up_shrink_pullback"]
+    if not cfg.get("enabled", True) or not shrink_cfg.get("enabled", True):
+        return None
+
+    session_high, session_close, session_low = _session_stats(session_scans, snapshot, code)
+    if session_high is None or session_close is None or session_low is None:
+        return None
+
+    change_pct = snapshot.get("change_pct")
+    try:
+        chg = float(change_pct) if change_pct is not None else None
+    except (TypeError, ValueError):
+        chg = None
+    if chg is None or chg > float(shrink_cfg["min_pullback_pct"]):
+        return None
+
+    volume_ratio = snapshot.get("volume_ratio")
+    try:
+        vol_ratio = float(volume_ratio) if volume_ratio is not None else None
+    except (TypeError, ValueError):
+        vol_ratio = None
+    if vol_ratio is not None and vol_ratio > float(shrink_cfg["max_volume_ratio"]):
+        return None
+
+    prior_close = snapshot.get("reference_price") or snapshot.get("prior_close")
+    try:
+        prior = float(prior_close) if prior_close is not None else None
+    except (TypeError, ValueError):
+        prior = None
+    if prior is None or prior <= 0:
+        return None
+
+    open_tol = float(shrink_cfg["open_near_prior_tolerance_pct"]) / 100.0
+    if abs(session_high - prior) / prior > open_tol:
+        return None
+
+    from agent_reach.daily_run.tradability import board_limit_pct, price_limit_state
+
+    prior_day_change = snapshot.get("prior_day_change_pct")
+    try:
+        prior_day_change_f = float(prior_day_change) if prior_day_change is not None else None
+    except (TypeError, ValueError):
+        prior_day_change_f = None
+    limit_pct = board_limit_pct(code, name)
+    if prior_day_change_f is not None:
+        if price_limit_state(prior_day_change_f, limit_pct) != "limit_up":
+            return None
+
+    day = setup_date or today_shanghai().isoformat()
+    support = _default_support_level(
+        session_low,
+        round_to=int(shrink_cfg["support_round_to"]),
+    )
+    return register_limit_up_shrink_pullback_scenario(
+        code=code,
+        name=name,
+        setup_date=day,
+        prior_close=prior,
+        session_close=session_close,
+        session_low=session_low,
+        session_high=session_high,
+        support_level=support,
+        prior_day_change_pct=prior_day_change_f,
+        volume_ratio=vol_ratio,
+        settings=settings,
+        path=path,
+        note=(
+            f"昨收 {prior:.2f} 涨停后今日缩量回落至 {session_close:.2f}；"
+            f"周一关注 {support:.0f} 元附近企稳，放量跌破则调整空间打开"
+        ),
+    )
+
+
 def _active_scenarios(
     *,
     code: str = "",
@@ -238,6 +441,33 @@ def _active_scenarios(
 
 
 def evaluate_scenario(
+    scenario: dict[str, Any],
+    *,
+    price: Optional[float],
+    change_pct: Optional[float] = None,
+    open_price: Optional[float] = None,
+    volume_ratio: Optional[float] = None,
+    settings: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    scenario_type = str(scenario.get("scenario_type") or "upper_shadow")
+    if scenario_type == "limit_up_shrink_pullback":
+        return _evaluate_limit_up_shrink_pullback(
+            scenario,
+            price=price,
+            change_pct=change_pct,
+            volume_ratio=volume_ratio,
+            settings=settings,
+        )
+    return _evaluate_upper_shadow(
+        scenario,
+        price=price,
+        change_pct=change_pct,
+        open_price=open_price,
+        settings=settings,
+    )
+
+
+def _evaluate_upper_shadow(
     scenario: dict[str, Any],
     *,
     price: Optional[float],
@@ -310,6 +540,86 @@ def evaluate_scenario(
     return result
 
 
+def _evaluate_limit_up_shrink_pullback(
+    scenario: dict[str, Any],
+    *,
+    price: Optional[float],
+    change_pct: Optional[float] = None,
+    volume_ratio: Optional[float] = None,
+    settings: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    cfg = technical_watch_cfg(settings)
+    shrink_cfg = cfg["limit_up_shrink_pullback"]
+    code = str(scenario.get("code") or "")
+    name = str(scenario.get("name") or code)
+    support = float(scenario.get("support_level") or (scenario.get("bullish") or {}).get("level") or 0)
+    setup_low = float(scenario.get("session_low") or 0)
+    tol = float(shrink_cfg["support_tolerance_pct"]) / 100.0
+    bear_vol = float(shrink_cfg["bearish_volume_ratio"])
+
+    result: dict[str, Any] = {
+        "code": code,
+        "name": name,
+        "scenario": scenario,
+        "price": price,
+        "change_pct": change_pct,
+        "volume_ratio": volume_ratio,
+        "status": "pending",
+        "headline": "",
+        "action_hint": "观望",
+    }
+    if price is None:
+        result["headline"] = (
+            f"{name} 涨停后缩量回调：关注 {support:.0f} 元附近企稳 / "
+            "放量跌破则调整空间打开"
+        )
+        return result
+
+    px = float(price)
+    try:
+        vol = float(volume_ratio) if volume_ratio is not None else None
+    except (TypeError, ValueError):
+        vol = None
+    try:
+        chg = float(change_pct) if change_pct is not None else None
+    except (TypeError, ValueError):
+        chg = None
+
+    lower = support * (1.0 - tol)
+    upper = support * (1.0 + tol)
+    volume_breakdown = vol is not None and vol >= bear_vol and (chg is None or chg < 0)
+    if px < lower and (volume_breakdown or px < setup_low):
+        result.update(
+            {
+                "status": "adjustment_open",
+                "headline": (
+                    f"{name} 涨停后回调：已跌破 {support:.0f} 元支撑"
+                    f"{'且放量' if volume_breakdown else ''}，调整空间打开"
+                ),
+                "action_hint": "回避加仓，持仓考虑减仓",
+            }
+        )
+        return result
+
+    if lower <= px <= upper and not volume_breakdown:
+        result.update(
+            {
+                "status": "support_holding",
+                "headline": (
+                    f"{name} 涨停后回调：现价 {px:.2f} 在 {support:.0f} 元附近企稳"
+                ),
+                "action_hint": "可观察承接，勿盲目杀跌",
+            }
+        )
+        return result
+
+    result["headline"] = (
+        f"{name} 涨停后回调：现价 {px:.2f}，"
+        f"关注 {support:.0f} 元附近企稳 / 放量跌破则调整空间打开"
+    )
+    return result
+
+
 def evaluate_active_scenarios(
     snapshot: dict[str, Any],
     *,
@@ -329,12 +639,18 @@ def evaluate_active_scenarios(
     except (TypeError, ValueError):
         chg_f = None
     open_price = snapshot.get("open") or snapshot.get("open_price")
+    volume_ratio = snapshot.get("volume_ratio")
+    try:
+        vol_f = float(volume_ratio) if volume_ratio is not None else None
+    except (TypeError, ValueError):
+        vol_f = None
     results = [
         evaluate_scenario(
             row,
             price=price_f,
             change_pct=chg_f,
             open_price=open_price,
+            volume_ratio=vol_f,
             settings=settings,
         )
         for row in _active_scenarios(code=code, as_of=as_of, path=path)
@@ -349,10 +665,10 @@ def _persist_scenario_status(
     path: Optional[Path] = None,
 ) -> None:
     rows = load_scenarios(path)
-    key = _scenario_key(str(scenario.get("code") or ""), str(scenario.get("setup_date") or ""))
+    key = _row_key(scenario)
     updated: list[dict[str, Any]] = []
     for row in rows:
-        if _scenario_key(str(row.get("code") or ""), str(row.get("setup_date") or "")) == key:
+        if _row_key(row) == key:
             row = {**row, "status": status}
             scenario.update(row)
         updated.append(row)
@@ -381,6 +697,17 @@ def technical_scenario_harness_evidence(
             playbook.append(headline)
             plan.append(f"intraday：{name} 洗盘确认，观察回踩 {item['scenario'].get('session_close')} 承接")
             _persist_scenario_status(item["scenario"], "bullish_washout", path=path)
+        elif status == "adjustment_open":
+            memory.append(headline)
+            policy.append(f"{name} 涨停后回调跌破支撑，调整空间打开，防御减仓优先")
+            plan.append(f"intraday：{name} 反弹至 MA20 附近分批减仓")
+            _persist_scenario_status(item["scenario"], "adjustment_open", path=path)
+        elif status == "support_holding":
+            playbook.append(headline)
+            plan.append(
+                f"intraday：{name} 在 {item['scenario'].get('support_level')} 元附近企稳，观察承接"
+            )
+            _persist_scenario_status(item["scenario"], "support_holding", path=path)
         elif headline:
             plan.append(headline)
     return {"memory": memory, "policy": policy, "playbook": playbook, "plan": plan}
@@ -421,28 +748,47 @@ def format_close_technical_watch_markdown(
         return ""
     lines = ["**📐 技术情景跟踪（收盘登记）**", ""]
     for sc in scenarios:
+        scenario_type = str(sc.get("scenario_type") or "upper_shadow")
         name = sc.get("name") or sc.get("code")
         code = sc.get("code") or ""
-        high = sc.get("session_high")
-        close_px = sc.get("session_close")
-        low = sc.get("session_low")
         eval_from = sc.get("eval_from")
-        bear = sc.get("bearish") or {}
-        bull = sc.get("bullish") or {}
         setup_date = str(sc.get("setup_date") or "")[:10]
-        lines.append(f"- **{name} {code}** · 长上影 setup（{setup_date}）")
-        lines.append(f"  - 高 **{high}** / 收 **{close_px}** / 低 **{low}**")
-        lines.append(
-            f"  - 📉 **见顶**：{bear.get('label') or '低开低走跌破 setup 低点'}"
-            f"（<{low}）"
-        )
-        lines.append(
-            f"  - 📈 **洗盘**：{bull.get('label') or '高开反包 setup 高点'}"
-            f"（>{high}）"
-        )
+        note = str(sc.get("note") or "").strip()
+
+        if scenario_type == "limit_up_shrink_pullback":
+            prior = sc.get("prior_close")
+            close_px = sc.get("session_close")
+            low = sc.get("session_low")
+            support = sc.get("support_level")
+            bear = sc.get("bearish") or {}
+            bull = sc.get("bullish") or {}
+            lines.append(f"- **{name} {code}** · 涨停后缩量回调（{setup_date}）")
+            lines.append(f"  - 昨收 **{prior}** / 今收 **{close_px}** / 低 **{low}**")
+            lines.append(
+                f"  - 📍 **企稳**：{bull.get('label') or f'在 {support} 元附近缩量企稳'}"
+            )
+            lines.append(
+                f"  - 📉 **调整**：{bear.get('label') or '继续放量下跌，调整空间打开'}"
+            )
+        else:
+            high = sc.get("session_high")
+            close_px = sc.get("session_close")
+            low = sc.get("session_low")
+            bear = sc.get("bearish") or {}
+            bull = sc.get("bullish") or {}
+            lines.append(f"- **{name} {code}** · 长上影 setup（{setup_date}）")
+            lines.append(f"  - 高 **{high}** / 收 **{close_px}** / 低 **{low}**")
+            lines.append(
+                f"  - 📉 **见顶**：{bear.get('label') or '低开低走跌破 setup 低点'}"
+                f"（<{low}）"
+            )
+            lines.append(
+                f"  - 📈 **洗盘**：{bull.get('label') or '高开反包 setup 高点'}"
+                f"（>{high}）"
+            )
+
         if eval_from:
             lines.append(f"  - 验证自 **{eval_from}** 起")
-        note = str(sc.get("note") or "").strip()
         if note:
             lines.append(f"  - {note}")
     return "\n".join(lines)
@@ -485,7 +831,7 @@ def run_close_technical_watch(
         for code in target_codes:
             row = enriched.setdefault(code, {})
             quote = (quote_result.quotes or {}).get(code) or {}
-            for key in ("price", "change_pct", "name", "day_high", "day_low"):
+            for key in ("price", "change_pct", "name", "day_high", "day_low", "reference_price", "volume_ratio"):
                 if quote.get(key) is not None:
                     row[key] = quote[key]
 
@@ -510,6 +856,17 @@ def run_close_technical_watch(
             )
             if scenario:
                 registered.append(scenario)
+            shrink = maybe_register_limit_up_shrink_pullback_from_session(
+                code=code,
+                name=name,
+                snapshot=sym_snapshot,
+                session_scans=session_scans,
+                settings=settings,
+                setup_date=day,
+                path=path,
+            )
+            if shrink:
+                registered.append(shrink)
 
     scenarios = scenarios_for_setup_date(day, path=path)
     markdown = format_close_technical_watch_markdown(scenarios, settings=settings) if render else ""
