@@ -468,3 +468,28 @@ def test_blocks_pytest_writes_to_canonical_prod_db(monkeypatch, tmp_path):
     store = get_store(settings)
     assert store.status()["counts"]["l0_events"] == 0
     reset_store()
+
+
+def test_blocks_pytest_reads_from_canonical_prod_db(monkeypatch, tmp_path):
+    from agent_reach.daily_run.storage.config import storage_db_reads_allowed
+    from agent_reach.daily_run.storage.guard import storage_db_reads_blocked_reason
+
+    prod_db = tmp_path / "daily_run.db"
+    settings = {
+        "storage": {
+            "enabled": True,
+            "backend": "sqlite",
+            "sqlite_path": str(prod_db),
+        }
+    }
+    monkeypatch.setenv("AGENT_REACH_STORAGE", "1")
+    monkeypatch.setenv(
+        "PYTEST_CURRENT_TEST",
+        "test_daily_run_storage.py::test_blocks_pytest_reads_from_canonical_prod_db",
+    )
+    monkeypatch.setattr(
+        "agent_reach.daily_run.storage.guard.canonical_prod_sqlite_path",
+        lambda: prod_db,
+    )
+    assert storage_db_reads_blocked_reason(settings) == "pytest_must_not_read_canonical_prod_db"
+    assert storage_db_reads_allowed(settings) is False

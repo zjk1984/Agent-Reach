@@ -604,8 +604,12 @@ def _review_harness_evolution(
     runtime = effective.get("harness_runtime") or {}
 
     if signals.get("defensive_trim"):
-        macro = macro_veto_default(effective)
-        aggressive = aggressive_entry_default(effective)
+        macro_raw = thresholds.get("macro_veto")
+        aggressive_raw = thresholds.get("aggressive_entry")
+        macro = float(macro_raw) if macro_raw is not None else macro_veto_default(effective)
+        aggressive = (
+            float(aggressive_raw) if aggressive_raw is not None else aggressive_entry_default(effective)
+        )
         min_cash = min_cash_ratio_default(effective)
         lock_days = int(trading.get("holding_lock_days", 1))
         if macro > 32:

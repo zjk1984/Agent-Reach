@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -79,6 +80,8 @@ def load_portfolio(path: Optional[Path] = None, *, settings: Optional[dict[str, 
     if p.exists():
         data = json.loads(p.read_text(encoding="utf-8"))
         if not _portfolio_is_empty(data):
+            return _finalize_portfolio(data)
+        if os.environ.get("PYTEST_CURRENT_TEST"):
             return _finalize_portfolio(data)
 
     for fallback in (repo_portfolio_path(), example_portfolio_path()):

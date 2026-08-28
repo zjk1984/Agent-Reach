@@ -9,6 +9,7 @@ from typing import Any, Optional
 
 from agent_reach.daily_run.storage.config import (
     daily_run_data_root,
+    path_under_daily_run_data,
     sqlite_db_path,
     storage_enabled,
     storage_settings,
@@ -112,3 +113,25 @@ def storage_write_allowed(
         source=source,
     )
     return reason in (None, "storage_disabled")
+
+
+def storage_db_reads_blocked_reason(
+    settings: Optional[dict[str, Any]] = None,
+    *,
+    file_path: Optional[Path] = None,
+    explicit_path: bool = False,
+) -> Optional[str]:
+    """Block pytest from read-through on the canonical prod SQLite DB."""
+    if explicit_path:
+        return None
+    if not os.environ.get("PYTEST_CURRENT_TEST"):
+        return None
+    if _truthy_env("AGENT_REACH_STORAGE_ALLOW_PROD"):
+        return None
+    if not storage_enabled(settings):
+        return None
+    if is_prod_sqlite_path(sqlite_db_path(settings)):
+        return "pytest_must_not_read_canonical_prod_db"
+    if file_path is not None and path_under_daily_run_data(file_path):
+        return "pytest_must_not_read_canonical_prod_db"
+    return None

@@ -1321,7 +1321,13 @@ def load_morning_baseline(path: Optional[Path] = None, *, code: Optional[str] = 
 
             per = morning_baseline_path(norm)
             legacy = _default_baseline_path()
+            if legacy.exists() and not path_under_daily_run_data(legacy):
+                return None
             if path_under_daily_run_data(per.parent) or path_under_daily_run_data(legacy.parent):
+                from agent_reach.daily_run.storage.config import storage_db_reads_allowed
+
+                if not storage_db_reads_allowed(load_settings(), file_path=legacy):
+                    return None
                 hit = read_morning_baseline_from_store(norm, settings=load_settings())
                 if hit:
                     return hit
