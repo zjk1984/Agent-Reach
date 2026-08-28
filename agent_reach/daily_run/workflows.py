@@ -964,6 +964,27 @@ def run_close(
             source="close",
         )
 
+    technical_watch_md = ""
+    technical_watch_result: dict[str, Any] = {}
+    try:
+        from agent_reach.daily_run.snapshot_builder import _normalize_code
+        from agent_reach.daily_run.technical_scenario_watch import run_close_technical_watch
+
+        technical_watch_result = run_close_technical_watch(
+            enriched,
+            settings=cfg,
+            symbols=(
+                [_normalize_code(str(enriched.get("code")))]
+                if not portfolio_summary and enriched.get("code")
+                else None
+            ),
+            register=True,
+            render=portfolio_summary,
+        )
+        technical_watch_md = technical_watch_result.get("markdown") or ""
+    except Exception as exc:
+        _workflow_harness_error(harness_errors, "technical_watch", exc)
+
     from agent_reach.daily_run.auditor import run_data_audit
 
     audit = run_data_audit(enriched, cfg)
@@ -1007,6 +1028,7 @@ def run_close(
             *extra_parts,
             forecast_review_md,
             improvements_md,
+            technical_watch_md,
             exp_md,
             verify_md,
             portfolio_md,
@@ -1104,6 +1126,7 @@ def run_close(
             code_review_markdown=cr_md,
             forecast_review_markdown=forecast_review_md,
             close_improvements_markdown=improvements_md,
+            technical_watch_markdown=technical_watch_md,
             narrative=close_narrative,
             macro_signals=enriched.get("macro_signals"),
         )
@@ -1148,6 +1171,8 @@ def run_close(
         "code_review_markdown": cr_md,
         "forecast_review_markdown": forecast_review_md,
         "close_improvements_markdown": improvements_md,
+        "technical_watch_markdown": technical_watch_md,
+        "technical_watch": technical_watch_result,
         "llm_narrative": close_narrative,
         "research": research_results,
         "experience_path": str(exp_path),

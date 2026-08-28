@@ -392,3 +392,125 @@ def format_technical_scenario_markdown(evaluations: list[dict[str, Any]]) -> str
         return ""
     body = "\n".join(f"- {line}" for line in lines)
     return f"**📐 技术情景跟踪**\n\n{body}"
+
+
+def scenarios_for_setup_date(
+    setup_date: str,
+    *,
+    path: Optional[Path] = None,
+    pending_only: bool = True,
+) -> list[dict[str, Any]]:
+    day = str(setup_date)[:10]
+    out: list[dict[str, Any]] = []
+    for row in load_scenarios(path):
+        if str(row.get("setup_date") or "")[:10] != day:
+            continue
+        if pending_only and str(row.get("status") or "pending") != "pending":
+            continue
+        out.append(row)
+    out.sort(key=lambda row: str(row.get("code") or ""))
+    return out
+
+
+def format_close_technical_watch_markdown(
+    scenarios: list[dict[str, Any]],
+    *,
+    settings: Optional[dict[str, Any]] = None,
+) -> str:
+    if not scenarios:
+        return ""
+    lines = ["**📐 技术情景跟踪（收盘登记）**", ""]
+    for sc in scenarios:
+        name = sc.get("name") or sc.get("code")
+        code = sc.get("code") or ""
+        high = sc.get("session_high")
+        close_px = sc.get("session_close")
+        low = sc.get("session_low")
+        eval_from = sc.get("eval_from")
+        bear = sc.get("bearish") or {}
+        bull = sc.get("bullish") or {}
+        setup_date = str(sc.get("setup_date") or "")[:10]
+        lines.append(f"- **{name} {code}** · 长上影 setup（{setup_date}）")
+        lines.append(f"  - 高 **{high}** / 收 **{close_px}** / 低 **{low}**")
+        lines.append(
+            f"  - 📉 **见顶**：{bear.get('label') or '低开低走跌破 setup 低点'}"
+            f"（<{low}）"
+        )
+        lines.append(
+            f"  - 📈 **洗盘**：{bull.get('label') or '高开反包 setup 高点'}"
+            f"（>{high}）"
+        )
+        if eval_from:
+            lines.append(f"  - 验证自 **{eval_from}** 起")
+        note = str(sc.get("note") or "").strip()
+        if note:
+            lines.append(f"  - {note}")
+    return "\n".join(lines)
+
+
+def run_close_technical_watch(
+    snapshot: dict[str, Any],
+    *,
+    settings: Optional[dict[str, Any]] = None,
+    symbols: Optional[list[str]] = None,
+    path: Optional[Path] = None,
+    register: bool = True,
+    render: bool = True,
+) -> dict[str, Any]:
+    """Register upper-shadow setups at close and build Feishu markdown."""
+    cfg = technical_watch_cfg(settings)
+    if not cfg.get("enabled", True):
+        return {"markdown": "", "registered": [], "scenarios": []}
+
+    from agent_reach.daily_run.symbols import (
+        build_enriched_symbols,
+        list_target_symbols,
+        portfolio_from_snapshot,
+    )
+
+    day = today_shanghai().isoformat()
+    pf = portfolio_from_snapshot(snapshot)
+    target_codes = symbols or list_target_symbols(pf, mode="all")
+    if not target_codes:
+        primary = snapshot.get("code")
+        if primary:
+            target_codes = [_normalize_code(str(primary))]
+
+    enriched = build_enriched_symbols(snapshot, settings)
+    if register and target_codes:
+        from agent_reach.daily_run.intraday import load_state
+        from agent_reach.daily_run.quote_fetch import fetch_quotes_map
+
+        quote_result = fetch_quotes_map(target_codes, settings=settings)
+        for code in target_codes:
+            row = enriched.setdefault(code, {})
+            quote = (quote_result.quotes or {}).get(code) or {}
+            for key in ("price", "change_pct", "name", "day_high", "day_low"):
+                if quote.get(key) is not None:
+                    row[key] = quote[key]
+
+    registered: list[dict[str, Any]] = []
+    if register:
+        from agent_reach.daily_run.intraday import load_state
+
+        for code in target_codes:
+            row = enriched.get(code) or {}
+            name = str(row.get("name") or code)
+            sym_snapshot = {"code": code, **row}
+            state = load_state(code=code)
+            session_scans = list(state.scans or [])
+            scenario = maybe_register_upper_shadow_from_session(
+                code=code,
+                name=name,
+                snapshot=sym_snapshot,
+                session_scans=session_scans,
+                settings=settings,
+                setup_date=day,
+                path=path,
+            )
+            if scenario:
+                registered.append(scenario)
+
+    scenarios = scenarios_for_setup_date(day, path=path)
+    markdown = format_close_technical_watch_markdown(scenarios, settings=settings) if render else ""
+    return {"markdown": markdown, "registered": registered, "scenarios": scenarios}

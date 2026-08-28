@@ -732,6 +732,30 @@ def run_close_for_symbols(
         portfolio_summary_obj.buy_rules_whatif = buy_rules_whatif
         portfolio_summary_obj.intraday_friction_whatif = intraday_friction_whatif
         portfolio_summary_obj.intraday_sell_whatif = intraday_sell_whatif
+        try:
+            from agent_reach.daily_run.technical_scenario_watch import run_close_technical_watch
+
+            technical_watch_result = run_close_technical_watch(
+                primary_snap,
+                settings=cfg,
+                symbols=targets,
+                register=True,
+                render=True,
+            )
+            technical_watch_md = technical_watch_result.get("markdown") or ""
+            if technical_watch_md.strip():
+                merged.append(
+                    ReportSection(
+                        category="technical_watch",
+                        title="",
+                        body=technical_watch_md.strip(),
+                    )
+                )
+                symbol_results[0]["result"]["technical_watch_markdown"] = technical_watch_md
+                symbol_results[0]["result"]["technical_watch"] = technical_watch_result
+                sections_retitle_done = False
+        except Exception:
+            pass
         portfolio_md = render_close_portfolio_markdown(
             portfolio_summary_obj,
             sell_rules_whatif=sell_rules_whatif,

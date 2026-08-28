@@ -7,11 +7,14 @@ import pytest
 
 from agent_reach.daily_run.technical_scenario_watch import (
     evaluate_scenario,
+    format_close_technical_watch_markdown,
     format_technical_scenario_markdown,
     load_scenarios,
     maybe_register_upper_shadow_from_session,
     register_upper_shadow_scenario,
+    run_close_technical_watch,
     save_scenarios,
+    scenarios_for_setup_date,
     technical_scenario_harness_evidence,
 )
 
@@ -123,3 +126,89 @@ def test_format_markdown():
     )
     assert "技术情景跟踪" in md
     assert "856.63" in md
+
+
+def test_format_close_technical_watch_markdown():
+    md = format_close_technical_watch_markdown(
+        [
+            {
+                "code": "300308",
+                "name": "中际旭创",
+                "setup_date": "2026-08-28",
+                "session_high": 915.88,
+                "session_close": 858.35,
+                "session_low": 856.63,
+                "eval_from": "2026-08-31",
+                "bearish": {"label": "低开低走跌破今日低点，确认短期见顶"},
+                "bullish": {"label": "高开反包则上影线为洗盘"},
+            }
+        ]
+    )
+    assert "收盘登记" in md
+    assert "915.88" in md
+    assert "856.63" in md
+    assert "2026-08-31" in md
+
+
+def test_scenarios_for_setup_date(scenario_path):
+    register_upper_shadow_scenario(
+        code="300308",
+        name="中际旭创",
+        setup_date="2026-08-28",
+        session_high=915.88,
+        session_close=858.35,
+        session_low=856.63,
+        path=scenario_path,
+    )
+    rows = scenarios_for_setup_date("2026-08-28", path=scenario_path)
+    assert len(rows) == 1
+    assert rows[0]["code"] == "300308"
+
+
+def test_run_close_technical_watch_registers_and_renders(scenario_path, monkeypatch):
+    monkeypatch.setattr(
+        "agent_reach.daily_run.technical_scenario_watch.today_shanghai",
+        lambda: date(2026, 8, 28),
+    )
+
+    def _fake_quotes(codes, settings=None):
+        from agent_reach.daily_run.quote_fetch import QuoteFetchResult
+
+        return QuoteFetchResult(
+            quotes={
+                "300308": {
+                    "code": "300308",
+                    "name": "中际旭创",
+                    "price": 858.35,
+                    "change_pct": 5.74,
+                    "day_high": 915.88,
+                    "day_low": 856.63,
+                }
+            }
+        )
+
+    monkeypatch.setattr(
+        "agent_reach.daily_run.quote_fetch.fetch_quotes_map",
+        _fake_quotes,
+    )
+    monkeypatch.setattr(
+        "agent_reach.daily_run.intraday.load_state",
+        lambda **kwargs: type("S", (), {"scans": [{"code": "300308", "price": 896.74}]})(),
+    )
+
+    snapshot = {
+        "code": "688008",
+        "portfolio": {
+            "holdings": [],
+            "watchlist": [{"code": "300308", "name": "中际旭创"}],
+        },
+        "watchlist": [{"code": "300308", "name": "中际旭创"}],
+    }
+    result = run_close_technical_watch(
+        snapshot,
+        settings={"technical_watch": {"enabled": True}, "trade_calendar": {}},
+        path=scenario_path,
+    )
+    assert result["registered"]
+    assert "915.88" in result["markdown"]
+    assert "856.63" in result["markdown"]

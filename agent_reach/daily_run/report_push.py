@@ -40,6 +40,7 @@ _CATEGORY_LABELS: dict[str, str] = {
     "code_review": "代码走读",
     "forecast_review": "预测回顾",
     "close_improvements": "改进建议",
+    "technical_watch": "技术情景",
 }
 
 
@@ -155,6 +156,7 @@ def render_close_sections(
     code_review_markdown: str = "",
     forecast_review_markdown: str = "",
     close_improvements_markdown: str = "",
+    technical_watch_markdown: str = "",
     narrative: Optional[dict[str, Any]] = None,
     macro_signals: Optional[dict[str, Any]] = None,
 ) -> list[ReportSection]:
@@ -188,6 +190,10 @@ def render_close_sections(
     if close_improvements_markdown.strip():
         sections.append(
             ReportSection(category="close_improvements", title="", body=close_improvements_markdown.strip())
+        )
+    if technical_watch_markdown.strip():
+        sections.append(
+            ReportSection(category="technical_watch", title="", body=technical_watch_markdown.strip())
         )
     if experience_markdown.strip():
         sections.append(ReportSection(category="experience", title="", body=experience_markdown.strip()))
@@ -570,6 +576,7 @@ def close_sections_from_run(
         code_review_markdown=run_result.get("code_review_markdown") or "",
         forecast_review_markdown=run_result.get("forecast_review_markdown") or "",
         close_improvements_markdown=run_result.get("close_improvements_markdown") or "",
+        technical_watch_markdown=run_result.get("technical_watch_markdown") or "",
         narrative=run_result.get("llm_narrative"),
         macro_signals=macro_signals,
     )

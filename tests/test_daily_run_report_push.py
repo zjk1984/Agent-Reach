@@ -54,16 +54,19 @@ class TestReportPush:
             code_review_markdown="**代码走读内容**",
             forecast_review_markdown="**预测回顾内容**",
             close_improvements_markdown="**改进建议内容**",
+            technical_watch_markdown="**技术情景内容**",
         )
         categories = [s.category for s in sections]
         assert "watchlist_adjust" in categories
         assert "code_review" in categories
         assert "forecast_review" in categories
         assert "close_improvements" in categories
+        assert "technical_watch" in categories
         # research -> extras -> experience/verify ordering (mirrors run_close's combined markdown join order)
         assert categories.index("watchlist_adjust") < categories.index("forecast_review")
         assert categories.index("forecast_review") < categories.index("close_improvements")
-        assert categories.index("close_improvements") < categories.index("verify")
+        assert categories.index("close_improvements") < categories.index("technical_watch")
+        assert categories.index("technical_watch") < categories.index("verify")
 
     def test_close_sections_from_run_includes_forecast_review(self):
         """Per-symbol merge path (close_sections_from_run) must also carry the new markdown fields."""
