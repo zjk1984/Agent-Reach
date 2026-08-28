@@ -201,6 +201,9 @@ TRADE_BLOCK_MESSAGES: dict[str, str] = {
     "buy_budget": "⚠️ **风控阻断：** 可部署买入预算不足一手，维持观望",
     "buy_deep_loss": "⚠️ **风控阻断：** 深度套牢标的需连续 3 次买入建议才允许加仓",
     "sell_deep_loss": "⚠️ **风控阻断：** 深度套牢且组合覆盖不足，暂不允许卖出",
+    "sell_defensive_trim": (
+        "⚠️ **风控阻断：** Lookback 已进入回暖区，记忆驱动防御减仓暂缓，维持观望"
+    ),
 }
 
 
@@ -1019,7 +1022,12 @@ def format_trade_block_message(decision: TradeDecision | dict[str, Any]) -> Opti
         return None
     if block_kind == "buy_budget":
         return format_buy_budget_block_message(decision)
-    return TRADE_BLOCK_MESSAGES.get(block_kind, TRADE_BLOCK_MESSAGES["buy_verdict"])
+    msg = TRADE_BLOCK_MESSAGES.get(block_kind)
+    if msg:
+        return msg
+    if str(block_kind).startswith("sell_"):
+        return "⚠️ **风控阻断：** 防御减仓条件未满足，维持观望"
+    return TRADE_BLOCK_MESSAGES["buy_verdict"]
 
 
 def render_intraday_trade_markdown(

@@ -372,6 +372,20 @@ class TestTradeBlockMessages:
         assert "不允许买入" in message
         assert "不允许卖出" not in message
 
+    def test_defensive_trim_block_shows_recovery_message(self):
+        from agent_reach.daily_run.intraday import format_trade_block_message
+
+        decision = {
+            "blocked": True,
+            "block_kind": "sell_defensive_trim",
+            "reasoning": "Lookback MSS 52 ≥ 回暖线 50，记忆 MSS 偏离暂不执行防御减仓",
+        }
+        message = format_trade_block_message(decision)
+        assert message is not None
+        assert "回暖" in message
+        assert "防御减仓" in message
+        assert "不允许买入" not in message
+
     def test_buy_budget_block_shows_deploy_footer(self):
         from agent_reach.daily_run.intraday import (
             TradeDecision,
