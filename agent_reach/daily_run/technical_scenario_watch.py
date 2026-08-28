@@ -147,9 +147,91 @@ def _save_scenario_row(
     return scenario
 
 
+def _price_tick(price: float) -> float:
+    """Round-down step sized to the symbol price (avoid decade floors on mid/small caps)."""
+    p = float(price)
+    if p >= 200:
+        return 10.0
+    if p >= 20:
+        return 1.0
+    if p >= 5:
+        return 0.5
+    return 0.1
+
+
+def _format_price_level(price: float) -> str:
+    p = float(price)
+    if p >= 100:
+        return f"{p:.0f}"
+    if p >= 10:
+        return f"{p:.1f}".rstrip("0").rstrip(".")
+    return f"{p:.2f}".rstrip("0").rstrip(".")
+
+
 def _default_support_level(session_low: float, *, round_to: int = 10) -> float:
-    step = max(1, int(round_to))
-    return float(math.floor(float(session_low) / step) * step)
+    low = float(session_low)
+    if low <= 0:
+        return 0.0
+    step = _price_tick(low)
+    if low >= 100 and int(round_to) >= 10:
+        step = max(step, float(int(round_to)))
+    support = math.floor(low / step) * step
+    if support <= 0:
+        support = step
+    decimals = 2 if step < 1 else 1 if step < 10 else 0
+    return round(support, decimals)
+
+
+def _normalize_support_level(
+    session_low: float,
+    session_close: float,
+    support_level: Optional[float],
+    *,
+    round_to: int = 10,
+) -> float:
+    """Pick a near-term support anchored on session low, not arbitrary decade floors."""
+    low = float(session_low)
+    close = float(session_close)
+    derived = _default_support_level(low, round_to=round_to) if low > 0 else round(close, 2)
+    if derived <= 0 and close > 0:
+        derived = round(close, 2)
+    if support_level is None:
+        return derived
+    support = float(support_level)
+    if support <= 0:
+        return derived
+    if low > 0 and support < low * 0.97:
+        return derived
+    if close > 0 and support < close * 0.85:
+        return derived
+    return round(support, 2)
+
+
+def _support_stabilize_label(support: float) -> str:
+    return f"在 {_format_price_level(support)} 元附近缩量企稳"
+
+
+def _resolve_scenario_support(
+    scenario: dict[str, Any],
+    *,
+    settings: Optional[dict[str, Any]] = None,
+) -> float:
+    shrink_cfg = technical_watch_cfg(settings)["limit_up_shrink_pullback"]
+    session_low = float(scenario.get("session_low") or 0)
+    session_close = float(scenario.get("session_close") or 0)
+    raw = scenario.get("support_level")
+    if raw is None:
+        raw = (scenario.get("bullish") or {}).get("level")
+    try:
+        support_raw = float(raw) if raw is not None else None
+    except (TypeError, ValueError):
+        support_raw = None
+    return _normalize_support_level(
+        session_low,
+        session_close,
+        support_raw,
+        round_to=int(shrink_cfg["support_round_to"]),
+    )
 
 
 def _format_turnover_yi(turnover: float) -> str:
@@ -232,14 +314,13 @@ def register_limit_up_shrink_pullback_scenario(
     norm = _normalize_code(code)
     setup = date.fromisoformat(str(setup_date)[:10])
     eval_from, eval_until = _eval_window(setup.isoformat(), settings=settings)
-    support = (
-        round(float(support_level), 2)
-        if support_level is not None
-        else round(
-            _default_support_level(session_low, round_to=int(shrink_cfg["support_round_to"])),
-            2,
-        )
+    support = _normalize_support_level(
+        session_low,
+        session_close,
+        support_level,
+        round_to=int(shrink_cfg["support_round_to"]),
     )
+    support_label = _format_price_level(support)
     scenario = {
         "scenario_type": "limit_up_shrink_pullback",
         "code": norm,
@@ -264,7 +345,7 @@ def register_limit_up_shrink_pullback_scenario(
         "bullish": {
             "condition": "hold_near_support",
             "level": support,
-            "label": f"在 {support:.0f} 元附近缩量企稳",
+            "label": _support_stabilize_label(support),
         },
         "status": "pending",
         "note": note.strip(),
@@ -275,7 +356,7 @@ def register_limit_up_shrink_pullback_scenario(
         l2_title=f"{name} 涨停后缩量回调",
         l2_content=(
             f"昨收 {scenario['prior_close']} 涨停后今日收 {scenario['session_close']}；"
-            f"周一关注 {support:.0f} 元附近企稳，放量跌破则调整空间打开"
+            f"周一关注 {support_label} 元附近企稳，放量跌破则调整空间打开"
         ),
     )
 
@@ -758,7 +839,7 @@ def maybe_register_limit_up_shrink_pullback_from_session(
         path=path,
         note=(
             f"昨收 {prior:.2f} 涨停后今日缩量回落至 {session_close:.2f}；"
-            f"周一关注 {support:.0f} 元附近企稳，放量跌破则调整空间打开"
+            f"周一关注 {_format_price_level(support)} 元附近企稳，放量跌破则调整空间打开"
         ),
     )
 
@@ -999,7 +1080,8 @@ def _evaluate_limit_up_shrink_pullback(
     shrink_cfg = cfg["limit_up_shrink_pullback"]
     code = str(scenario.get("code") or "")
     name = str(scenario.get("name") or code)
-    support = float(scenario.get("support_level") or (scenario.get("bullish") or {}).get("level") or 0)
+    support = _resolve_scenario_support(scenario, settings=settings)
+    support_label = _format_price_level(support)
     setup_low = float(scenario.get("session_low") or 0)
     tol = float(shrink_cfg["support_tolerance_pct"]) / 100.0
     bear_vol = float(shrink_cfg["bearish_volume_ratio"])
@@ -1017,7 +1099,7 @@ def _evaluate_limit_up_shrink_pullback(
     }
     if price is None:
         result["headline"] = (
-            f"{name} 涨停后缩量回调：关注 {support:.0f} 元附近企稳 / "
+            f"{name} 涨停后缩量回调：关注 {support_label} 元附近企稳 / "
             "放量跌破则调整空间打开"
         )
         return result
@@ -1040,7 +1122,7 @@ def _evaluate_limit_up_shrink_pullback(
             {
                 "status": "adjustment_open",
                 "headline": (
-                    f"{name} 涨停后回调：已跌破 {support:.0f} 元支撑"
+                    f"{name} 涨停后回调：已跌破 {support_label} 元支撑"
                     f"{'且放量' if volume_breakdown else ''}，调整空间打开"
                 ),
                 "action_hint": "回避加仓，持仓考虑减仓",
@@ -1053,7 +1135,7 @@ def _evaluate_limit_up_shrink_pullback(
             {
                 "status": "support_holding",
                 "headline": (
-                    f"{name} 涨停后回调：现价 {px:.2f} 在 {support:.0f} 元附近企稳"
+                    f"{name} 涨停后回调：现价 {px:.2f} 在 {support_label} 元附近企稳"
                 ),
                 "action_hint": "可观察承接，勿盲目杀跌",
             }
@@ -1062,7 +1144,7 @@ def _evaluate_limit_up_shrink_pullback(
 
     result["headline"] = (
         f"{name} 涨停后回调：现价 {px:.2f}，"
-        f"关注 {support:.0f} 元附近企稳 / 放量跌破则调整空间打开"
+        f"关注 {support_label} 元附近企稳 / 放量跌破则调整空间打开"
     )
     return result
 
@@ -1443,8 +1525,9 @@ def technical_scenario_harness_evidence(
             _persist_scenario_status(item["scenario"], "adjustment_open", path=path)
         elif status == "support_holding":
             playbook.append(headline)
+            support = _resolve_scenario_support(item["scenario"], settings=settings)
             plan.append(
-                f"intraday：{name} 在 {item['scenario'].get('support_level')} 元附近企稳，观察承接"
+                f"intraday：{name} 在 {_format_price_level(support)} 元附近企稳，观察承接"
             )
             _persist_scenario_status(item["scenario"], "support_holding", path=path)
         elif status == "liquidity_trim_risk":
@@ -1525,14 +1608,13 @@ def format_close_technical_watch_markdown(
             prior = sc.get("prior_close")
             close_px = sc.get("session_close")
             low = sc.get("session_low")
-            support = sc.get("support_level")
+            support = _resolve_scenario_support(sc, settings=settings)
+            bull_label = _support_stabilize_label(support)
             bear = sc.get("bearish") or {}
             bull = sc.get("bullish") or {}
             lines.append(f"- **{name} {code}** · 涨停后缩量回调（{setup_date}）")
             lines.append(f"  - 昨收 **{prior}** / 今收 **{close_px}** / 低 **{low}**")
-            lines.append(
-                f"  - 📍 **企稳**：{bull.get('label') or f'在 {support} 元附近缩量企稳'}"
-            )
+            lines.append(f"  - 📍 **企稳**：{bull_label}")
             lines.append(
                 f"  - 📉 **调整**：{bear.get('label') or '继续放量下跌，调整空间打开'}"
             )

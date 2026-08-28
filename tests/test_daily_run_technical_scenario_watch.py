@@ -629,3 +629,70 @@ def test_format_close_markdown_includes_min_cash_cap():
     )
     assert "min_cash" in md
     assert "50%" in md or "0.5" in md.lower()
+
+
+def test_default_support_level_mid_and_low_cap():
+    from agent_reach.daily_run.technical_scenario_watch import (
+        _default_support_level,
+        _normalize_support_level,
+        _resolve_scenario_support,
+        _support_stabilize_label,
+    )
+
+    assert _default_support_level(26.1) == 26.0
+    assert _default_support_level(8.43) == 8.0
+    assert _default_support_level(213.0) == 210.0
+    assert _normalize_support_level(26.1, 26.12, 20.0) == 26.0
+    assert _normalize_support_level(8.43, 8.44, 0.0) == 8.0
+    assert _support_stabilize_label(8.0) == "在 8 元附近缩量企稳"
+    assert _support_stabilize_label(26.0) == "在 26 元附近缩量企稳"
+
+    scenario = {
+        "scenario_type": "limit_up_shrink_pullback",
+        "session_low": 26.1,
+        "session_close": 26.12,
+        "support_level": 20.0,
+        "bullish": {"level": 20.0, "label": "在 20 元附近缩量企稳"},
+    }
+    assert _resolve_scenario_support(scenario) == 26.0
+
+
+def test_format_close_markdown_uses_correct_support(scenario_path):
+    from agent_reach.daily_run.technical_scenario_watch import format_close_technical_watch_markdown
+
+    save_scenarios(
+        [
+            {
+                "scenario_type": "limit_up_shrink_pullback",
+                "code": "002273",
+                "name": "水晶光电",
+                "setup_date": "2026-08-28",
+                "eval_from": "2026-08-31",
+                "prior_close": 26.81,
+                "session_close": 26.12,
+                "session_low": 26.1,
+                "support_level": 20.0,
+                "bullish": {"level": 20.0, "label": "在 20 元附近缩量企稳"},
+                "bearish": {"label": "继续放量下跌，调整空间打开"},
+            },
+            {
+                "scenario_type": "limit_up_shrink_pullback",
+                "code": "002583",
+                "name": "海能达",
+                "setup_date": "2026-08-28",
+                "eval_from": "2026-08-31",
+                "prior_close": 8.56,
+                "session_close": 8.44,
+                "session_low": 8.43,
+                "support_level": 0.0,
+                "bullish": {"level": 0.0, "label": "在 0 元附近缩量企稳"},
+                "bearish": {"label": "继续放量下跌，调整空间打开"},
+            },
+        ],
+        scenario_path,
+    )
+    md = format_close_technical_watch_markdown(load_scenarios(scenario_path))
+    assert "在 26 元附近缩量企稳" in md
+    assert "在 20 元附近缩量企稳" not in md
+    assert "在 8 元附近缩量企稳" in md
+    assert "0 元" not in md
