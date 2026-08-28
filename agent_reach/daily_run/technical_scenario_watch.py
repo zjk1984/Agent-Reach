@@ -16,6 +16,7 @@ from agent_reach.daily_run.trade_calendar import next_trading_day, today_shangha
 def technical_watch_cfg(settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     block = dict((settings or {}).get("technical_watch") or {})
     shrink = dict(block.get("limit_up_shrink_pullback") or {})
+    liquidity = dict(block.get("liquidity_shrink") or {})
     return {
         "enabled": block.get("enabled", True),
         "min_upper_shadow_ratio": float(block.get("min_upper_shadow_ratio", 0.35)),
@@ -31,6 +32,15 @@ def technical_watch_cfg(settings: Optional[dict[str, Any]] = None) -> dict[str, 
             "support_tolerance_pct": float(shrink.get("support_tolerance_pct", 2.5)),
             "bearish_volume_ratio": float(shrink.get("bearish_volume_ratio", 1.1)),
             "open_near_prior_tolerance_pct": float(shrink.get("open_near_prior_tolerance_pct", 2.0)),
+        },
+        "liquidity_shrink": {
+            "enabled": liquidity.get("enabled", True),
+            "max_turnover_cny": float(liquidity.get("max_turnover_cny", 200_000_000)),
+            "max_volume_ratio": float(liquidity.get("max_volume_ratio", 0.85)),
+            "max_turnover_rate_pct": float(liquidity.get("max_turnover_rate_pct", 1.5)),
+            "recovery_turnover_multiplier": float(liquidity.get("recovery_turnover_multiplier", 1.5)),
+            "recovery_volume_ratio": float(liquidity.get("recovery_volume_ratio", 1.0)),
+            "shrink_turnover_multiplier": float(liquidity.get("shrink_turnover_multiplier", 0.85)),
         },
     }
 
@@ -117,6 +127,10 @@ def _save_scenario_row(
 def _default_support_level(session_low: float, *, round_to: int = 10) -> float:
     step = max(1, int(round_to))
     return float(math.floor(float(session_low) / step) * step)
+
+
+def _format_turnover_yi(turnover: float) -> str:
+    return f"{float(turnover) / 1e8:.2f}亿"
 
 
 def register_upper_shadow_scenario(
@@ -239,6 +253,64 @@ def register_limit_up_shrink_pullback_scenario(
         l2_content=(
             f"昨收 {scenario['prior_close']} 涨停后今日收 {scenario['session_close']}；"
             f"周一关注 {support:.0f} 元附近企稳，放量跌破则调整空间打开"
+        ),
+    )
+
+
+def register_liquidity_shrink_scenario(
+    *,
+    code: str,
+    name: str,
+    setup_date: str,
+    session_close: float,
+    session_low: float,
+    turnover: float,
+    turnover_rate: Optional[float] = None,
+    volume_ratio: Optional[float] = None,
+    settings: Optional[dict[str, Any]] = None,
+    path: Optional[Path] = None,
+    note: str = "",
+) -> dict[str, Any]:
+    """Persist a low-liquidity shrink-volume watch scenario."""
+    norm = _normalize_code(code)
+    setup = date.fromisoformat(str(setup_date)[:10])
+    eval_from, eval_until = _eval_window(setup.isoformat(), settings=settings)
+    turnover_f = round(float(turnover), 2)
+    scenario = {
+        "scenario_type": "liquidity_shrink",
+        "code": norm,
+        "name": name,
+        "setup_date": setup.isoformat(),
+        "eval_from": eval_from,
+        "eval_until": eval_until,
+        "session_close": round(float(session_close), 2),
+        "session_low": round(float(session_low), 2),
+        "setup_turnover": turnover_f,
+        "setup_turnover_rate": round(float(turnover_rate), 2)
+        if turnover_rate is not None
+        else None,
+        "setup_volume_ratio": round(float(volume_ratio), 2) if volume_ratio is not None else None,
+        "bearish": {
+            "condition": "liquidity_shrink_trim",
+            "level": turnover_f,
+            "label": "流动性持续萎缩，关注被进一步减仓",
+        },
+        "bullish": {
+            "condition": "liquidity_recovery",
+            "level": turnover_f,
+            "label": "成交额恢复且排查无基本面恶化",
+        },
+        "status": "pending",
+        "note": note.strip(),
+    }
+    turnover_label = _format_turnover_yi(turnover_f)
+    return _save_scenario_row(
+        scenario,
+        path=path,
+        l2_title=f"{name} 流动性萎缩",
+        l2_content=(
+            f"成交额 {turnover_label} 持续缩量；"
+            "关注基本面变化及是否被进一步减仓"
         ),
     )
 
@@ -416,6 +488,77 @@ def maybe_register_limit_up_shrink_pullback_from_session(
     )
 
 
+def maybe_register_liquidity_shrink_from_session(
+    *,
+    code: str,
+    name: str,
+    snapshot: dict[str, Any],
+    session_scans: Optional[list[dict[str, Any]]] = None,
+    settings: Optional[dict[str, Any]] = None,
+    setup_date: Optional[str] = None,
+    path: Optional[Path] = None,
+) -> Optional[dict[str, Any]]:
+    cfg = technical_watch_cfg(settings)
+    liq_cfg = cfg["liquidity_shrink"]
+    if not cfg.get("enabled", True) or not liq_cfg.get("enabled", True):
+        return None
+
+    _session_high, session_close, session_low = _session_stats(session_scans, snapshot, code)
+    if session_close is None or session_low is None:
+        return None
+
+    turnover = snapshot.get("turnover")
+    try:
+        turnover_f = float(turnover) if turnover is not None else None
+    except (TypeError, ValueError):
+        turnover_f = None
+    if turnover_f is None or turnover_f <= 0:
+        return None
+    if turnover_f > float(liq_cfg["max_turnover_cny"]):
+        return None
+
+    volume_ratio = snapshot.get("volume_ratio")
+    try:
+        vol_ratio = float(volume_ratio) if volume_ratio is not None else None
+    except (TypeError, ValueError):
+        vol_ratio = None
+
+    turnover_rate = snapshot.get("turnover_rate")
+    try:
+        turnover_rate_f = float(turnover_rate) if turnover_rate is not None else None
+    except (TypeError, ValueError):
+        turnover_rate_f = None
+
+    low_liquidity = False
+    if vol_ratio is not None and vol_ratio <= float(liq_cfg["max_volume_ratio"]):
+        low_liquidity = True
+    if turnover_rate_f is not None and turnover_rate_f <= float(liq_cfg["max_turnover_rate_pct"]):
+        low_liquidity = True
+    if vol_ratio is None and turnover_rate_f is None:
+        low_liquidity = True
+    if not low_liquidity:
+        return None
+
+    day = setup_date or today_shanghai().isoformat()
+    turnover_label = _format_turnover_yi(turnover_f)
+    return register_liquidity_shrink_scenario(
+        code=code,
+        name=name,
+        setup_date=day,
+        session_close=session_close,
+        session_low=session_low,
+        turnover=turnover_f,
+        turnover_rate=turnover_rate_f,
+        volume_ratio=vol_ratio,
+        settings=settings,
+        path=path,
+        note=(
+            f"成交额仅 {turnover_label}，持续缩量；"
+            "关注是否有基本面变化或被进一步减仓"
+        ),
+    )
+
+
 def _active_scenarios(
     *,
     code: str = "",
@@ -447,6 +590,7 @@ def evaluate_scenario(
     change_pct: Optional[float] = None,
     open_price: Optional[float] = None,
     volume_ratio: Optional[float] = None,
+    turnover: Optional[float] = None,
     settings: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     scenario_type = str(scenario.get("scenario_type") or "upper_shadow")
@@ -456,6 +600,15 @@ def evaluate_scenario(
             price=price,
             change_pct=change_pct,
             volume_ratio=volume_ratio,
+            settings=settings,
+        )
+    if scenario_type == "liquidity_shrink":
+        return _evaluate_liquidity_shrink(
+            scenario,
+            price=price,
+            change_pct=change_pct,
+            volume_ratio=volume_ratio,
+            turnover=turnover,
             settings=settings,
         )
     return _evaluate_upper_shadow(
@@ -620,6 +773,99 @@ def _evaluate_limit_up_shrink_pullback(
     return result
 
 
+def _evaluate_liquidity_shrink(
+    scenario: dict[str, Any],
+    *,
+    price: Optional[float],
+    change_pct: Optional[float] = None,
+    volume_ratio: Optional[float] = None,
+    turnover: Optional[float] = None,
+    settings: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    cfg = technical_watch_cfg(settings)
+    liq_cfg = cfg["liquidity_shrink"]
+    code = str(scenario.get("code") or "")
+    name = str(scenario.get("name") or code)
+    setup_turnover = float(scenario.get("setup_turnover") or 0)
+    setup_close = float(scenario.get("session_close") or 0)
+    shrink_mult = float(liq_cfg["shrink_turnover_multiplier"])
+    recovery_mult = float(liq_cfg["recovery_turnover_multiplier"])
+    recovery_vol = float(liq_cfg["recovery_volume_ratio"])
+
+    result: dict[str, Any] = {
+        "code": code,
+        "name": name,
+        "scenario": scenario,
+        "price": price,
+        "change_pct": change_pct,
+        "volume_ratio": volume_ratio,
+        "turnover": turnover,
+        "status": "pending",
+        "headline": "",
+        "action_hint": "观望",
+    }
+    turnover_label = _format_turnover_yi(setup_turnover)
+    if price is None:
+        result["headline"] = (
+            f"{name} 流动性：setup 成交额 {turnover_label} 持续缩量，"
+            "关注基本面变化及是否被进一步减仓"
+        )
+        return result
+
+    try:
+        vol = float(volume_ratio) if volume_ratio is not None else None
+    except (TypeError, ValueError):
+        vol = None
+    try:
+        to = float(turnover) if turnover is not None else None
+    except (TypeError, ValueError):
+        to = None
+    try:
+        chg = float(change_pct) if change_pct is not None else None
+    except (TypeError, ValueError):
+        chg = None
+    px = float(price)
+
+    liquidity_recovered = (
+        (to is not None and to >= setup_turnover * recovery_mult)
+        or (vol is not None and vol >= recovery_vol)
+    )
+    if liquidity_recovered:
+        result.update(
+            {
+                "status": "liquidity_recovered",
+                "headline": (
+                    f"{name} 流动性：成交额/量比回升"
+                    f"（{'成交额恢复' if to and to >= setup_turnover * recovery_mult else '量比恢复'}），"
+                    "仍需排查基本面"
+                ),
+                "action_hint": "流动性改善，继续跟踪基本面与持仓逻辑",
+            }
+        )
+        return result
+
+    still_shrinking = to is not None and to <= setup_turnover * shrink_mult
+    price_weak = (chg is not None and chg < 0) or px < setup_close
+    if still_shrinking and price_weak:
+        result.update(
+            {
+                "status": "liquidity_trim_risk",
+                "headline": (
+                    f"{name} 流动性：成交额 {_format_turnover_yi(to)} 继续萎缩且价格走弱，"
+                    "警惕被进一步减仓"
+                ),
+                "action_hint": "排查基本面变化，持仓考虑防御性减仓",
+            }
+        )
+        return result
+
+    result["headline"] = (
+        f"{name} 流动性：setup 成交额 {turnover_label} 持续缩量，"
+        "关注基本面变化及是否被进一步减仓"
+    )
+    return result
+
+
 def evaluate_active_scenarios(
     snapshot: dict[str, Any],
     *,
@@ -644,6 +890,11 @@ def evaluate_active_scenarios(
         vol_f = float(volume_ratio) if volume_ratio is not None else None
     except (TypeError, ValueError):
         vol_f = None
+    turnover = snapshot.get("turnover")
+    try:
+        turnover_f = float(turnover) if turnover is not None else None
+    except (TypeError, ValueError):
+        turnover_f = None
     results = [
         evaluate_scenario(
             row,
@@ -651,6 +902,7 @@ def evaluate_active_scenarios(
             change_pct=chg_f,
             open_price=open_price,
             volume_ratio=vol_f,
+            turnover=turnover_f,
             settings=settings,
         )
         for row in _active_scenarios(code=code, as_of=as_of, path=path)
@@ -708,6 +960,15 @@ def technical_scenario_harness_evidence(
                 f"intraday：{name} 在 {item['scenario'].get('support_level')} 元附近企稳，观察承接"
             )
             _persist_scenario_status(item["scenario"], "support_holding", path=path)
+        elif status == "liquidity_trim_risk":
+            memory.append(headline)
+            policy.append(f"{name} 流动性持续萎缩，排查基本面并优先考虑防御减仓")
+            plan.append(f"intraday：{name} 低流动性下避免接飞刀，反弹减仓")
+            _persist_scenario_status(item["scenario"], "liquidity_trim_risk", path=path)
+        elif status == "liquidity_recovered":
+            playbook.append(headline)
+            plan.append(f"intraday：{name} 流动性回升，复核 thesis/watchlist intel")
+            _persist_scenario_status(item["scenario"], "liquidity_recovered", path=path)
         elif headline:
             plan.append(headline)
     return {"memory": memory, "policy": policy, "playbook": playbook, "plan": plan}
@@ -770,6 +1031,27 @@ def format_close_technical_watch_markdown(
             lines.append(
                 f"  - 📉 **调整**：{bear.get('label') or '继续放量下跌，调整空间打开'}"
             )
+        elif scenario_type == "liquidity_shrink":
+            close_px = sc.get("session_close")
+            low = sc.get("session_low")
+            setup_turnover = sc.get("setup_turnover")
+            turnover_label = _format_turnover_yi(float(setup_turnover or 0))
+            turnover_rate = sc.get("setup_turnover_rate")
+            vol_ratio = sc.get("setup_volume_ratio")
+            bear = sc.get("bearish") or {}
+            bull = sc.get("bullish") or {}
+            lines.append(f"- **{name} {code}** · 流动性萎缩（{setup_date}）")
+            lines.append(f"  - 收 **{close_px}** / 低 **{low}** / 成交额 **{turnover_label}**")
+            if turnover_rate is not None:
+                lines.append(f"  - 换手率 **{turnover_rate}%**")
+            if vol_ratio is not None:
+                lines.append(f"  - 量比 **{vol_ratio}**")
+            lines.append(
+                f"  - 🔍 **跟踪**：{bull.get('label') or '排查基本面变化、成交额是否恢复'}"
+            )
+            lines.append(
+                f"  - ⚠️ **减仓**：{bear.get('label') or '流动性持续萎缩，警惕被进一步减仓'}"
+            )
         else:
             high = sc.get("session_high")
             close_px = sc.get("session_close")
@@ -831,7 +1113,17 @@ def run_close_technical_watch(
         for code in target_codes:
             row = enriched.setdefault(code, {})
             quote = (quote_result.quotes or {}).get(code) or {}
-            for key in ("price", "change_pct", "name", "day_high", "day_low", "reference_price", "volume_ratio"):
+            for key in (
+                "price",
+                "change_pct",
+                "name",
+                "day_high",
+                "day_low",
+                "reference_price",
+                "volume_ratio",
+                "turnover",
+                "turnover_rate",
+            ):
                 if quote.get(key) is not None:
                     row[key] = quote[key]
 
@@ -867,6 +1159,17 @@ def run_close_technical_watch(
             )
             if shrink:
                 registered.append(shrink)
+            liquidity = maybe_register_liquidity_shrink_from_session(
+                code=code,
+                name=name,
+                snapshot=sym_snapshot,
+                session_scans=session_scans,
+                settings=settings,
+                setup_date=day,
+                path=path,
+            )
+            if liquidity:
+                registered.append(liquidity)
 
     scenarios = scenarios_for_setup_date(day, path=path)
     markdown = format_close_technical_watch_markdown(scenarios, settings=settings) if render else ""

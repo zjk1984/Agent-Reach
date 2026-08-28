@@ -85,6 +85,15 @@
         "support_tolerance_pct": 2.5,
         "bearish_volume_ratio": 1.1,
         "open_near_prior_tolerance_pct": 2.0
+      },
+      "liquidity_shrink": {
+        "enabled": true,
+        "max_turnover_cny": 200000000,
+        "max_volume_ratio": 0.85,
+        "max_turnover_rate_pct": 1.5,
+        "recovery_turnover_multiplier": 1.5,
+        "recovery_volume_ratio": 1.0,
+        "shrink_turnover_multiplier": 0.85
       }
     },
     "rebound": {

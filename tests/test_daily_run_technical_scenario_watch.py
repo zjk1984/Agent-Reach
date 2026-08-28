@@ -11,8 +11,10 @@ from agent_reach.daily_run.technical_scenario_watch import (
     format_technical_scenario_markdown,
     load_scenarios,
     maybe_register_limit_up_shrink_pullback_from_session,
+    maybe_register_liquidity_shrink_from_session,
     maybe_register_upper_shadow_from_session,
     register_limit_up_shrink_pullback_scenario,
+    register_liquidity_shrink_scenario,
     register_upper_shadow_scenario,
     run_close_technical_watch,
     save_scenarios,
@@ -318,3 +320,107 @@ def test_format_close_markdown_includes_shrink_pullback():
     assert "澜起科技" in md
     assert "210" in md
     assert "缩量回调" in md
+
+
+def test_register_liquidity_shrink(scenario_path):
+    row = register_liquidity_shrink_scenario(
+        code="002583",
+        name="海能达",
+        setup_date="2026-08-28",
+        session_close=8.44,
+        session_low=8.43,
+        turnover=128_912_859.44,
+        turnover_rate=1.18,
+        volume_ratio=0.62,
+        path=scenario_path,
+        settings={"trade_calendar": {}},
+    )
+    assert row["scenario_type"] == "liquidity_shrink"
+    assert row["setup_turnover"] == 128912859.44
+
+
+def test_evaluate_liquidity_trim_risk(scenario_path):
+    scenario = register_liquidity_shrink_scenario(
+        code="002583",
+        name="海能达",
+        setup_date="2026-08-28",
+        session_close=8.44,
+        session_low=8.43,
+        turnover=128_912_859.44,
+        path=scenario_path,
+    )
+    result = evaluate_scenario(
+        scenario,
+        price=8.2,
+        change_pct=-2.0,
+        turnover=100_000_000.0,
+    )
+    assert result["status"] == "liquidity_trim_risk"
+    assert "减仓" in result["headline"]
+
+
+def test_evaluate_liquidity_recovered(scenario_path):
+    scenario = register_liquidity_shrink_scenario(
+        code="002583",
+        name="海能达",
+        setup_date="2026-08-28",
+        session_close=8.44,
+        session_low=8.43,
+        turnover=128_912_859.44,
+        path=scenario_path,
+    )
+    result = evaluate_scenario(
+        scenario,
+        price=8.5,
+        change_pct=0.5,
+        turnover=200_000_000.0,
+        volume_ratio=1.2,
+    )
+    assert result["status"] == "liquidity_recovered"
+
+
+def test_maybe_register_liquidity_shrink(scenario_path, monkeypatch):
+    monkeypatch.setattr(
+        "agent_reach.daily_run.technical_scenario_watch.today_shanghai",
+        lambda: date(2026, 8, 28),
+    )
+    row = maybe_register_liquidity_shrink_from_session(
+        code="002583",
+        name="海能达",
+        snapshot={
+            "code": "002583",
+            "price": 8.44,
+            "change_pct": -1.4,
+            "turnover": 128_912_859.44,
+            "turnover_rate": 1.18,
+            "volume_ratio": 0.62,
+            "day_low": 8.43,
+        },
+        path=scenario_path,
+        settings={"technical_watch": {"enabled": True}, "trade_calendar": {}},
+    )
+    assert row is not None
+    assert "1.29亿" in row["note"] or "成交额" in row["note"]
+
+
+def test_format_close_markdown_includes_liquidity_shrink():
+    md = format_close_technical_watch_markdown(
+        [
+            {
+                "scenario_type": "liquidity_shrink",
+                "code": "002583",
+                "name": "海能达",
+                "setup_date": "2026-08-28",
+                "eval_from": "2026-08-31",
+                "session_close": 8.44,
+                "session_low": 8.43,
+                "setup_turnover": 128912859.44,
+                "setup_turnover_rate": 1.18,
+                "bullish": {"label": "成交额恢复且排查无基本面恶化"},
+                "bearish": {"label": "流动性持续萎缩，关注被进一步减仓"},
+            }
+        ]
+    )
+    assert "海能达" in md
+    assert "1.29亿" in md
+    assert "流动性" in md
