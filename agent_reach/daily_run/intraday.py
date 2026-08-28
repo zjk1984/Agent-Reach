@@ -818,6 +818,21 @@ def run_intraday(
     )
     steps.append("scan")
 
+    enriched = scan_result.get("enriched") or snapshot
+    try:
+        from agent_reach.daily_run.technical_scenario_watch import (
+            evaluate_active_scenarios,
+            format_technical_scenario_markdown,
+        )
+
+        scenario_evals = evaluate_active_scenarios(enriched, settings=cfg)
+        scenario_md = format_technical_scenario_markdown(scenario_evals)
+        if scenario_md:
+            scan_result["markdown"] = (scan_result.get("markdown") or "") + "\n\n---\n\n" + scenario_md
+            scan_result["technical_scenarios"] = scenario_evals
+    except Exception:
+        pass
+
     st_after_scan = IntradayState.from_dict(scan_result["state"])
     from agent_reach.daily_run.intraday_rebound import apply_intraday_rebound_overlay
 

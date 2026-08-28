@@ -191,6 +191,35 @@ def intraday_to_harness_evidence(
         scan=scan,
     )
 
+    if settings:
+        from agent_reach.daily_run.technical_scenario_watch import (
+            evaluate_active_scenarios,
+            maybe_register_upper_shadow_from_session,
+            technical_scenario_harness_evidence,
+        )
+
+        snapshot, session_scans, _prior, _decision, _scan_id = _profit_lock_context(
+            payload,
+            scan_block=scan_block if isinstance(scan_block, dict) else {},
+            scan=scan,
+        )
+        code = str(snapshot.get("code") or scan.get("code") or "")
+        name = str(snapshot.get("name") or scan.get("name") or code)
+        if code:
+            maybe_register_upper_shadow_from_session(
+                code=code,
+                name=name,
+                snapshot=snapshot,
+                session_scans=session_scans,
+                settings=settings,
+            )
+            evals = evaluate_active_scenarios(snapshot, settings=settings)
+            lines = technical_scenario_harness_evidence(evals)
+            memory.extend(lines.get("memory") or [])
+            policy.extend(lines.get("policy") or [])
+            playbook.extend(lines.get("playbook") or [])
+            plan.extend(lines.get("plan") or [])
+
     if payload.get("skipped"):
         reason = str(payload.get("reason") or "")
         memory.append(f"intraday skipped：{reason}")
@@ -220,6 +249,34 @@ def intraday_to_harness_evidence(
             scan_block=scan_block if isinstance(scan_block, dict) else {},
             scan=scan_inner,
         )
+        if settings:
+            from agent_reach.daily_run.technical_scenario_watch import (
+                evaluate_active_scenarios,
+                maybe_register_upper_shadow_from_session,
+                technical_scenario_harness_evidence,
+            )
+
+            snapshot, session_scans, _prior, _decision, _sid = _profit_lock_context(
+                sub_payload,
+                scan_block=scan_block if isinstance(scan_block, dict) else {},
+                scan=scan_inner,
+            )
+            code = str(snapshot.get("code") or row.get("code") or "")
+            name = str(snapshot.get("name") or row.get("name") or code)
+            if code:
+                maybe_register_upper_shadow_from_session(
+                    code=code,
+                    name=name,
+                    snapshot=snapshot,
+                    session_scans=session_scans,
+                    settings=settings,
+                )
+            evals = evaluate_active_scenarios(snapshot, settings=settings)
+            lines = technical_scenario_harness_evidence(evals)
+            memory.extend(lines.get("memory") or [])
+            policy.extend(lines.get("policy") or [])
+            playbook.extend(lines.get("playbook") or [])
+            plan.extend(lines.get("plan") or [])
 
     summary = f"intraday {scan_id} {name} scans={scan_count}"
     return {

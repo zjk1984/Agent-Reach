@@ -8,7 +8,11 @@ from typing import Any, Optional
 from agent_reach.daily_run.harness_skill_base import apply_skill_refinement
 
 
-def morning_to_harness_evidence(run_result: dict[str, Any]) -> dict[str, Any]:
+def morning_to_harness_evidence(
+    run_result: dict[str, Any],
+    *,
+    settings: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
     memory: list[str] = []
     policy: list[str] = []
     playbook: list[str] = []
@@ -49,6 +53,19 @@ def morning_to_harness_evidence(run_result: dict[str, Any]) -> dict[str, Any]:
     for rec in (report.get("recommendations") or [])[:2]:
         playbook.append(f"早盘建议：{rec}")
 
+    if settings:
+        from agent_reach.daily_run.technical_scenario_watch import (
+            evaluate_active_scenarios,
+            technical_scenario_harness_evidence,
+        )
+
+        evals = evaluate_active_scenarios(snapshot, settings=settings)
+        lines = technical_scenario_harness_evidence(evals)
+        memory.extend(lines.get("memory") or [])
+        policy.extend(lines.get("policy") or [])
+        playbook.extend(lines.get("playbook") or [])
+        plan.extend(lines.get("plan") or [])
+
     summary = f"morning {name} mss={mss} verdict={verdict}"
     morning_gate_passed = None if gate is None else bool(gate.passed)
     morning_audit_passed = None if audit is None else bool(audit.passed)
@@ -76,7 +93,7 @@ def apply_morning_harness_refinement(
     *,
     settings: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
-    evidence = morning_to_harness_evidence(run_result)
+    evidence = morning_to_harness_evidence(run_result, settings=settings)
     if not any(evidence.get(k) for k in ("memory", "policy", "playbook", "plan")):
         return {"skipped": True, "reason": "empty evidence", "job": "morning"}
     result = apply_skill_refinement("morning", evidence, settings=settings)
