@@ -25,7 +25,7 @@ from agent_reach.daily_run.team import (
     render_team_markdown,
     team_first_enabled,
 )
-from agent_reach.daily_run.verify import render_verify_markdown, verify_snapshots
+from agent_reach.daily_run.verify import render_close_verify_markdown, verify_snapshots
 
 try:
     from loguru import logger
@@ -848,7 +848,7 @@ def run_close(
         )
         improvements_md = render_improvements_markdown(improvements) or ""
 
-    verify_md = render_verify_markdown(verify)
+    verify_md = render_close_verify_markdown(verify, forecast_review_md=forecast_review_md)
 
     market_review_md = ""
     market_review_obj = None
@@ -1029,7 +1029,6 @@ def run_close(
             curve_md,
             research_md,
             *extra_parts,
-            forecast_review_md,
             improvements_md,
             technical_watch_md,
             exp_md,
@@ -1127,7 +1126,7 @@ def run_close(
             harness_markdown=harness_md,
             watchlist_adjust_markdown=wl_md,
             code_review_markdown=cr_md,
-            forecast_review_markdown=forecast_review_md,
+            forecast_review_markdown="",
             close_improvements_markdown=improvements_md,
             technical_watch_markdown=technical_watch_md,
             narrative=close_narrative,

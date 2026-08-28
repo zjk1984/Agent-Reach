@@ -23,7 +23,7 @@ _CATEGORY_LABELS: dict[str, str] = {
     "intraday": "盘中曲线",
     "research": "Exa 调研",
     "experience": "经验沉淀",
-    "verify": "验证结论",
+    "verify": "验证·预测",
     "daily_portfolio": "盈亏·持仓",
     "weekly_portfolio": "盈亏·持仓",
     "weekly_market": "板块·热点",
@@ -187,10 +187,6 @@ def render_close_sections(
         )
     if code_review_markdown.strip():
         sections.append(ReportSection(category="code_review", title="", body=code_review_markdown.strip()))
-    if forecast_review_markdown.strip():
-        sections.append(
-            ReportSection(category="forecast_review", title="", body=forecast_review_markdown.strip())
-        )
     if close_improvements_markdown.strip():
         sections.append(
             ReportSection(category="close_improvements", title="", body=close_improvements_markdown.strip())
@@ -201,7 +197,12 @@ def render_close_sections(
         )
     if experience_markdown.strip():
         sections.append(ReportSection(category="experience", title="", body=experience_markdown.strip()))
-    verify_body = verify_markdown.strip()
+    from agent_reach.daily_run.verify import merge_verify_forecast_markdown
+
+    verify_body = merge_verify_forecast_markdown(
+        verify_markdown,
+        forecast_review_markdown,
+    ).strip()
     if verify_body and snapshot and snapshot.get("code"):
         from agent_reach.daily_run.symbol_news import render_symbol_news_markdown
 
@@ -589,6 +590,12 @@ def close_sections_from_run(
 ) -> list[ReportSection]:
     snapshot = run_result.get("snapshot") or {}
     macro_signals = snapshot.get("macro_signals") if include_xueqiu_hot else None
+    verify_md = run_result.get("verify_markdown") or ""
+    forecast_md = run_result.get("forecast_review_markdown") or ""
+    if forecast_md and forecast_md not in verify_md:
+        from agent_reach.daily_run.verify import merge_verify_forecast_markdown
+
+        verify_md = merge_verify_forecast_markdown(verify_md, forecast_md)
     return render_close_sections(
         verify_name=verify_name,
         market_markdown=(run_result.get("market_review_markdown") or "") if include_market_review else "",
@@ -596,11 +603,11 @@ def close_sections_from_run(
         curve_markdown=run_result.get("curve_markdown") or "",
         research_markdown=run_result.get("research_markdown") or "",
         experience_markdown=run_result.get("experience_markdown") or "",
-        verify_markdown=run_result.get("verify_markdown") or "",
+        verify_markdown=verify_md,
         portfolio_markdown=run_result.get("portfolio_markdown") or "",
         watchlist_adjust_markdown=run_result.get("watchlist_adjust_markdown") or "",
         code_review_markdown=run_result.get("code_review_markdown") or "",
-        forecast_review_markdown=run_result.get("forecast_review_markdown") or "",
+        forecast_review_markdown="",
         close_improvements_markdown=run_result.get("close_improvements_markdown") or "",
         technical_watch_markdown=run_result.get("technical_watch_markdown") or "",
         narrative=run_result.get("llm_narrative"),
