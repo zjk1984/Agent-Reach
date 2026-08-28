@@ -16,9 +16,11 @@ from agent_reach.daily_run.technical_scenario_watch import (
     register_limit_up_shrink_pullback_scenario,
     register_liquidity_shrink_scenario,
     register_mss_trend_scenario,
+    register_min_cash_ratio_cap_scenario,
     register_upper_shadow_scenario,
     collect_scan_mss_range,
     maybe_register_mss_trend_from_session,
+    maybe_register_min_cash_ratio_cap_from_session,
     run_close_technical_watch,
     save_scenarios,
     scenarios_for_setup_date,
@@ -531,3 +533,99 @@ def test_maybe_register_mss_trend(scenario_path, monkeypatch, tmp_path):
     assert row is not None
     assert row["setup_mss_low"] == 49.81
     assert row["setup_mss_high"] == 51.62
+
+
+def test_register_min_cash_ratio_cap(scenario_path):
+    row = register_min_cash_ratio_cap_scenario(
+        setup_date="2026-08-28",
+        min_cash_ratio=0.5,
+        cash_ratio=0.4867,
+        baseline_min_cash_ratio=0.0,
+        path=scenario_path,
+        settings={"trade_calendar": {}},
+    )
+    assert row["scenario_type"] == "min_cash_ratio_cap"
+    assert row["setup_min_cash_ratio"] == 0.5
+
+
+def test_evaluate_min_cash_threshold_relaxed(scenario_path):
+    scenario = register_min_cash_ratio_cap_scenario(
+        setup_date="2026-08-28",
+        min_cash_ratio=0.5,
+        cash_ratio=0.49,
+        path=scenario_path,
+    )
+    result = evaluate_scenario(
+        scenario,
+        min_cash_ratio=0.45,
+        cash_ratio=0.49,
+        mss=56.0,
+    )
+    assert result["status"] == "threshold_relaxed"
+    assert "回调" in result["headline"]
+
+
+def test_evaluate_min_cash_rally_miss_risk(scenario_path):
+    scenario = register_min_cash_ratio_cap_scenario(
+        setup_date="2026-08-28",
+        min_cash_ratio=0.5,
+        cash_ratio=0.487,
+        path=scenario_path,
+    )
+    result = evaluate_scenario(
+        scenario,
+        min_cash_ratio=0.5,
+        cash_ratio=0.487,
+        mss=56.0,
+    )
+    assert result["status"] == "rally_miss_risk"
+    assert "踏空" in result["headline"]
+
+
+def test_maybe_register_min_cash_cap(scenario_path, monkeypatch):
+    monkeypatch.setattr(
+        "agent_reach.daily_run.technical_scenario_watch.today_shanghai",
+        lambda: date(2026, 8, 28),
+    )
+    monkeypatch.setattr(
+        "agent_reach.daily_run.harness_policy.min_cash_ratio_default",
+        lambda settings: 0.5,
+    )
+    monkeypatch.setattr(
+        "agent_reach.daily_run.harness_policy.min_cash_ratio_base",
+        lambda settings, thresholds: 0.0,
+    )
+    row = maybe_register_min_cash_ratio_cap_from_session(
+        {
+            "portfolio": {"cash_ratio": 0.4867, "holdings": [], "watchlist": []},
+        },
+        path=scenario_path,
+        settings={
+            "technical_watch": {"enabled": True},
+            "thresholds": {},
+            "trade_calendar": {},
+        },
+    )
+    assert row is not None
+    assert row["setup_cash_ratio"] == 0.4867
+
+
+def test_format_close_markdown_includes_min_cash_cap():
+    md = format_close_technical_watch_markdown(
+        [
+            {
+                "scenario_type": "min_cash_ratio_cap",
+                "code": "SYSTEM",
+                "name": "量化系统现金比例",
+                "setup_date": "2026-08-28",
+                "eval_from": "2026-08-31",
+                "setup_min_cash_ratio": 0.5,
+                "setup_cash_ratio": 0.4867,
+                "baseline_min_cash_ratio": 0.0,
+                "bullish": {"label": "harness 回调 min_cash 阈值后可加仓"},
+                "bearish": {"label": "市场反弹时现金比例限制可能踏空"},
+            }
+        ]
+    )
+    assert "min_cash" in md
+    assert "50%" in md or "0.5" in md.lower()

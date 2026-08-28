@@ -102,6 +102,12 @@
         "bullish_level": 55.0,
         "scan_id": "S12",
         "scope": "holdings"
+      },
+      "min_cash_ratio_cap": {
+        "enabled": true,
+        "register_min_cash_ratio": 0.5,
+        "relax_delta": 0.02,
+        "rebound_mss_level": 55.0
       }
     },
     "rebound": {

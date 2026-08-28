@@ -21,6 +21,7 @@ def technical_watch_cfg(settings: Optional[dict[str, Any]] = None) -> dict[str, 
     shrink = dict(block.get("limit_up_shrink_pullback") or {})
     liquidity = dict(block.get("liquidity_shrink") or {})
     mss_trend = dict(block.get("mss_trend") or {})
+    cash_cap = dict(block.get("min_cash_ratio_cap") or {})
     return {
         "enabled": block.get("enabled", True),
         "min_upper_shadow_ratio": float(block.get("min_upper_shadow_ratio", 0.35)),
@@ -53,6 +54,12 @@ def technical_watch_cfg(settings: Optional[dict[str, Any]] = None) -> dict[str, 
             "bullish_level": float(mss_trend.get("bullish_level", 55.0)),
             "scan_id": str(mss_trend.get("scan_id", "S12")),
             "scope": str(mss_trend.get("scope", "holdings")),
+        },
+        "min_cash_ratio_cap": {
+            "enabled": cash_cap.get("enabled", True),
+            "register_min_cash_ratio": float(cash_cap.get("register_min_cash_ratio", 0.5)),
+            "relax_delta": float(cash_cap.get("relax_delta", 0.02)),
+            "rebound_mss_level": float(cash_cap.get("rebound_mss_level", 55.0)),
         },
     }
 
@@ -478,6 +485,111 @@ def maybe_register_mss_trend_from_session(
     )
 
 
+def register_min_cash_ratio_cap_scenario(
+    *,
+    setup_date: str,
+    min_cash_ratio: float,
+    cash_ratio: Optional[float],
+    baseline_min_cash_ratio: Optional[float] = None,
+    settings: Optional[dict[str, Any]] = None,
+    path: Optional[Path] = None,
+    note: str = "",
+) -> dict[str, Any]:
+    """Persist min_cash_ratio harness cap — rally miss / threshold callback watch."""
+    setup = date.fromisoformat(str(setup_date)[:10])
+    eval_from, eval_until = _eval_window(setup.isoformat(), settings=settings)
+    cap_cfg = technical_watch_cfg(settings)["min_cash_ratio_cap"]
+    min_cash = round(float(min_cash_ratio), 4)
+    cash = round(float(cash_ratio), 4) if cash_ratio is not None else None
+    baseline = (
+        round(float(baseline_min_cash_ratio), 4)
+        if baseline_min_cash_ratio is not None
+        else None
+    )
+    scenario = {
+        "scenario_type": "min_cash_ratio_cap",
+        "code": SYSTEM_MSS_CODE,
+        "name": "量化系统现金比例",
+        "setup_date": setup.isoformat(),
+        "eval_from": eval_from,
+        "eval_until": eval_until,
+        "setup_min_cash_ratio": min_cash,
+        "baseline_min_cash_ratio": baseline,
+        "setup_cash_ratio": cash,
+        "rebound_mss_level": float(cap_cfg["rebound_mss_level"]),
+        "bearish": {
+            "condition": "rally_miss_on_cash_cap",
+            "level": min_cash,
+            "label": "市场反弹时现金比例限制可能踏空",
+        },
+        "bullish": {
+            "condition": "min_cash_threshold_relaxed",
+            "level": min_cash,
+            "label": "harness 回调 min_cash 阈值后可加仓",
+        },
+        "status": "pending",
+        "note": note.strip(),
+    }
+    cash_s = f"{cash:.0%}" if cash is not None else "—"
+    return _save_scenario_row(
+        scenario,
+        path=path,
+        l2_title="min_cash_ratio 半仓约束",
+        l2_content=(
+            f"min_cash {min_cash:.0%} / 当前现金 {cash_s}；"
+            "关注反弹踏空与 harness 阈值回调"
+        ),
+    )
+
+
+def maybe_register_min_cash_ratio_cap_from_session(
+    snapshot: dict[str, Any],
+    *,
+    settings: Optional[dict[str, Any]] = None,
+    setup_date: Optional[str] = None,
+    path: Optional[Path] = None,
+) -> Optional[dict[str, Any]]:
+    cfg = technical_watch_cfg(settings)
+    cap_cfg = cfg["min_cash_ratio_cap"]
+    if not cfg.get("enabled", True) or not cap_cfg.get("enabled", True):
+        return None
+
+    from agent_reach.daily_run.harness_policy import min_cash_ratio_base, min_cash_ratio_default
+    from agent_reach.daily_run.symbols import portfolio_from_snapshot
+
+    effective = float(min_cash_ratio_default(settings or {}))
+    register_floor = float(cap_cfg["register_min_cash_ratio"])
+    if effective + 1e-9 < register_floor:
+        return None
+
+    pf = portfolio_from_snapshot(snapshot)
+    cash_ratio = pf.get("cash_ratio")
+    if cash_ratio is None:
+        cash_ratio = (snapshot.get("portfolio") or {}).get("cash_ratio")
+    try:
+        cash_f = float(cash_ratio) if cash_ratio is not None else None
+    except (TypeError, ValueError):
+        cash_f = None
+
+    thresholds = (settings or {}).get("thresholds") or {}
+    baseline = min_cash_ratio_base(settings or {}, thresholds)
+
+    day = setup_date or today_shanghai().isoformat()
+    cash_label = f"{cash_f:.0%}" if cash_f is not None else "—"
+    return register_min_cash_ratio_cap_scenario(
+        setup_date=day,
+        min_cash_ratio=effective,
+        cash_ratio=cash_f,
+        baseline_min_cash_ratio=baseline,
+        settings=settings,
+        path=path,
+        note=(
+            f"min_cash_ratio {effective:.0%} 要求半仓现金（当前 {cash_label}）；"
+            "若下周一市场反弹，系统可能因现金比例限制踏空；关注 harness 阈值回调"
+        ),
+    )
+
+
 def _session_stats(
     session_scans: Optional[list[dict[str, Any]]],
     snapshot: dict[str, Any],
@@ -757,6 +869,8 @@ def evaluate_scenario(
     volume_ratio: Optional[float] = None,
     turnover: Optional[float] = None,
     mss: Optional[float] = None,
+    min_cash_ratio: Optional[float] = None,
+    cash_ratio: Optional[float] = None,
     settings: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     scenario_type = str(scenario.get("scenario_type") or "upper_shadow")
@@ -780,6 +894,14 @@ def evaluate_scenario(
     if scenario_type == "mss_trend":
         return _evaluate_mss_trend(
             scenario,
+            mss=mss,
+            settings=settings,
+        )
+    if scenario_type == "min_cash_ratio_cap":
+        return _evaluate_min_cash_ratio_cap(
+            scenario,
+            min_cash_ratio=min_cash_ratio,
+            cash_ratio=cash_ratio,
             mss=mss,
             settings=settings,
         )
@@ -1102,6 +1224,92 @@ def _evaluate_mss_trend(
     return result
 
 
+def _evaluate_min_cash_ratio_cap(
+    scenario: dict[str, Any],
+    *,
+    min_cash_ratio: Optional[float] = None,
+    cash_ratio: Optional[float] = None,
+    mss: Optional[float] = None,
+    settings: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    cfg = technical_watch_cfg(settings)
+    cap_cfg = cfg["min_cash_ratio_cap"]
+    name = str(scenario.get("name") or "量化系统现金比例")
+    setup_min = float(scenario.get("setup_min_cash_ratio") or 0)
+    setup_cash = scenario.get("setup_cash_ratio")
+    rebound_mss = float(scenario.get("rebound_mss_level") or cap_cfg["rebound_mss_level"])
+    relax_delta = float(cap_cfg["relax_delta"])
+
+    result: dict[str, Any] = {
+        "code": SYSTEM_MSS_CODE,
+        "name": name,
+        "scenario": scenario,
+        "min_cash_ratio": min_cash_ratio,
+        "cash_ratio": cash_ratio,
+        "mss": mss,
+        "status": "pending",
+        "headline": "",
+        "action_hint": "观望",
+    }
+    setup_cash_s = (
+        f"{float(setup_cash):.0%}" if setup_cash is not None else "—"
+    )
+    if min_cash_ratio is None and cash_ratio is None:
+        result["headline"] = (
+            f"{name}：min_cash {setup_min:.0%}（setup 现金 {setup_cash_s}）；"
+            "关注反弹踏空与 harness 阈值回调"
+        )
+        return result
+
+    try:
+        effective_min = float(min_cash_ratio) if min_cash_ratio is not None else setup_min
+    except (TypeError, ValueError):
+        effective_min = setup_min
+    try:
+        cash_f = float(cash_ratio) if cash_ratio is not None else None
+    except (TypeError, ValueError):
+        cash_f = None
+    try:
+        mss_f = float(mss) if mss is not None else None
+    except (TypeError, ValueError):
+        mss_f = None
+
+    if effective_min + 1e-9 < setup_min - relax_delta:
+        result.update(
+            {
+                "status": "threshold_relaxed",
+                "headline": (
+                    f"{name}：min_cash 由 {setup_min:.0%} 回调至 {effective_min:.0%}，"
+                    "现金约束放松可评估加仓"
+                ),
+                "action_hint": "复核 deploy 预算与 MSS，避免盲目追高",
+            }
+        )
+        return result
+
+    rebound = mss_f is not None and mss_f >= rebound_mss
+    cash_blocked = cash_f is not None and cash_f + 1e-9 < effective_min
+    if cash_blocked and (rebound or mss_f is None or mss_f >= 50.0):
+        result.update(
+            {
+                "status": "rally_miss_risk",
+                "headline": (
+                    f"{name}：现金 {cash_f:.0%} < min_cash {effective_min:.0%}"
+                    f"{'且 MSS 回暖' if rebound else ''}，反弹可能踏空"
+                ),
+                "action_hint": "关注 harness 是否回调 min_cash，或手动减仓腾现金",
+            }
+        )
+        return result
+
+    cash_label = f"{cash_f:.0%}" if cash_f is not None else "—"
+    result["headline"] = (
+        f"{name}：min_cash {effective_min:.0%} / 现金 {cash_label}；"
+        "继续跟踪阈值回调"
+    )
+    return result
+
+
 def evaluate_active_scenarios(
     snapshot: dict[str, Any],
     *,
@@ -1156,6 +1364,21 @@ def evaluate_active_scenarios(
         )
         if low is not None:
             mss_f = low
+    from agent_reach.daily_run.harness_policy import min_cash_ratio_default
+
+    effective_min_cash = float(min_cash_ratio_default(settings or {}))
+    cash_ratio_val: Optional[float] = None
+    pf_block = snapshot.get("portfolio") or {}
+    raw_cash = pf_block.get("cash_ratio")
+    if raw_cash is None:
+        from agent_reach.daily_run.symbols import portfolio_from_snapshot
+
+        raw_cash = portfolio_from_snapshot(snapshot).get("cash_ratio")
+    if raw_cash is not None:
+        try:
+            cash_ratio_val = float(raw_cash)
+        except (TypeError, ValueError):
+            cash_ratio_val = None
     results = [
         evaluate_scenario(
             row,
@@ -1165,6 +1388,8 @@ def evaluate_active_scenarios(
             volume_ratio=vol_f,
             turnover=turnover_f,
             mss=mss_f,
+            min_cash_ratio=effective_min_cash,
+            cash_ratio=cash_ratio_val,
             settings=settings,
         )
         for row in _active_scenarios(code=code, as_of=as_of, path=path)
@@ -1240,6 +1465,15 @@ def technical_scenario_harness_evidence(
             playbook.append(headline)
             plan.append("intraday：MSS 防御解除，恢复常规 lookback 阈值")
             _persist_scenario_status(item["scenario"], "defense_released", path=path)
+        elif status == "threshold_relaxed":
+            playbook.append(headline)
+            plan.append("intraday：min_cash 阈值回调，评估 deploy 预算与加仓窗口")
+            _persist_scenario_status(item["scenario"], "threshold_relaxed", path=path)
+        elif status == "rally_miss_risk":
+            memory.append(f"踏空：{headline}")
+            policy.append(f"{name} 现金比例低于 min_cash，反弹期关注 harness 阈值回调")
+            plan.append("intraday：MSS 回暖但 buy_cash 阻断时，优先等 harness 放松 min_cash")
+            _persist_scenario_status(item["scenario"], "rally_miss_risk", path=path)
         elif headline:
             plan.append(headline)
     return {"memory": memory, "policy": policy, "playbook": playbook, "plan": plan}
@@ -1334,6 +1568,21 @@ def format_close_technical_watch_markdown(
             lines.append(f"  - {scan_id} MSS **{low}~{high}**（已跌破 **{warning}**）")
             lines.append(f"  - 📉 **深层防御**：{bear.get('label')}")
             lines.append(f"  - 📈 **防御解除**：{bull.get('label')}")
+        elif scenario_type == "min_cash_ratio_cap":
+            min_cash = sc.get("setup_min_cash_ratio")
+            cash = sc.get("setup_cash_ratio")
+            baseline = sc.get("baseline_min_cash_ratio")
+            bear = sc.get("bearish") or {}
+            bull = sc.get("bullish") or {}
+            cash_s = f"{float(cash):.0%}" if cash is not None else "—"
+            base_s = f"{float(baseline):.0%}" if baseline is not None else "—"
+            lines.append(f"- **{name}** · min_cash 约束（{setup_date}）")
+            lines.append(
+                f"  - harness **min_cash {float(min_cash):.0%}** / 当前现金 **{cash_s}**"
+                f"（基准 {base_s}）"
+            )
+            lines.append(f"  - 📈 **回调**：{bull.get('label')}")
+            lines.append(f"  - ⚠️ **踏空**：{bear.get('label')}")
         elif scenario_type == "upper_shadow":
             high = sc.get("session_high")
             close_px = sc.get("session_close")
@@ -1462,6 +1711,14 @@ def run_close_technical_watch(
         )
         if mss_row:
             registered.append(mss_row)
+        cash_cap_row = maybe_register_min_cash_ratio_cap_from_session(
+            enriched,
+            settings=settings,
+            setup_date=day,
+            path=path,
+        )
+        if cash_cap_row:
+            registered.append(cash_cap_row)
 
     scenarios = scenarios_for_setup_date(day, path=path)
     markdown = format_close_technical_watch_markdown(scenarios, settings=settings) if render else ""
