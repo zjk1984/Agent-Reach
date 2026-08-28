@@ -721,6 +721,17 @@
     "add_sold_to_watchlist": true
   },
 
+  "berkshire": {
+    "enabled": true,
+    "thesis_tracker": true,
+    "thesis_drift_on_close": true,
+    "financial_rigor_on_verify": true,
+    "quality_screen_watchlist": true,
+    "info_richness_gate": true,
+    "industry_funnel_on_close": true,
+    "masters_scoring_on_close": true
+  },
+
   "watchlist": {
     "mode": "harness",
     "auto_adjust_enabled": true,
@@ -728,6 +739,7 @@
     "adjust_phases": ["morning", "close"],
     "min_size": 5,
     "max_size": 10,
+    "funnel_target": 5,
     "close_reorder_by_performance": true,
     "hot_topic_adjust_enabled": true,
     "hot_topic_remove_change_pct": -2.0,

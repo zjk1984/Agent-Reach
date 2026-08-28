@@ -385,6 +385,9 @@ def _generate_narrative(
         limits = dict(limits)
         for key, val in _INTRADAY_RISK_LIMITS.items():
             limits[key] = max(int(limits.get(key, 0)), int(val))
+    if job == "morning" and context.get("decision_memo") and _narrative_intel_focus(context):
+        limits = dict(limits)
+        limits["max_focus_points"] = max(int(limits.get("max_focus_points", 3)), 4)
     from agent_reach.daily_run.storage.retrieval import attach_storage_retrieval
 
     context = attach_storage_retrieval(context, settings=settings, job=job)
@@ -564,6 +567,8 @@ def _attach_context_trace(
 def build_morning_context(
     snapshot: dict[str, Any],
     report: dict[str, Any],
+    *,
+    settings: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     pf = snapshot.get("portfolio") or {}
     holdings = pf.get("holdings") or []
@@ -576,7 +581,7 @@ def build_morning_context(
     )
 
     supplements = _narrative_supplement_fields(snapshot=snapshot, macro_signals=macro_signals)
-    return {
+    ctx = {
         "job": "morning",
         "name": report.get("name") or snapshot.get("name"),
         "code": report.get("code") or snapshot.get("code"),
@@ -597,6 +602,38 @@ def build_morning_context(
         "mss_breakdown": snapshot.get("mss_breakdown") or {},
         "invalidation": (report.get("invalidation") or "")[:120],
     }
+    _attach_berkshire_context(ctx, snapshot, report, settings=settings)
+    return ctx
+
+
+def _attach_berkshire_context(
+    ctx: dict[str, Any],
+    snapshot: dict[str, Any],
+    report: dict[str, Any],
+    *,
+    settings: dict[str, Any] | None = None,
+) -> None:
+    from agent_reach.daily_run.berkshire.config import berkshire_enabled
+
+    if not berkshire_enabled(settings):
+        return
+    from agent_reach.daily_run.berkshire.decision_memo import build_decision_memo, render_decision_memo_markdown
+    from agent_reach.daily_run.berkshire.info_richness import grade_info_richness, render_richness_line
+    from agent_reach.daily_run.berkshire.masters_scoring import build_masters_scoring, render_masters_markdown
+
+    snap = {**snapshot, **report}
+    richness = grade_info_richness(snap)
+    memo = build_decision_memo(snap, settings=settings, richness=richness)
+    masters = build_masters_scoring(snap, team_review=snapshot.get("team_review"))
+    ctx["info_richness"] = richness
+    ctx["decision_memo"] = memo
+    ctx["masters_scoring"] = masters
+    ctx["berkshire_lines"] = [
+        render_richness_line(richness),
+        render_decision_memo_markdown(memo),
+    ]
+    if berkshire_enabled(settings):
+        ctx["berkshire_lines"].append(render_masters_markdown(masters))
 
 
 def _morning_deterministic(ctx: dict[str, Any]) -> dict[str, Any]:
@@ -608,8 +645,9 @@ def _morning_deterministic(ctx: dict[str, Any]) -> dict[str, Any]:
     delta = ctx.get("prior_close_delta")
     if delta is not None:
         focus.append(f"相对昨收 MSS Δ {float(delta):+.1f}")
+    intel_extras = _narrative_intel_focus(ctx)
     cash = ctx.get("cash_ratio")
-    if cash is not None and float(cash) >= 0.4:
+    if cash is not None and float(cash) >= 0.4 and not intel_extras:
         focus.append(f"现金仓位 {float(cash):.0%}，符合防守配置")
     overlap = (
         ctx.get("portfolio_hot_stock_summary")
@@ -618,18 +656,27 @@ def _morning_deterministic(ctx: dict[str, Any]) -> dict[str, Any]:
     )
     if overlap:
         focus.insert(1, overlap[:100])
-    for idx, extra in enumerate(_narrative_intel_focus(ctx)):
+    for idx, extra in enumerate(intel_extras):
         focus.insert(2 + idx, extra)
     if mss is not None and float(mss) < 40:
         risks.append("MSS 低于 macro_veto 区间，禁止接飞刀、取消买入计划")
     if ctx.get("invalidation"):
         risks.append(f"失效条件：{ctx['invalidation'][:120]}")
+    richness = ctx.get("info_richness") or {}
+    if richness.get("grade") == "C":
+        risks.append("信息 C 级：禁止激进建仓，结论应为灰色")
+    memo = ctx.get("decision_memo") or {}
+    focus_limit = 3
+    if memo.get("decision"):
+        focus.insert(0, f"决策 **{memo['decision']}** — {memo.get('summary', '')[:80]}")
+        if intel_extras:
+            focus_limit = 4
     summary = f"早盘 {ctx.get('name') or ctx.get('code')}：{verdict}"
     if mss is not None:
         summary += f"，MSS {mss}"
     return {
         "summary": summary,
-        "focus_points": focus[:3],
+        "focus_points": focus[:focus_limit],
         "divergence_notes": [],
         "risk_alerts": risks[:2],
         "planner": "deterministic",
@@ -688,7 +735,7 @@ def generate_morning_narrative(
     *,
     settings: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
-    context = build_morning_context(snapshot, report)
+    context = build_morning_context(snapshot, report, settings=settings)
     return _attach_context_trace(
         _generate_narrative(
             "morning",

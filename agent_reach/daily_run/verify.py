@@ -137,6 +137,13 @@ def verify_snapshots(
     if vb != vc:
         deviations.append(f"标签由「{vb}」变为「{vc}」")
 
+    from agent_reach.daily_run.berkshire.config import berkshire_enabled
+
+    if berkshire_enabled(cfg, key="financial_rigor_on_verify"):
+        from agent_reach.daily_run.berkshire.financial_rigor import append_verify_deviations
+
+        deviations.extend(append_verify_deviations({}, current))
+
     recommendations: list[str] = []
     if within is False:
         recommendations.append("复盘预测偏差原因（外资流速、汇率、突发政策等）并更新 MSS 权重")

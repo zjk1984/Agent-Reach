@@ -95,6 +95,20 @@ def run_morning_for_symbols(
     pf = load_portfolio()
     targets = symbols or resolve_target_symbols(pf, cfg, workflow="morning")
     primary = pf.get("primary_code")
+
+    from agent_reach.daily_run.berkshire.pipeline import maybe_adjust_watchlist_morning
+    from agent_reach.daily_run.snapshot_builder import build_and_save as _build_preview
+
+    if targets:
+        preview_snap, _ = _build_preview(
+            report_type="premarket",
+            config=config,
+            primary_code=targets[0],
+            portfolio=pf,
+        )
+        pf, _wl = maybe_adjust_watchlist_morning(pf, preview_snap, cfg)
+        targets = symbols or resolve_target_symbols(pf, cfg, workflow="morning")
+
     merge_push = _should_merge_push(cfg)
     defer_narrative = _defer_narrative_to_merge(cfg)
     symbol_results: list[dict[str, Any]] = []
@@ -664,6 +678,14 @@ def run_close_for_symbols(
                 save_portfolio(pf_work)
                 sync_snapshot_portfolio(primary_snap, pf_work)
 
+        from agent_reach.daily_run.berkshire.pipeline import run_close_berkshire
+
+        berkshire_close = run_close_berkshire(
+            portfolio=pf_work,
+            symbol_results=symbol_results,
+            settings=cfg,
+        )
+
         portfolio_summary_obj = build_close_portfolio_summary(
             primary_snap,
             morning_bl,
@@ -718,6 +740,9 @@ def run_close_for_symbols(
             intraday_sell_whatif=intraday_sell_whatif,
         )
         if portfolio_md.strip():
+            bmd = (berkshire_close or {}).get("markdown") or ""
+            if bmd.strip():
+                portfolio_md = portfolio_md.rstrip() + "\n\n---\n\n" + bmd.strip()
             merged.append(
                 ReportSection(category="daily_portfolio", title="", body=portfolio_md.strip())
             )

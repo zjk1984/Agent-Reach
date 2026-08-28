@@ -232,6 +232,16 @@ def adjust_watchlist(
             base_mss=base_mss,
             pnl_overview=pnl_overview,
         )
+        _fill_watchlist_to_min(
+            pf,
+            snapshot,
+            settings,
+            enriched,
+            changes,
+            held_codes=held_codes,
+            base_mss=base_mss,
+            pnl_overview=pnl_overview,
+        )
 
     if phase == "close":
         _fill_watchlist_to_min(
@@ -256,7 +266,8 @@ def adjust_watchlist(
         snapshot=snapshot,
     )
 
-    if verify and verify.get("verdict_current") == "回避":
+    macro_risk_off = verify and verify.get("verdict_current") == "回避"
+    if macro_risk_off:
         # Macro risk-off: keep only top 3 watchlist names
         pf["watchlist"] = _trim_by_score(
             pf["watchlist"],
@@ -267,6 +278,18 @@ def adjust_watchlist(
             reason_prefix="宏观回避，收缩观察池",
             base_mss=base_mss,
             snapshot=snapshot,
+        )
+    elif phase in ("close", "morning"):
+        # Refill after trim paths so min_size is not left below target (non risk-off)
+        _fill_watchlist_to_min(
+            pf,
+            snapshot,
+            settings,
+            enriched,
+            changes,
+            held_codes=held_codes,
+            base_mss=base_mss,
+            pnl_overview=pnl_overview,
         )
 
     if phase == "close" and wl_cfg.get("close_reorder_by_performance", True):
@@ -541,7 +564,19 @@ def _refresh_close_watchlist_from_hot_topics(
         )
 
     pf["watchlist"] = preserved
-    ranked = _rank_candidates_for_close_refresh(settings, hot_titles)
+    from agent_reach.daily_run.berkshire.config import berkshire_enabled
+
+    if berkshire_enabled(settings, key="industry_funnel_on_close"):
+        from agent_reach.daily_run.berkshire.industry_funnel import funnel_select_watchlist
+
+        funnel = funnel_select_watchlist(
+            settings,
+            enriched=enriched,
+            hot_titles=hot_titles,
+        )
+        ranked = funnel.get("selected") or []
+    else:
+        ranked = _rank_candidates_for_close_refresh(settings, hot_titles)
     _add_candidates(
         pf,
         settings,
@@ -611,6 +646,28 @@ def _add_candidates(
         if unique_symbol_count(pf) >= max_total_symbols(settings):
             break
         if prefer_hot and not _matches_hot_topics(_candidate_keywords(cand), titles):
+            continue
+        row = enriched.get(code, {})
+        snap_probe = {
+            "code": code,
+            "name": cand.get("name"),
+            "mss_final": row.get("mss_final"),
+            "mss_breakdown": row.get("mss_breakdown") or snapshot.get("mss_breakdown"),
+            "price": row.get("price"),
+            "sector": row.get("sector") or cand.get("sector"),
+        }
+        from agent_reach.daily_run.berkshire.quality_screen import passes_watchlist_gate
+
+        ok, gate_reason = passes_watchlist_gate(snap_probe, enriched=row, settings=settings)
+        if not ok:
+            changes.append(
+                WatchlistChange(
+                    "remove",
+                    code,
+                    str(cand.get("name", code)),
+                    f"quality-screen 未通过：{gate_reason}",
+                )
+            )
             continue
         entry = _watchlist_entry_from_candidate(
             cand,

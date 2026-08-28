@@ -139,6 +139,18 @@ def compute_verdict(snapshot: dict[str, Any], settings: dict[str, Any]) -> Verdi
         downgrade.append("未完成结构化复核")
         confidence = "低"
 
+    from agent_reach.daily_run.berkshire.config import berkshire_enabled
+
+    if berkshire_enabled(settings, key="info_richness_gate"):
+        from agent_reach.daily_run.berkshire.info_richness import grade_info_richness
+
+        richness = grade_info_richness(snapshot)
+        if richness.get("blocks_aggressive") and label_key == "buy":
+            label_key = "watch"
+            downgrade.append(f"信息{richness.get('grade')}级：禁止激进建仓")
+            if confidence == "高":
+                confidence = "中"
+
     verdict_map = {"buy": buy_label, "watch": watch_label, "avoid": avoid_label}
     verdict = verdict_map[label_key]
 
