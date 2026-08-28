@@ -867,13 +867,15 @@ def run_close(
             emotion = market_review_obj.get("emotion")
             if isinstance(emotion, dict) and emotion:
                 from agent_reach.daily_run.emotion_mss_fusion import apply_emotion_to_mss_breakdown
+                from agent_reach.daily_run.market_breadth_collector import emotion_conclusion_supported
 
-                enriched["mss_breakdown"] = apply_emotion_to_mss_breakdown(
-                    enriched.get("mss_breakdown") or {},
-                    emotion,
-                    settings=cfg,
-                )
                 enriched["market_emotion"] = emotion
+                if emotion_conclusion_supported(emotion):
+                    enriched["mss_breakdown"] = apply_emotion_to_mss_breakdown(
+                        enriched.get("mss_breakdown") or {},
+                        emotion,
+                        settings=cfg,
+                    )
 
     redfox_md = ""
     if redfox_enabled(cfg):

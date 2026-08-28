@@ -13,6 +13,9 @@ from agent_reach.daily_run.market_breadth_collector import (
     analyze_emotion,
     analyze_emotion_from_counts,
     enrich_emotion_with_limit_pools,
+    emotion_conclusion_supported,
+    emotion_data_basis,
+    mark_emotion_data_quality,
 )
 from agent_reach.daily_run.sector_mainline import analyze_sectors
 from agent_reach.daily_run.trade_calendar import is_trading_day, today_shanghai
@@ -242,6 +245,7 @@ def _macro_breadth_fallback(
     )
     out = em.to_dict()
     out["breadth_degraded"] = True
+    out["insufficient_data"] = True
     return out
 
 
@@ -430,6 +434,7 @@ def collect_market_review(
     has_counts = int((emotion or {}).get("up_count") or 0) + int((emotion or {}).get("down_count") or 0) > 0
     if not stocks and not has_counts and not indices:
         payload["error"] = "市场宽度与指数均不可用"
+    payload["emotion"] = mark_emotion_data_quality(dict(payload.get("emotion") or {}))
     payload["comparison"] = compare_market_review(
         payload, yesterday=yesterday, last_week=last_week
     )
@@ -465,7 +470,7 @@ def get_or_collect_market_review(
         review = {
             "date": ds,
             "error": str(exc),
-            "emotion": _macro_breadth_fallback({}, {"net_yi": 0}),
+            "emotion": mark_emotion_data_quality(_macro_breadth_fallback({}, {"net_yi": 0})),
             "sector_analysis": analyze_sectors([]).to_dict(),
             "lhb_analysis": analyze_lhb([]).to_dict(),
             "warnings": [str(exc)],
@@ -511,9 +516,23 @@ def render_market_review_markdown(
     lines = [
         "## 🌡️ 全市场复盘（a-stock-review）",
         "",
-        f"**情绪定级：** {badge} · 综合 **{em.get('score', '—')} 分** · 建议仓位 **{em.get('position', '—')}**",
-        "",
     ]
+    if emotion_conclusion_supported(em):
+        lines.append(
+            f"**情绪定级：** {badge} · 综合 **{em.get('score', '—')} 分** · 建议仓位 **{em.get('position', '—')}**"
+        )
+        basis = str(em.get("data_basis") or emotion_data_basis(em)).strip()
+        if basis and (em.get("breadth_partial") or review.get("warnings")):
+            lines.append(f"**数据依据：** {basis}")
+    else:
+        lines.extend(
+            [
+                "**情绪定级：** 数据不足 · **暂无仓位建议**",
+                "",
+                "> 涨跌家数/涨跌停等核心宽度数据不可用，无法给出有依据的情绪评分与仓位建议。",
+            ]
+        )
+    lines.append("")
 
     for w in warnings[:4]:
         lines.append(f"- ⚠️ {w}")

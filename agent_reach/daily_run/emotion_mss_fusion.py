@@ -45,6 +45,11 @@ def apply_emotion_to_mss_breakdown(
     if not emotion or not emotion_mss_fusion_enabled(settings):
         return dict(breakdown or {})
 
+    from agent_reach.daily_run.market_breadth_collector import emotion_conclusion_supported
+
+    if not emotion_conclusion_supported(emotion):
+        return dict(breakdown or {})
+
     from agent_reach.daily_run.macro_collector import _clamp
 
     deltas = emotion_mss_deltas(emotion, settings=settings)

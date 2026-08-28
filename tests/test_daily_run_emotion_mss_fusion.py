@@ -23,10 +23,21 @@ def test_emotion_mss_deltas_weak():
 def test_apply_emotion_to_mss_breakdown():
     out = apply_emotion_to_mss_breakdown(
         {"global": 50.0, "sentiment": 48.0, "flow": 52.0, "fx": 49.0},
-        {"score": 5, "rating": "强", "position": "7-8成"},
+        {"score": 5, "rating": "强", "position": "7-8成", "up_count": 3000, "down_count": 1000},
         settings={"market_review": {"emotion_mss_fusion_enabled": True}},
     )
     assert out["global"] > 50.0
     assert out["sentiment"] > 48.0
     assert out["_emotion_fusion_ref"]["rating"] == "强"
     assert "情绪融合" in format_emotion_fusion_line(out)
+
+
+def test_apply_emotion_skipped_when_insufficient_data():
+    out = apply_emotion_to_mss_breakdown(
+        {"global": 50.0, "sentiment": 48.0},
+        {"score": 3, "rating": "中", "position": "5成", "insufficient_data": True},
+        settings={"market_review": {"emotion_mss_fusion_enabled": True}},
+    )
+    assert out["global"] == 50.0
+    assert out["sentiment"] == 48.0
+    assert "_emotion_fusion_ref" not in out

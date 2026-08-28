@@ -267,6 +267,47 @@ def collect_market_breadth(
     return analyze_emotion(stocks, north, indices=indices)
 
 
+def emotion_conclusion_supported(emotion: Optional[dict[str, Any]]) -> bool:
+    """Whether score/rating/position are backed by rise/fall breadth (not index-only guess)."""
+    if not emotion:
+        return False
+    if emotion.get("insufficient_data") is True:
+        return False
+    up = int(emotion.get("up_count") or 0)
+    down = int(emotion.get("down_count") or 0)
+    return up + down > 0
+
+
+def emotion_data_basis(emotion: dict[str, Any]) -> str:
+    """Human-readable provenance for partial/degraded market-review inputs."""
+    parts: list[str] = []
+    if int(emotion.get("up_count") or 0) + int(emotion.get("down_count") or 0) > 0:
+        if emotion.get("breadth_source") == "xueqiu" or emotion.get("breadth_partial"):
+            parts.append("雪球沪深宽度")
+        elif emotion.get("breadth_degraded"):
+            parts.append("涨跌家数（降级）")
+        else:
+            parts.append("全A涨跌家数")
+    limit_src = str(emotion.get("limit_source") or "").strip()
+    if limit_src:
+        parts.append(f"涨跌停池({limit_src})")
+    elif int(emotion.get("limit_up") or 0) + int(emotion.get("limit_down") or 0) > 0:
+        parts.append("涨跌停统计")
+    return " + ".join(parts)
+
+
+def mark_emotion_data_quality(emotion: dict[str, Any]) -> dict[str, Any]:
+    """Attach insufficient_data / data_basis flags for close-card rendering."""
+    out = dict(emotion)
+    out["insufficient_data"] = (
+        int(out.get("up_count") or 0) + int(out.get("down_count") or 0) <= 0
+    )
+    basis = emotion_data_basis(out)
+    if basis:
+        out["data_basis"] = basis
+    return out
+
+
 def _pct(stock: dict[str, Any]) -> float:
     try:
         return float(stock.get("change_pct") or 0)

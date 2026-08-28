@@ -211,8 +211,10 @@ class TestMarketReviewFallback:
             }
         )
         assert "市场宽度数据拉取失败" not in md
+        assert "暂无仓位建议" in md
         assert "降级" in md or "不可用" in md
         assert "全市场复盘" in md
+        assert "建议仓位 **5成**" not in md
 
     @patch("agent_reach.daily_run.market_review._try_xueqiu_breadth_emotion")
     @patch("agent_reach.daily_run.eastmoney_market.fetch_all_stocks")
@@ -338,3 +340,54 @@ class TestMarketReviewFallback:
         assert "12" in md
         assert "akshare_limit_pools" in md
         assert "雪球宽度无此项" not in md
+
+    def test_render_partial_with_data_basis(self):
+        from agent_reach.daily_run.market_breadth_collector import analyze_emotion_from_counts
+        from agent_reach.daily_run.market_review import render_market_review_markdown
+
+        em = analyze_emotion_from_counts(3000, 1200, 80, {"net_yi": 5}).to_dict()
+        em["breadth_partial"] = True
+        em["breadth_source"] = "xueqiu"
+        em["limit_up"] = 79
+        em["limit_down"] = 12
+        em["broken_rate"] = 0.37
+        em["limit_source"] = "akshare_limit_pools"
+        md = render_market_review_markdown(
+            {
+                "date": "2026-08-20",
+                "emotion": em,
+                "sector_analysis": {"mainline_type": "多题材轮动", "reasoning": "test"},
+                "lhb_analysis": {},
+                "comparison": {},
+                "warnings": ["eastmoney clist: disconnected"],
+            }
+        )
+        assert "数据依据" in md
+        assert "雪球沪深宽度" in md
+        assert "建议仓位" in md
+
+    def test_render_limit_only_without_breadth_is_insufficient(self):
+        from agent_reach.daily_run.market_review import render_market_review_markdown
+
+        md = render_market_review_markdown(
+            {
+                "date": "2026-08-20",
+                "indices": {"sh000001": {"name": "上证指数", "change_pct": 0.5, "price": 3000}},
+                "emotion": {
+                    "score": 2,
+                    "rating": "中",
+                    "position": "5成",
+                    "limit_up": 82,
+                    "limit_down": 1,
+                    "limit_source": "akshare_limit_pools",
+                    "insufficient_data": True,
+                    "reasons": ["涨停 82 家，情绪火爆"],
+                },
+                "sector_analysis": {"mainline_type": "多题材轮动", "reasoning": "无涨停样本"},
+                "lhb_analysis": {},
+                "comparison": {},
+                "warnings": ["eastmoney clist: disconnected", "xueqiu breadth: timeout"],
+            }
+        )
+        assert "暂无仓位建议" in md
+        assert "建议仓位 **5成**" not in md
