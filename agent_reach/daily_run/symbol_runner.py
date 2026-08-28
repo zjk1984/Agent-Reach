@@ -604,25 +604,11 @@ def run_close_for_symbols(
     feishu_result = None
     if push and merge_push and section_groups:
         from agent_reach.config import Config
-
-        merged = merge_sections_by_category(
-            section_groups,
-            report_kind="close",
-            expert_snapshots=expert_snapshots or None,
-            decision_entries=None,
+        from agent_reach.daily_run.close_cards import (
+            build_merged_close_card_context,
+            close_card_layout_enabled,
+            render_close_card_sections,
         )
-        sections_retitle_done = False
-        if symbol_results:
-            from agent_reach.daily_run.report_push import append_merged_xueqiu_hot_section
-
-            primary_snap = symbol_results[0]["result"]["snapshot"]
-            merged = append_merged_xueqiu_hot_section(
-                merged,
-                primary_snap.get("macro_signals"),
-                report_kind="close",
-                symbol_count=len(symbol_results),
-            )
-            sections_retitle_done = True
         from agent_reach.daily_run.close_portfolio_summary import (
             apply_portfolio_cash_reconcile,
             build_close_portfolio_summary,
@@ -639,6 +625,28 @@ def run_close_for_symbols(
             collect_intraday_sold_codes,
             is_watchlist_adjust_enabled,
         )
+
+        use_six_cards = close_card_layout_enabled(cfg)
+        merged: list[ReportSection] = []
+        sections_retitle_done = False
+        if not use_six_cards:
+            merged = merge_sections_by_category(
+                section_groups,
+                report_kind="close",
+                expert_snapshots=expert_snapshots or None,
+                decision_entries=None,
+            )
+            if symbol_results:
+                from agent_reach.daily_run.report_push import append_merged_xueqiu_hot_section
+
+                primary_snap = symbol_results[0]["result"]["snapshot"]
+                merged = append_merged_xueqiu_hot_section(
+                    merged,
+                    primary_snap.get("macro_signals"),
+                    report_kind="close",
+                    symbol_count=len(symbol_results),
+                )
+                sections_retitle_done = True
 
         try:
             morning_bl = load_morning_baseline()
@@ -733,6 +741,8 @@ def run_close_for_symbols(
         portfolio_summary_obj.buy_rules_whatif = buy_rules_whatif
         portfolio_summary_obj.intraday_friction_whatif = intraday_friction_whatif
         portfolio_summary_obj.intraday_sell_whatif = intraday_sell_whatif
+
+        technical_watch_result: dict[str, Any] = {}
         try:
             from agent_reach.daily_run.technical_scenario_watch import run_close_technical_watch
 
@@ -744,7 +754,9 @@ def run_close_for_symbols(
                 render=True,
             )
             technical_watch_md = technical_watch_result.get("markdown") or ""
-            if technical_watch_md.strip():
+            symbol_results[0]["result"]["technical_watch_markdown"] = technical_watch_md
+            symbol_results[0]["result"]["technical_watch"] = technical_watch_result
+            if not use_six_cards and technical_watch_md.strip():
                 merged.append(
                     ReportSection(
                         category="technical_watch",
@@ -752,11 +764,10 @@ def run_close_for_symbols(
                         body=technical_watch_md.strip(),
                     )
                 )
-                symbol_results[0]["result"]["technical_watch_markdown"] = technical_watch_md
-                symbol_results[0]["result"]["technical_watch"] = technical_watch_result
                 sections_retitle_done = False
         except Exception:
             pass
+
         portfolio_md = render_close_portfolio_markdown(
             portfolio_summary_obj,
             sell_rules_whatif=sell_rules_whatif,
@@ -764,13 +775,15 @@ def run_close_for_symbols(
             intraday_friction_whatif=intraday_friction_whatif,
             intraday_sell_whatif=intraday_sell_whatif,
         )
-        if portfolio_md.strip():
+        if not use_six_cards and portfolio_md.strip():
             bmd = (berkshire_close or {}).get("markdown") or ""
             if bmd.strip():
                 portfolio_md = portfolio_md.rstrip() + "\n\n---\n\n" + bmd.strip()
             merged.append(
                 ReportSection(category="daily_portfolio", title="", body=portfolio_md.strip())
             )
+
+        narrative: dict[str, Any] = {"skipped": True}
         if defer_harness_layer_b and symbol_results:
             from agent_reach.daily_run.workflows import (
                 _finalize_close_harness,
@@ -785,7 +798,7 @@ def run_close_for_symbols(
                 settings=cfg,
             )
             symbol_results[0]["result"]["harness"] = harness_result
-            if _harness_push_summary_enabled(cfg, report_kind="close"):
+            if not use_six_cards and _harness_push_summary_enabled(cfg, report_kind="close"):
                 from agent_reach.daily_run.report_push import append_merged_harness_section
 
                 harness_md = _finalize_close_harness(
@@ -800,30 +813,17 @@ def run_close_for_symbols(
                     symbol_count=len(symbol_results),
                 )
                 sections_retitle_done = True
-            else:
-                sections_retitle_done = False
-        else:
-            sections_retitle_done = False
+
         if defer_narrative and symbol_results:
             from agent_reach.daily_run.report_narrative import generate_merged_close_narrative
             from agent_reach.daily_run.report_push import append_merged_narrative_section
 
             primary_inner = symbol_results[0]["result"]
-            portfolio_summary_dict = None
-            if portfolio_md.strip():
-                portfolio_summary_dict = build_close_portfolio_summary(
-                    primary_snap,
-                    morning_bl,
-                    trades=ledger_trades,
-                    intraday_trades=merged_intraday_trades,
-                    watchlist_adjust=wl_result.to_dict() if wl_result else None,
-                    settings=cfg,
-                ).to_dict()
+            portfolio_summary_dict = portfolio_summary_obj.to_dict()
             curve_payload = primary_inner.get("curve")
             if curve_payload is not None and hasattr(curve_payload, "to_dict"):
                 curve_payload = curve_payload.to_dict()
             harness_result = (primary_inner.get("harness") or {}) if defer_harness_layer_b else {}
-            primary_snap = symbol_results[0]["result"]["snapshot"]
             narrative = generate_merged_close_narrative(
                 symbol_results,
                 portfolio_summary=portfolio_summary_dict,
@@ -833,15 +833,34 @@ def run_close_for_symbols(
                 macro_signals=primary_snap.get("macro_signals"),
                 settings=cfg,
             )
-            merged = append_merged_narrative_section(
-                merged,
-                narrative,
-                report_kind="close",
-                symbol_count=len(symbol_results),
-            )
             symbol_results[0]["result"]["llm_narrative"] = narrative
+            if not use_six_cards:
+                merged = append_merged_narrative_section(
+                    merged,
+                    narrative,
+                    report_kind="close",
+                    symbol_count=len(symbol_results),
+                )
+                sections_retitle_done = True
+
+        if use_six_cards:
+            primary_inner = symbol_results[0]["result"]
+            merged = render_close_card_sections(
+                build_merged_close_card_context(
+                    symbol_results=symbol_results,
+                    portfolio_summary=portfolio_summary_obj.to_dict(),
+                    primary_snapshot=primary_snap,
+                    market_review=primary_inner.get("market_review"),
+                    forecast_review=primary_inner.get("forecast_review"),
+                    technical_watch=technical_watch_result,
+                    research_results=primary_inner.get("research") or [],
+                    improvements=primary_inner.get("close_improvements"),
+                    narrative=narrative if not narrative.get("skipped") else None,
+                    settings=cfg,
+                )
+            )
             sections_retitle_done = True
-        if not sections_retitle_done and merged:
+        elif not sections_retitle_done and merged:
             total = len(merged)
             for i, sec in enumerate(merged, start=1):
                 sec.title = merged_category_title(

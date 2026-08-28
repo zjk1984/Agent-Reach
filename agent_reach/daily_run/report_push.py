@@ -39,6 +39,12 @@ _CATEGORY_LABELS: dict[str, str] = {
     "watchlist_adjust": "观察池调整",
     "code_review": "代码走读",
     "forecast_review": "预测回顾",
+    "close_summary": "📊 收盘摘要",
+    "holdings_detail": "📈 持仓详情",
+    "forecast_verify": "🔮 预测验证",
+    "key_signals": "⚠️ 关键信号",
+    "hot_research": "🔥 热点与调研",
+    "tomorrow_focus": "📋 明日关注",
     "close_improvements": "改进建议",
     "technical_watch": "技术情景",
 }

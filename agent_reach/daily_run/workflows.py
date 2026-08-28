@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from agent_reach.daily_run.close_cards import close_card_layout_enabled
 from agent_reach.daily_run.pipeline import evaluate_snapshot, render_symbol_decision_markdown
 from agent_reach.daily_run.report_push import (
     push_report_sections,
@@ -1114,7 +1115,32 @@ def run_close(
         from agent_reach.config import Config
 
         cfg_obj = config or Config()
-        sections = render_close_sections(
+        if close_card_layout_enabled(cfg):
+            from agent_reach.daily_run.close_cards import (
+                build_single_close_card_context,
+                render_close_card_sections,
+            )
+
+            sections = render_close_card_sections(
+                build_single_close_card_context(
+                    {
+                        "snapshot": enriched,
+                        "verify": verify_dict,
+                        "portfolio_summary": portfolio_summary_obj.to_dict()
+                        if portfolio_summary_obj
+                        else None,
+                        "market_review": market_review_obj,
+                        "forecast_review": forecast_review.to_dict() if forecast_review else None,
+                        "technical_watch": technical_watch_result,
+                        "research": research_results,
+                        "close_improvements": improvements.to_dict() if improvements else None,
+                        "llm_narrative": close_narrative,
+                    },
+                    settings=cfg,
+                )
+            )
+        else:
+            sections = render_close_sections(
             verify_name=verify.name or verify.code or "大盘",
             market_markdown=market_review_md,
             team_markdown=team_md,
@@ -1173,6 +1199,7 @@ def run_close(
         "code_review_markdown": cr_md,
         "forecast_review_markdown": forecast_review_md,
         "close_improvements_markdown": improvements_md,
+        "close_improvements": improvements.to_dict() if improvements else None,
         "technical_watch_markdown": technical_watch_md,
         "technical_watch": technical_watch_result,
         "llm_narrative": close_narrative,
