@@ -267,3 +267,114 @@ def test_profit_lock_harness_evolve_on_sell_late_phrase():
     policy = resolve_harness_profit_lock_policy(state, settings=settings)
     assert policy["min_intraday_gain_pct"] == 3.0
     assert policy["sell_ratio"] == 0.40
+
+
+def test_profit_lock_harness_miss_on_holding():
+    from agent_reach.daily_run.profit_lock import profit_lock_harness_evidence
+
+    settings = {
+        "intraday": {
+            "profit_lock": {
+                "enabled": True,
+                "min_intraday_gain_pct": 4.0,
+                "min_position_20d": 0.70,
+                "min_unrealized_gain_pct": 3.0,
+                "sell_ratio": 0.30,
+            }
+        }
+    }
+    lines = profit_lock_harness_evidence(
+        settings,
+        code="300308",
+        name="中际旭创",
+        scan_id="S5",
+        snapshot={
+            "code": "300308",
+            "price": 915.88,
+            "change_pct": 5.74,
+            "position_20d": 0.92,
+            "portfolio": {
+                "holdings": [
+                    {
+                        "code": "300308",
+                        "shares": 300,
+                        "cost": 820.0,
+                        "price": 915.88,
+                        "change_pct": 5.74,
+                        "position_20d": 0.92,
+                    }
+                ]
+            },
+        },
+        decision={"action": "hold", "trend": "mixed", "reasoning": "维持观望"},
+        prior_trades=[],
+        session_scans=[{"scan_id": "S4", "code": "300308", "price": 896.74}],
+    )
+    assert any("卖晚了" in item for item in lines["memory"])
+    assert any("profit_lock" in item for item in lines["policy"])
+
+
+def test_profit_lock_harness_watchlist_high_position():
+    from agent_reach.daily_run.profit_lock import profit_lock_harness_evidence
+
+    settings = {"intraday": {"profit_lock": {"enabled": True}}}
+    lines = profit_lock_harness_evidence(
+        settings,
+        code="300308",
+        name="中际旭创",
+        scan_id="S5",
+        snapshot={
+            "code": "300308",
+            "change_pct": 5.74,
+            "position_20d": 0.92,
+            "portfolio": {"watchlist": [{"code": "300308"}], "holdings": []},
+        },
+    )
+    assert any("观察池高位" in item for item in lines["playbook"])
+
+
+def test_intraday_harness_writes_sell_late_memory():
+    from agent_reach.daily_run.intraday_harness import intraday_to_harness_evidence
+
+    ev = intraday_to_harness_evidence(
+        {
+            "scan": {
+                "scan": {
+                    "scan_id": "S5",
+                    "code": "300308",
+                    "name": "中际旭创",
+                    "mss_final": 51.0,
+                },
+                "enriched": {
+                    "code": "300308",
+                    "name": "中际旭创",
+                    "price": 915.88,
+                    "change_pct": 5.74,
+                    "position_20d": 0.92,
+                    "portfolio": {
+                        "holdings": [
+                            {
+                                "code": "300308",
+                                "shares": 300,
+                                "cost": 820.0,
+                                "price": 915.88,
+                                "change_pct": 5.74,
+                                "position_20d": 0.92,
+                            }
+                        ]
+                    },
+                },
+                "state": {"scans": [{"scan_id": "S4", "code": "300308", "price": 896.74}], "trades": []},
+            },
+            "trade": {
+                "decision": {
+                    "action": "hold",
+                    "trend": "mixed",
+                    "reasoning": "Lookback MSS 51，趋势 mixed，维持观望",
+                }
+            },
+        },
+        settings={"intraday": {"profit_lock": {"enabled": True}}},
+    )
+    assert any("卖晚了" in item for item in ev["memory"])
+    assert any("profit_lock" in item for item in ev["policy"])

@@ -366,6 +366,8 @@ def _apply_scheduled_job_harness(
                 harness_ref = apply_intraday_harness_refinement(result, settings=settings)
             else:
                 run_result = result.get("result") or {}
+                if not run_result and result.get("symbol_results"):
+                    run_result = result
                 harness_ref = (
                     apply_intraday_harness_refinement(run_result, settings=settings)
                     if run_result

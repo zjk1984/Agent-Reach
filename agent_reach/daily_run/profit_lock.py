@@ -215,3 +215,106 @@ def profit_lock_effective_sell_ratio(
     if sell_ratio_override is not None:
         return min(float(base_ratio), float(sell_ratio_override))
     return min(float(base_ratio), profit_lock_policy_default(settings, "sell_ratio"))
+
+
+def profit_lock_harness_evidence(
+    settings: dict[str, Any],
+    *,
+    code: str,
+    name: str,
+    scan_id: str,
+    snapshot: dict[str, Any],
+    decision: Optional[dict[str, Any]] = None,
+    prior_trades: Optional[list[dict[str, Any]]] = None,
+    session_scans: Optional[list[dict[str, Any]]] = None,
+) -> dict[str, list[str]]:
+    """Build harness memory/policy/playbook lines for profit-lock hits and misses."""
+    memory: list[str] = []
+    policy: list[str] = []
+    playbook: list[str] = []
+    cfg = profit_lock_cfg(settings)
+    if not cfg.get("enabled", True):
+        return {"memory": memory, "policy": policy, "playbook": playbook}
+
+    decision = dict(decision or {})
+    action = str(decision.get("action") or "")
+    sell_kind = decision.get("sell_kind")
+    block_kind = str(decision.get("block_kind") or "")
+    reasoning = str(decision.get("reasoning") or "")
+
+    report = {"code": code, "name": name}
+    allow, block_reason, ratio = evaluate_profit_lock_sell(
+        settings,
+        report=report,
+        snapshot=snapshot,
+        prior_trades=prior_trades,
+        session_scans=session_scans,
+    )
+
+    if allow and action == "sell" and sell_kind == "profit_lock":
+        playbook.append(
+            f"动态止盈：{name}({code}) {scan_id} 高位减仓 sell_ratio={float(ratio or 0):.0%}"
+        )
+        return {"memory": memory, "policy": policy, "playbook": playbook}
+
+    if allow and action != "sell":
+        chg = _symbol_field(snapshot, code, "change_pct")
+        chg_s = f"{float(chg):+.1f}%" if chg is not None else "高位"
+        memory.append(
+            f"卖晚了：{name}({code}) 盘中 {chg_s} 已触发动态止盈条件但决策为 {action or 'none'}"
+        )
+        policy.append(
+            f"profit_lock：{name} 阈值已满足未 sell，下日 harness 收紧 min_intraday_gain_pct"
+        )
+        return {"memory": memory, "policy": policy, "playbook": playbook}
+
+    if block_kind == "sell_profit_lock" and block_reason and "今日已执行" in block_reason:
+        return {"memory": memory, "policy": policy, "playbook": playbook}
+
+    holding = _holding_for_code(snapshot, code)
+    change_pct = _symbol_field(snapshot, code, "change_pct", holding=holding)
+    position_20d = _symbol_field(snapshot, code, "position_20d", holding=holding)
+    price = _symbol_field(snapshot, code, "price", holding=holding)
+    min_gain = float(cfg.get("min_intraday_gain_pct", 4.0))
+    min_pos = float(cfg.get("min_position_20d", 0.70))
+
+    if change_pct is None or change_pct < min_gain:
+        return {"memory": memory, "policy": policy, "playbook": playbook}
+    if position_20d is None or position_20d < min_pos:
+        return {"memory": memory, "policy": policy, "playbook": playbook}
+
+    if holding is None:
+        playbook.append(
+            f"观察池高位：{name}({code}) 盘中 {change_pct:+.1f}% 20日位置 {position_20d:.0%}，"
+            f"持仓时应 profit_lock 锁利"
+        )
+        return {"memory": memory, "policy": policy, "playbook": playbook}
+
+    if profit_lock_already_applied(prior_trades, code):
+        return {"memory": memory, "policy": policy, "playbook": playbook}
+
+    if action == "sell" and sell_kind == "profit_lock":
+        return {"memory": memory, "policy": policy, "playbook": playbook}
+
+    pullback_note = ""
+    session_high = _session_high_price(session_scans, code, current_price=price)
+    if session_high and price and session_high > float(price):
+        drop_pct = (float(session_high) - float(price)) / float(session_high) * 100.0
+        if drop_pct >= float(cfg.get("pullback_from_high_pct", 1.5)) * 0.5:
+            pullback_note = f"，自日内高点 {session_high:.2f} 回落 {drop_pct:.1f}%"
+
+    blocked_note = ""
+    if "动态止盈信号触发，但" in reasoning:
+        blocked_note = "（风控/锁仓阻断）"
+    elif block_kind == "sell_deep_loss":
+        blocked_note = "（深亏覆盖不足阻断）"
+
+    memory.append(
+        f"卖晚了：{name}({code}) 盘中 {change_pct:+.1f}% 20日位置 {position_20d:.0%}"
+        f"{pullback_note} 未动态止盈{blocked_note}（{scan_id} decision={action or 'none'}）"
+    )
+    policy.append(
+        "profit_lock：高位未及时减仓，下日 harness 收紧 min_intraday_gain_pct / 提高 sell_ratio"
+    )
+    return {"memory": memory, "policy": policy, "playbook": playbook}
+
