@@ -60,6 +60,16 @@
       "block_sell_in_recovery_zone": true,
       "persist_macro_warming_intraday": true
     },
+    "profit_lock": {
+      "enabled": true,
+      "min_intraday_gain_pct": 4.0,
+      "min_position_20d": 0.70,
+      "min_unrealized_gain_pct": 3.0,
+      "sell_ratio": 0.30,
+      "pullback_from_high_pct": 1.5,
+      "trigger_mode": "threshold",
+      "once_per_symbol_per_day": true
+    },
     "rebound": {
       "mode": "harness",
       "enabled": true,

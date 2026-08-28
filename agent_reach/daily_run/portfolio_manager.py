@@ -776,6 +776,32 @@ def _apply_sell(
     if not sell_analysis["allowed"]:
         return ApplyResult(applied=False, portfolio=pf, message=str(sell_analysis["block_reason"]))
 
+    sell_ratio_override = None
+    sell_kind = None
+    if hasattr(decision, "sell_ratio_override"):
+        sell_ratio_override = getattr(decision, "sell_ratio_override", None)
+        sell_kind = getattr(decision, "sell_kind", None)
+    elif isinstance(decision, dict):
+        sell_ratio_override = decision.get("sell_ratio_override")
+        sell_kind = decision.get("sell_kind")
+    if sell_kind == "profit_lock" and sell_ratio_override is not None:
+        from agent_reach.daily_run.profit_lock import profit_lock_effective_sell_ratio
+
+        effective_ratio = profit_lock_effective_sell_ratio(
+            settings,
+            base_ratio=float(sell_analysis.get("sell_ratio") or 1.0),
+            sell_ratio_override=sell_ratio_override,
+        )
+        code_norm = _normalize_code(str(target.get("code") or ""))
+        sell_shares = resolve_deep_loss_sell_shares(
+            min(int(target.get("shares") or 0), sellable),
+            code_norm,
+            settings,
+            is_deep_loss=bool(sell_analysis.get("is_deep_loss")),
+            sell_ratio_override=effective_ratio,
+        )
+        sell_analysis = {**sell_analysis, "sell_ratio": effective_ratio, "sell_shares": sell_shares}
+
     shares = min(int(sell_analysis["sell_shares"] or 0), sellable)
     # Ceiling for lot rounding is `sellable`, not the raw holding total: T+1-locked
     # shares (today_buy_shares) must never be pulled in when rounding a partial
@@ -819,7 +845,9 @@ def _apply_sell(
 
     sell_note = ""
     sell_ratio = float(sell_analysis.get("sell_ratio") or 1.0)
-    if sell_ratio < 0.999:
+    if sell_kind == "profit_lock" and sell_ratio < 0.999:
+        sell_note = f"（动态止盈 sell_ratio={sell_ratio:.0%}）"
+    elif sell_ratio < 0.999:
         label = "深度套牢分批" if sell_analysis.get("is_deep_loss") else "非深亏分批"
         sell_note = f"（{label} sell_ratio={sell_ratio:.0%}）"
     holding_cost = float(target.get("cost") or 0)

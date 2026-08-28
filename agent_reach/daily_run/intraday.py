@@ -204,6 +204,7 @@ TRADE_BLOCK_MESSAGES: dict[str, str] = {
     "sell_defensive_trim": (
         "⚠️ **风控阻断：** Lookback 已进入回暖区，记忆驱动防御减仓暂缓，维持观望"
     ),
+    "sell_profit_lock": "⚠️ **风控阻断：** 动态止盈条件未满足或今日已执行，维持观望",
 }
 
 
@@ -220,6 +221,8 @@ class TradeDecision:
     friction_blocked: bool = False
     expected_return_pct: Optional[float] = None
     evaluation: Optional[dict[str, Any]] = None
+    sell_kind: Optional[str] = None
+    sell_ratio_override: Optional[float] = None
 
     def to_dict(self) -> dict[str, Any]:
         payload = {
@@ -235,6 +238,10 @@ class TradeDecision:
         }
         if self.block_kind:
             payload["block_kind"] = self.block_kind
+        if self.sell_kind:
+            payload["sell_kind"] = self.sell_kind
+        if self.sell_ratio_override is not None:
+            payload["sell_ratio_override"] = self.sell_ratio_override
         return payload
 
 
@@ -695,6 +702,7 @@ def evaluate_trade(
         trade_index=len(st.trades) + 1,
         expected_return_pct=expected_return_pct,
         prior_trades=st.trades,
+        session_scans=st.scans,
     )
 
     symbol_code = str(report.get("code") or "")
@@ -1122,6 +1130,7 @@ def _decide_trade(
     trade_index: int,
     expected_return_pct: Optional[float],
     prior_trades: Optional[list[dict[str, Any]]] = None,
+    session_scans: Optional[list[dict[str, Any]]] = None,
 ) -> TradeDecision:
     trading = settings.get("trading", {})
     macro_veto = macro_veto_default(settings)
@@ -1343,6 +1352,58 @@ def _decide_trade(
             trend=trend,
             reasoning=f"Lookback MSS {lookback_mss:.0f} ≥ {aggressive:.0f} 且趋势 {trend}，条件性建仓{overlay_note}",
             blocked=False,
+            friction_blocked=False,
+            expected_return_pct=exp_ret,
+        )
+
+    from agent_reach.daily_run.profit_lock import evaluate_profit_lock_sell
+
+    allow_profit, profit_block, profit_ratio = evaluate_profit_lock_sell(
+        settings,
+        report=report,
+        snapshot=snapshot,
+        prior_trades=prior_trades,
+        session_scans=session_scans,
+    )
+    if allow_profit:
+        if _decision_symbol_sellable(snapshot, settings, report.get("code")):
+            return TradeDecision(
+                action="sell",
+                trade_id=trade_id,
+                lookback_mss=lookback_mss,
+                lookback_detail=[],
+                trend=trend,
+                reasoning=f"{profit_block}{overlay_note}",
+                blocked=False,
+                friction_blocked=False,
+                expected_return_pct=exp_ret,
+                sell_kind="profit_lock",
+                sell_ratio_override=profit_ratio,
+            )
+        deep_loss_reason = _deep_loss_sell_block_reason(snapshot, settings, report.get("code"))
+        if deep_loss_reason:
+            return TradeDecision(
+                action="hold",
+                trade_id=trade_id,
+                lookback_mss=lookback_mss,
+                lookback_detail=[],
+                trend=trend,
+                reasoning=f"动态止盈信号触发，但{deep_loss_reason}{overlay_note}",
+                blocked=True,
+                block_kind="sell_deep_loss",
+                friction_blocked=False,
+                expected_return_pct=exp_ret,
+            )
+    elif profit_block:
+        return TradeDecision(
+            action="hold",
+            trade_id=trade_id,
+            lookback_mss=lookback_mss,
+            lookback_detail=[],
+            trend=trend,
+            reasoning=f"{profit_block}{overlay_note}",
+            blocked=True,
+            block_kind="sell_profit_lock",
             friction_blocked=False,
             expected_return_pct=exp_ret,
         )
