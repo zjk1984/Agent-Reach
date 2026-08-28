@@ -42,6 +42,7 @@ class ClosePortfolioSummary:
     stock_pnl: Optional[float] = None
     cash_pnl: Optional[float] = None
     stock_ratio: Optional[float] = None
+    position_ratio_estimated: bool = False
     holdings_count: int = 0
     watchlist_count: int = 0
     max_weight_pct: Optional[float] = None
@@ -91,6 +92,7 @@ class ClosePortfolioSummary:
             "stock_pnl": self.stock_pnl,
             "cash_pnl": self.cash_pnl,
             "stock_ratio": self.stock_ratio,
+            "position_ratio_estimated": self.position_ratio_estimated,
             "holdings_count": self.holdings_count,
             "watchlist_count": self.watchlist_count,
             "max_weight_pct": self.max_weight_pct,
@@ -807,6 +809,36 @@ def _attach_weights(holdings: list[dict[str, Any]], end_total: Optional[float]) 
     return out
 
 
+def _close_position_ratios(
+    *,
+    end_total: Optional[float],
+    end_stock_mv: float,
+    end_cash: Optional[float],
+    portfolio_cash_ratio: Optional[float],
+    has_holdings: bool,
+) -> tuple[Optional[float], Optional[float], bool]:
+    """Derive stock/cash split from computed close NAV, not stale portfolio.cash_ratio."""
+    gross_estimate = False
+    if end_total is not None and end_total > 0 and end_cash is not None:
+        return (
+            round(end_stock_mv / end_total, 4),
+            round(end_cash / end_total, 4),
+            False,
+        )
+    if has_holdings and end_stock_mv > 0 and end_cash is not None:
+        gross = end_stock_mv + abs(float(end_cash))
+        if gross > 0:
+            return (
+                round(end_stock_mv / gross, 4),
+                round(abs(float(end_cash)) / gross, 4),
+                True,
+            )
+    if portfolio_cash_ratio is not None and not has_holdings:
+        cr = float(portfolio_cash_ratio)
+        return round(1 - cr, 4), cr, False
+    return None, None, gross_estimate
+
+
 def _build_reason_lines(data: dict[str, Any]) -> list[str]:
     lines: list[str] = []
     pnl = data.get("daily_pnl")
@@ -1120,12 +1152,18 @@ def build_close_portfolio_summary(
     wl_changes = _watchlist_changes_from_adjust(watchlist_adjust)
 
     cash = end_cash
-    cash_ratio = close_pf.get("cash_ratio")
-    if cash_ratio is not None:
-        cash_ratio = float(cash_ratio)
-
+    portfolio_cash_ratio_raw = close_pf.get("cash_ratio")
+    portfolio_cash_ratio = (
+        float(portfolio_cash_ratio_raw) if portfolio_cash_ratio_raw is not None else None
+    )
+    stock_ratio, cash_ratio, position_ratio_estimated = _close_position_ratios(
+        end_total=end_total,
+        end_stock_mv=end_stock_mv,
+        end_cash=end_cash,
+        portfolio_cash_ratio=portfolio_cash_ratio,
+        has_holdings=bool(holdings),
+    )
     stock_mv = end_stock_mv if holdings else None
-    stock_ratio = round(1 - float(cash_ratio), 4) if cash_ratio is not None else None
 
     summary = ClosePortfolioSummary(
         as_of=day.isoformat(),
@@ -1143,6 +1181,7 @@ def build_close_portfolio_summary(
         stock_pnl=stock_pnl,
         cash_pnl=cash_pnl,
         stock_ratio=stock_ratio,
+        position_ratio_estimated=position_ratio_estimated,
         holdings_count=len(holdings),
         watchlist_count=len(watchlist),
         max_weight_pct=max_weight,
@@ -1243,9 +1282,12 @@ def render_close_portfolio_markdown(
     stock_ratio = data.get("stock_ratio")
     cash_ratio = data.get("cash_ratio")
     if stock_ratio is not None and cash_ratio is not None:
-        lines.append(
+        ratio_line = (
             f"- 仓位：股票 **{float(stock_ratio):.1%}** / 现金 **{float(cash_ratio):.1%}**"
         )
+        if data.get("position_ratio_estimated"):
+            ratio_line += "（净值≤0，按持仓市值/现金规模估算）"
+        lines.append(ratio_line)
     deploy_budget_line = data.get("deploy_budget_line")
     if deploy_budget_line:
         lines.append(str(deploy_budget_line))
