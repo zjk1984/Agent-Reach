@@ -94,6 +94,14 @@
         "recovery_turnover_multiplier": 1.5,
         "recovery_volume_ratio": 1.0,
         "shrink_turnover_multiplier": 0.85
+      },
+      "mss_trend": {
+        "enabled": true,
+        "warning_level": 50.0,
+        "bearish_level": 45.0,
+        "bullish_level": 55.0,
+        "scan_id": "S12",
+        "scope": "holdings"
       }
     },
     "rebound": {

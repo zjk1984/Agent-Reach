@@ -13,10 +13,14 @@ from agent_reach.daily_run.snapshot_builder import _normalize_code
 from agent_reach.daily_run.trade_calendar import next_trading_day, today_shanghai
 
 
+SYSTEM_MSS_CODE = "SYSTEM"
+
+
 def technical_watch_cfg(settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     block = dict((settings or {}).get("technical_watch") or {})
     shrink = dict(block.get("limit_up_shrink_pullback") or {})
     liquidity = dict(block.get("liquidity_shrink") or {})
+    mss_trend = dict(block.get("mss_trend") or {})
     return {
         "enabled": block.get("enabled", True),
         "min_upper_shadow_ratio": float(block.get("min_upper_shadow_ratio", 0.35)),
@@ -42,7 +46,19 @@ def technical_watch_cfg(settings: Optional[dict[str, Any]] = None) -> dict[str, 
             "recovery_volume_ratio": float(liquidity.get("recovery_volume_ratio", 1.0)),
             "shrink_turnover_multiplier": float(liquidity.get("shrink_turnover_multiplier", 0.85)),
         },
+        "mss_trend": {
+            "enabled": mss_trend.get("enabled", True),
+            "warning_level": float(mss_trend.get("warning_level", 50.0)),
+            "bearish_level": float(mss_trend.get("bearish_level", 45.0)),
+            "bullish_level": float(mss_trend.get("bullish_level", 55.0)),
+            "scan_id": str(mss_trend.get("scan_id", "S12")),
+            "scope": str(mss_trend.get("scope", "holdings")),
+        },
     }
+
+
+def _is_system_scenario(row: dict[str, Any]) -> bool:
+    return str(row.get("code") or "").upper() == SYSTEM_MSS_CODE
 
 
 def default_scenarios_path() -> Path:
@@ -315,6 +331,153 @@ def register_liquidity_shrink_scenario(
     )
 
 
+def collect_scan_mss_range(
+    symbols: list[str],
+    *,
+    scan_id: str = "S12",
+    settings: Optional[dict[str, Any]] = None,
+) -> tuple[Optional[float], Optional[float], str]:
+    """Return min/max MSS at a scan id across symbols (fallback: last scan)."""
+    from agent_reach.daily_run.intraday import load_state
+
+    wanted = str(scan_id or "S12")
+    values: list[float] = []
+    used_scan = wanted
+    for code in symbols:
+        norm = _normalize_code(code)
+        if not norm:
+            continue
+        state = load_state(code=norm)
+        scans = list(state.scans or [])
+        matched = next((s for s in scans if str(s.get("scan_id") or "") == wanted), None)
+        if matched is None and scans:
+            matched = scans[-1]
+            used_scan = str(matched.get("scan_id") or wanted)
+        if not matched:
+            continue
+        mss = matched.get("mss_final")
+        if mss is None:
+            continue
+        try:
+            values.append(float(mss))
+        except (TypeError, ValueError):
+            pass
+    if not values:
+        return None, None, used_scan
+    return round(min(values), 2), round(max(values), 2), used_scan
+
+
+def register_mss_trend_scenario(
+    *,
+    setup_date: str,
+    mss_low: float,
+    mss_high: float,
+    mss_scan_id: str = "S12",
+    warning_level: float = 50.0,
+    bearish_level: float = 45.0,
+    bullish_level: float = 55.0,
+    settings: Optional[dict[str, Any]] = None,
+    path: Optional[Path] = None,
+    note: str = "",
+) -> dict[str, Any]:
+    """Persist portfolio MSS trend follow-up (system-level scenario)."""
+    setup = date.fromisoformat(str(setup_date)[:10])
+    eval_from, eval_until = _eval_window(setup.isoformat(), settings=settings)
+    scenario = {
+        "scenario_type": "mss_trend",
+        "code": SYSTEM_MSS_CODE,
+        "name": "量化系统MSS",
+        "setup_date": setup.isoformat(),
+        "eval_from": eval_from,
+        "eval_until": eval_until,
+        "mss_scan_id": str(mss_scan_id or "S12"),
+        "setup_mss_low": round(float(mss_low), 2),
+        "setup_mss_high": round(float(mss_high), 2),
+        "warning_level": round(float(warning_level), 2),
+        "bearish": {
+            "condition": "mss_below_bearish",
+            "level": round(float(bearish_level), 2),
+            "label": f"MSS 继续下行至 {bearish_level:.0f} 以下，触发更深层防御",
+        },
+        "bullish": {
+            "condition": "mss_above_bullish",
+            "level": round(float(bullish_level), 2),
+            "label": f"MSS 反弹回 {bullish_level:.0f} 以上，防御解除",
+        },
+        "status": "pending",
+        "note": note.strip(),
+    }
+    return _save_scenario_row(
+        scenario,
+        path=path,
+        l2_title="量化系统 MSS 走向",
+        l2_content=(
+            f"{mss_scan_id} MSS {mss_low:.1f}~{mss_high:.1f} 跌破 {warning_level:.0f}；"
+            f"周一<{bearish_level:.0f} 深层防御 / >{bullish_level:.0f} 防御解除"
+        ),
+    )
+
+
+def maybe_register_mss_trend_from_session(
+    *,
+    symbols: list[str],
+    settings: Optional[dict[str, Any]] = None,
+    setup_date: Optional[str] = None,
+    path: Optional[Path] = None,
+) -> Optional[dict[str, Any]]:
+    cfg = technical_watch_cfg(settings)
+    mss_cfg = cfg["mss_trend"]
+    if not cfg.get("enabled", True) or not mss_cfg.get("enabled", True):
+        return None
+
+    from agent_reach.daily_run.symbols import list_target_symbols, portfolio_from_snapshot
+
+    scope = str(mss_cfg.get("scope") or "holdings")
+    if scope == "holdings":
+        pf_codes = list_target_symbols(
+            {"holdings": [{"code": c} for c in symbols], "watchlist": []},
+            mode="holdings",
+        )
+        target_codes = pf_codes
+    else:
+        target_codes = list(symbols)
+    if not target_codes:
+        return None
+
+    scan_id = str(mss_cfg.get("scan_id") or "S12")
+    mss_low, mss_high, used_scan = collect_scan_mss_range(
+        target_codes,
+        scan_id=scan_id,
+        settings=settings,
+    )
+    if mss_low is None or mss_high is None:
+        return None
+
+    warning = float(mss_cfg["warning_level"])
+    if mss_low >= warning:
+        return None
+
+    bearish = float(mss_cfg["bearish_level"])
+    bullish = float(mss_cfg["bullish_level"])
+    day = setup_date or today_shanghai().isoformat()
+    return register_mss_trend_scenario(
+        setup_date=day,
+        mss_low=mss_low,
+        mss_high=mss_high,
+        mss_scan_id=used_scan,
+        warning_level=warning,
+        bearish_level=bearish,
+        bullish_level=bullish,
+        settings=settings,
+        path=path,
+        note=(
+            f"今日 MSS 已跌破 {warning:.0f}（{used_scan}: {mss_low:.1f}~{mss_high:.1f}）；"
+            f"若下周一继续下行至 {bearish:.0f} 以下可能触发更深层防御，"
+            f"反弹回 {bullish:.0f} 以上则防御解除"
+        ),
+    )
+
+
 def _session_stats(
     session_scans: Optional[list[dict[str, Any]]],
     snapshot: dict[str, Any],
@@ -577,8 +740,10 @@ def _active_scenarios(
             continue
         if day < eval_from or day > eval_until:
             continue
-        if code and _normalize_code(str(row.get("code") or "")) != _normalize_code(code):
-            continue
+        if code and not _is_system_scenario(row):
+            row_code = _normalize_code(str(row.get("code") or ""))
+            if row_code != _normalize_code(code):
+                continue
         out.append(row)
     return out
 
@@ -586,11 +751,12 @@ def _active_scenarios(
 def evaluate_scenario(
     scenario: dict[str, Any],
     *,
-    price: Optional[float],
+    price: Optional[float] = None,
     change_pct: Optional[float] = None,
     open_price: Optional[float] = None,
     volume_ratio: Optional[float] = None,
     turnover: Optional[float] = None,
+    mss: Optional[float] = None,
     settings: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     scenario_type = str(scenario.get("scenario_type") or "upper_shadow")
@@ -609,6 +775,12 @@ def evaluate_scenario(
             change_pct=change_pct,
             volume_ratio=volume_ratio,
             turnover=turnover,
+            settings=settings,
+        )
+    if scenario_type == "mss_trend":
+        return _evaluate_mss_trend(
+            scenario,
+            mss=mss,
             settings=settings,
         )
     return _evaluate_upper_shadow(
@@ -866,6 +1038,70 @@ def _evaluate_liquidity_shrink(
     return result
 
 
+def _evaluate_mss_trend(
+    scenario: dict[str, Any],
+    *,
+    mss: Optional[float] = None,
+    settings: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    cfg = technical_watch_cfg(settings)
+    mss_cfg = cfg["mss_trend"]
+    name = str(scenario.get("name") or "量化系统MSS")
+    setup_low = float(scenario.get("setup_mss_low") or 0)
+    setup_high = float(scenario.get("setup_mss_high") or 0)
+    scan_id = str(scenario.get("mss_scan_id") or "S12")
+    warning = float(scenario.get("warning_level") or mss_cfg["warning_level"])
+    bear_level = float((scenario.get("bearish") or {}).get("level") or mss_cfg["bearish_level"])
+    bull_level = float((scenario.get("bullish") or {}).get("level") or mss_cfg["bullish_level"])
+
+    result: dict[str, Any] = {
+        "code": SYSTEM_MSS_CODE,
+        "name": name,
+        "scenario": scenario,
+        "mss": mss,
+        "status": "pending",
+        "headline": "",
+        "action_hint": "观望",
+    }
+    if mss is None:
+        result["headline"] = (
+            f"{name}：{scan_id} setup {setup_low:.1f}~{setup_high:.1f} 跌破 {warning:.0f}；"
+            f"周一<{bear_level:.0f} 深层防御 / >{bull_level:.0f} 防御解除"
+        )
+        return result
+
+    mss_f = float(mss)
+    if mss_f < bear_level:
+        result.update(
+            {
+                "status": "deeper_defense",
+                "headline": (
+                    f"{name}：MSS {mss_f:.1f} 跌破 {bear_level:.0f}，触发更深层防御"
+                ),
+                "action_hint": "宏观避险，优先 defensive_trim / 回避加仓",
+            }
+        )
+        return result
+
+    if mss_f > bull_level:
+        result.update(
+            {
+                "status": "defense_released",
+                "headline": (
+                    f"{name}：MSS {mss_f:.1f} 回升至 {bull_level:.0f} 以上，防御解除"
+                ),
+                "action_hint": "可恢复常规 intraday 阈值，仍须验证 lookback",
+            }
+        )
+        return result
+
+    result["headline"] = (
+        f"{name}：MSS {mss_f:.1f} 介于 {bear_level:.0f}–{bull_level:.0f}，"
+        f"setup {setup_low:.1f}~{setup_high:.1f}，继续跟踪防御层级"
+    )
+    return result
+
+
 def evaluate_active_scenarios(
     snapshot: dict[str, Any],
     *,
@@ -895,6 +1131,31 @@ def evaluate_active_scenarios(
         turnover_f = float(turnover) if turnover is not None else None
     except (TypeError, ValueError):
         turnover_f = None
+    mss_f: Optional[float] = None
+    for key in ("mss_final", "lookback_mss"):
+        raw_mss = snapshot.get(key)
+        if raw_mss is not None:
+            try:
+                mss_f = float(raw_mss)
+                break
+            except (TypeError, ValueError):
+                pass
+    cfg = technical_watch_cfg(settings)
+    mss_cfg = cfg["mss_trend"]
+    if snapshot.get("portfolio"):
+        from agent_reach.daily_run.symbols import list_target_symbols, portfolio_from_snapshot
+
+        pf = portfolio_from_snapshot(snapshot)
+        scope = str(mss_cfg.get("scope") or "holdings")
+        mode = scope if scope in ("holdings", "all", "watchlist") else "holdings"
+        scope_symbols = list_target_symbols(pf, mode=mode)
+        low, _high, _sid = collect_scan_mss_range(
+            scope_symbols,
+            scan_id=str(mss_cfg.get("scan_id") or "S12"),
+            settings=settings,
+        )
+        if low is not None:
+            mss_f = low
     results = [
         evaluate_scenario(
             row,
@@ -903,6 +1164,7 @@ def evaluate_active_scenarios(
             open_price=open_price,
             volume_ratio=vol_f,
             turnover=turnover_f,
+            mss=mss_f,
             settings=settings,
         )
         for row in _active_scenarios(code=code, as_of=as_of, path=path)
@@ -969,6 +1231,15 @@ def technical_scenario_harness_evidence(
             playbook.append(headline)
             plan.append(f"intraday：{name} 流动性回升，复核 thesis/watchlist intel")
             _persist_scenario_status(item["scenario"], "liquidity_recovered", path=path)
+        elif status == "deeper_defense":
+            memory.append(headline)
+            policy.append(f"{name} 跌破防御线，macro_veto/defensive_trim 优先，回避加仓")
+            plan.append("intraday：全持仓扫描 MSS，触发 defensive_trim 与 macro 回避")
+            _persist_scenario_status(item["scenario"], "deeper_defense", path=path)
+        elif status == "defense_released":
+            playbook.append(headline)
+            plan.append("intraday：MSS 防御解除，恢复常规 lookback 阈值")
+            _persist_scenario_status(item["scenario"], "defense_released", path=path)
         elif headline:
             plan.append(headline)
     return {"memory": memory, "policy": policy, "playbook": playbook, "plan": plan}
@@ -1052,7 +1323,18 @@ def format_close_technical_watch_markdown(
             lines.append(
                 f"  - ⚠️ **减仓**：{bear.get('label') or '流动性持续萎缩，警惕被进一步减仓'}"
             )
-        else:
+        elif scenario_type == "mss_trend":
+            scan_id = sc.get("mss_scan_id") or "S12"
+            low = sc.get("setup_mss_low")
+            high = sc.get("setup_mss_high")
+            warning = sc.get("warning_level")
+            bear = sc.get("bearish") or {}
+            bull = sc.get("bullish") or {}
+            lines.append(f"- **{name}** · MSS 走向（{setup_date}）")
+            lines.append(f"  - {scan_id} MSS **{low}~{high}**（已跌破 **{warning}**）")
+            lines.append(f"  - 📉 **深层防御**：{bear.get('label')}")
+            lines.append(f"  - 📈 **防御解除**：{bull.get('label')}")
+        elif scenario_type == "upper_shadow":
             high = sc.get("session_high")
             close_px = sc.get("session_close")
             low = sc.get("session_low")
@@ -1170,6 +1452,16 @@ def run_close_technical_watch(
             )
             if liquidity:
                 registered.append(liquidity)
+
+        holdings_codes = list_target_symbols(pf, mode="holdings") or target_codes
+        mss_row = maybe_register_mss_trend_from_session(
+            symbols=holdings_codes,
+            settings=settings,
+            setup_date=day,
+            path=path,
+        )
+        if mss_row:
+            registered.append(mss_row)
 
     scenarios = scenarios_for_setup_date(day, path=path)
     markdown = format_close_technical_watch_markdown(scenarios, settings=settings) if render else ""

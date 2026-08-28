@@ -15,7 +15,10 @@ from agent_reach.daily_run.technical_scenario_watch import (
     maybe_register_upper_shadow_from_session,
     register_limit_up_shrink_pullback_scenario,
     register_liquidity_shrink_scenario,
+    register_mss_trend_scenario,
     register_upper_shadow_scenario,
+    collect_scan_mss_range,
+    maybe_register_mss_trend_from_session,
     run_close_technical_watch,
     save_scenarios,
     scenarios_for_setup_date,
@@ -424,3 +427,107 @@ def test_format_close_markdown_includes_liquidity_shrink():
     assert "海能达" in md
     assert "1.29亿" in md
     assert "流动性" in md
+
+
+def test_register_mss_trend(scenario_path):
+    row = register_mss_trend_scenario(
+        setup_date="2026-08-28",
+        mss_low=49.62,
+        mss_high=51.62,
+        mss_scan_id="S12",
+        path=scenario_path,
+        settings={"trade_calendar": {}},
+    )
+    assert row["scenario_type"] == "mss_trend"
+    assert row["code"] == "SYSTEM"
+    assert row["setup_mss_low"] == 49.62
+
+
+def test_evaluate_mss_deeper_defense(scenario_path):
+    scenario = register_mss_trend_scenario(
+        setup_date="2026-08-28",
+        mss_low=49.6,
+        mss_high=51.6,
+        path=scenario_path,
+    )
+    result = evaluate_scenario(scenario, mss=44.0)
+    assert result["status"] == "deeper_defense"
+    assert "深层防御" in result["headline"]
+
+
+def test_evaluate_mss_defense_released(scenario_path):
+    scenario = register_mss_trend_scenario(
+        setup_date="2026-08-28",
+        mss_low=49.6,
+        mss_high=51.6,
+        path=scenario_path,
+    )
+    result = evaluate_scenario(scenario, mss=56.0)
+    assert result["status"] == "defense_released"
+
+
+def test_format_close_markdown_includes_mss_trend():
+    md = format_close_technical_watch_markdown(
+        [
+            {
+                "scenario_type": "mss_trend",
+                "code": "SYSTEM",
+                "name": "量化系统MSS",
+                "setup_date": "2026-08-28",
+                "eval_from": "2026-08-31",
+                "mss_scan_id": "S12",
+                "setup_mss_low": 49.6,
+                "setup_mss_high": 51.6,
+                "warning_level": 50.0,
+                "bearish": {"label": "MSS 继续下行至 45 以下，触发更深层防御"},
+                "bullish": {"label": "MSS 反弹回 55 以上，防御解除"},
+            }
+        ]
+    )
+    assert "量化系统MSS" in md
+    assert "49.6" in md
+    assert "深层防御" in md
+
+
+def test_maybe_register_mss_trend(scenario_path, monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        "agent_reach.daily_run.technical_scenario_watch.today_shanghai",
+        lambda: date(2026, 8, 28),
+    )
+    intraday_dir = tmp_path / "intraday"
+    intraday_dir.mkdir()
+    for code, mss in (("688008", 51.62), ("002273", 49.81), ("002583", 51.41)):
+        payload = {
+            "date": "2026-08-28",
+            "scans": [{"scan_id": "S12", "code": code, "mss_final": mss}],
+            "trades": [],
+        }
+        (intraday_dir / f"{code}.json").write_text(
+            __import__("json").dumps(payload),
+            encoding="utf-8",
+        )
+
+    def _state_path(code=None):
+        norm = code or ""
+        return intraday_dir / f"{norm}.json"
+
+    monkeypatch.setattr(
+        "agent_reach.daily_run.intraday._today_str",
+        lambda: "2026-08-28",
+    )
+    monkeypatch.setattr(
+        "agent_reach.daily_run.intraday.default_state_path",
+        _state_path,
+    )
+
+    row = maybe_register_mss_trend_from_session(
+        symbols=["688008", "002273", "002583"],
+        path=scenario_path,
+        settings={
+            "technical_watch": {"enabled": True, "mss_trend": {"scope": "holdings"}},
+            "trade_calendar": {},
+        },
+    )
+    assert row is not None
+    assert row["setup_mss_low"] == 49.81
+    assert row["setup_mss_high"] == 51.62
