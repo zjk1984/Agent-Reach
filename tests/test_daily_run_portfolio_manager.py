@@ -1106,3 +1106,48 @@ class TestRecalcTotalsPricePrecedence:
         _recalc_totals(pf, {})
 
         assert pf["total"] == 14000.0  # 10000 cash + 1000 * 4.0 (cost fallback)
+
+
+class TestBuyBudgetContext:
+    def test_negative_cash_blocks_with_clear_message(self):
+        from agent_reach.daily_run.portfolio_manager import ApplyResult, _buy_budget_context
+
+        pf = {
+            "total": -77586.72,
+            "cash": -121117.72,
+            "holdings": [
+                {"code": "688008", "shares": 100, "cost": 205.16, "price": 205.16},
+                {"code": "002583", "shares": 2500, "cost": 8.51, "price": 8.51},
+            ],
+        }
+        enriched = {
+            "688008": {"price": 205.16},
+            "002583": {"price": 8.51},
+        }
+        settings = {
+            "thresholds": {"min_cash_ratio": 0.5},
+            "portfolio": {"min_deploy_cash": 1000},
+        }
+        result = _buy_budget_context(pf, enriched, settings, pf["holdings"])
+        assert isinstance(result, ApplyResult)
+        assert "账户现金为负" in result.message
+        assert "可部署现金 -" not in result.message
+
+    def test_low_deployable_never_shows_negative_amount(self):
+        from agent_reach.daily_run.portfolio_manager import ApplyResult, _buy_budget_context
+
+        pf = {
+            "total": 100_000,
+            "cash": 10_000,
+            "holdings": [{"code": "688008", "shares": 100, "cost": 900, "price": 900}],
+        }
+        enriched = {"688008": {"price": 900}}
+        settings = {
+            "thresholds": {"min_cash_ratio": 0.5},
+            "portfolio": {"min_deploy_cash": 1000},
+        }
+        result = _buy_budget_context(pf, enriched, settings, pf["holdings"])
+        assert isinstance(result, ApplyResult)
+        assert result.message.startswith("可部署现金 ¥0")
+        assert "-86494" not in result.message
+

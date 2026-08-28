@@ -1346,6 +1346,41 @@ def portfolio_deploy_budget_markdown(
     )
 
 
+def _holdings_market_value(
+    holdings: list[dict[str, Any]],
+    enriched: dict[str, dict[str, Any]],
+) -> float:
+    total_mv = 0.0
+    for h in holdings:
+        code = _normalize_code(str(h.get("code", "")))
+        row = {**h, **enriched.get(code, {})}
+        price = _price_for(row, enriched) or h.get("cost") or 0
+        total_mv += int(h.get("shares") or 0) * float(price)
+    return round(total_mv, 2)
+
+
+def _ledger_expected_cash_today() -> Optional[float]:
+    """Best-effort end-of-day cash from morning baseline + today's ledger."""
+    try:
+        from agent_reach.daily_run.capital_events import net_capital_flow
+        from agent_reach.daily_run.close_portfolio_summary import expected_end_cash_from_ledger
+        from agent_reach.daily_run.trade_calendar import today_shanghai
+        from agent_reach.daily_run.weekly_report import _load_trade_ledger_range
+        from agent_reach.daily_run.workflows import load_morning_baseline
+
+        morning_bl = load_morning_baseline()
+        morning_cash = float((morning_bl.get("portfolio") or {}).get("cash") or 0)
+        day = today_shanghai()
+        ledger = _load_trade_ledger_range(day, day)
+        return expected_end_cash_from_ledger(
+            morning_cash,
+            ledger,
+            capital_flow=net_capital_flow(day),
+        )
+    except Exception:
+        return None
+
+
 def _buy_budget_context(
     pf: dict[str, Any],
     enriched: dict[str, dict[str, Any]],
@@ -1356,26 +1391,38 @@ def _buy_budget_context(
 ) -> tuple[float, float, float, float, float, float] | ApplyResult:
     thresholds = settings.get("thresholds", {})
     min_cash_ratio = float(thresholds.get("min_cash_ratio", min_cash_ratio_default(settings)))
-    total = float(pf.get("total") or 0)
     cash = float(pf.get("cash") or 0)
-    if total <= 0:
-        total = cash + sum(
-            int(h.get("shares") or 0)
-            * float(enriched.get(_normalize_code(str(h.get("code", ""))), {}).get("price") or h.get("cost") or 0)
-            for h in holdings
-        )
+    mv = _holdings_market_value(holdings, enriched)
+    total = float(pf.get("total") or 0)
+    recomputed = round(cash + mv, 2)
+    if total <= 0 or abs(total - recomputed) > 1.0:
+        total = recomputed
+
+    if cash < 0:
+        ledger_cash = _ledger_expected_cash_today()
+        if ledger_cash is not None and ledger_cash > cash:
+            cash = ledger_cash
+            total = round(cash + mv, 2)
 
     if cash_limit_bypass:
         min_cash = 0.0
     else:
-        min_cash = total * min_cash_ratio
-    deployable = cash - min_cash
+        nav_for_reserve = max(0.0, total, mv)
+        min_cash = nav_for_reserve * min_cash_ratio
+    deployable = max(0.0, cash - min_cash)
     min_deploy = min_deploy_cash_default(settings)
+
+    if cash < 0:
+        return ApplyResult(
+            applied=False,
+            portfolio=pf,
+            message=f"账户现金为负（¥{cash:,.0f}），暂不可加仓（请核对 portfolio/ledger）",
+        )
     if deployable < min_deploy:
         return ApplyResult(
             applied=False,
             portfolio=pf,
-            message=f"可部署现金 {deployable:.0f} 不足（最低部署 {min_deploy:.0f}）",
+            message=f"可部署现金 ¥{deployable:,.0f} 不足（最低部署 ¥{min_deploy:,.0f}）",
         )
 
     commission_rate = friction_commission_rate_default(settings)
