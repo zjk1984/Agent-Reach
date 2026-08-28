@@ -441,15 +441,34 @@ def on_daily_cache(payload: dict[str, Any], *, day: str, source_path: str = "") 
     on_l1_state(f"daily_cache:{day_key}", "daily_cache", payload, at=day_key)
 
 
+def _baseline_event_at(record: dict[str, Any]) -> str:
+    """Prefer full timestamps so same-day baseline saves sort newest-first."""
+    for key in ("baseline_saved_at", "as_of", "close_date", "date"):
+        val = record.get(key)
+        if val:
+            return str(val)
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _baseline_day_key(record: dict[str, Any]) -> str:
+    for key in ("close_date", "date", "as_of", "baseline_saved_at"):
+        val = record.get(key)
+        if val:
+            return str(val)[:10]
+    return ""
+
+
 def on_baseline(kind: str, code: str, record: dict[str, Any], *, source_path: str = "") -> None:
-    day = str(record.get("close_date") or record.get("date") or record.get("as_of") or "")[:10]
+    day = _baseline_day_key(record)
     key = f"{kind}/{code}"
     on_l2_scenario(
         f"baseline_{kind}",
         key,
         record,
         code=code,
-        at=day,
+        at=_baseline_event_at(record),
         title=f"{kind} baseline {code}",
         content=f"mss={record.get('mss_final') or record.get('mss')}",
         source_path=source_path,

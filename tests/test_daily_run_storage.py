@@ -115,6 +115,64 @@ def test_l0_pnl_and_l2_baseline_hooks(storage_env):
     assert status["counts"]["l2_scenarios"] >= 1
 
 
+def test_baseline_dedupe_updates_same_day_record(storage_env):
+    """Same-day baseline save must overwrite DB row, not keep the first write."""
+    from agent_reach.daily_run.storage.hooks import on_baseline
+    from agent_reach.daily_run.storage.readers import read_morning_baseline_from_store
+
+    settings = storage_env["settings"]
+    store = get_store(settings)
+    on_baseline(
+        "morning",
+        "688008",
+        {
+            "code": "688008",
+            "as_of": "2026-08-28T00:34:45+00:00",
+            "portfolio": {"cash": -121117.72, "total": -77586.72},
+        },
+        source_path="/tmp/bad.json",
+    )
+    on_baseline(
+        "morning",
+        "688008",
+        {
+            "code": "688008",
+            "baseline_saved_at": "2026-08-28T02:21:31+00:00",
+            "portfolio": {"cash": 61000.0, "total": 104531.0},
+        },
+        source_path="/tmp/good.json",
+    )
+    rows = store.query_l2_scenarios(kind="baseline_morning", scenario_key="morning/688008", limit=5)
+    assert len(rows) == 1
+    payload = read_morning_baseline_from_store("688008", settings=settings)
+    assert payload is not None
+    assert float(payload["portfolio"]["cash"]) == 61000.0
+    assert rows[0]["at"].startswith("2026-08-28T02:21:31")
+
+
+def test_upsert_l2_scenario_dedupe_key_overwrites_payload(storage_env):
+    store = get_store(storage_env["settings"])
+    key = "l2:test:scenario:1"
+    first = store.upsert_l2_scenario(
+        "test_kind",
+        "test/key",
+        {"value": 1},
+        dedupe_key=key,
+        at="2026-08-28T00:00:00+00:00",
+    )
+    second = store.upsert_l2_scenario(
+        "test_kind",
+        "test/key",
+        {"value": 2},
+        dedupe_key=key,
+        at="2026-08-28T01:00:00+00:00",
+    )
+    assert second == first
+    rows = store.query_l2_scenarios(kind="test_kind", scenario_key="test/key", limit=1)
+    assert rows[0]["payload"]["value"] == 2
+    assert rows[0]["at"].startswith("2026-08-28T01:00:00")
+
+
 def test_backfill_roadmap_fixture(storage_env):
     root = storage_env["root"]
     settings = storage_env["settings"]
