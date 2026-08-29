@@ -56,6 +56,7 @@ class MorningCardContext:
     narrative: Optional[dict[str, Any]] = None
     macro_signals: Optional[dict[str, Any]] = None
     primary_snapshot: Optional[dict[str, Any]] = None
+    close_handoff: Optional[dict[str, Any]] = None
     settings: Optional[dict[str, Any]] = None
 
 
@@ -369,6 +370,8 @@ def build_merged_morning_card_context(
         )
 
     markets = global_markets if global_markets is not None else fetch_key_global_markets()
+    from agent_reach.daily_run.close_morning_handoff import load_close_handoff_for_morning
+
     return MorningCardContext(
         portfolio=portfolio,
         symbol_rows=rows,
@@ -378,6 +381,7 @@ def build_merged_morning_card_context(
         narrative=narrative,
         macro_signals=primary_snapshot.get("macro_signals"),
         primary_snapshot=primary_snapshot,
+        close_handoff=load_close_handoff_for_morning(settings=settings),
         settings=settings,
     )
 
@@ -400,6 +404,8 @@ def build_single_morning_card_context(
             holding = dict(row)
             break
     markets = global_markets if global_markets is not None else fetch_key_global_markets()
+    from agent_reach.daily_run.close_morning_handoff import load_close_handoff_for_morning
+
     return MorningCardContext(
         portfolio=pf,
         symbol_rows=[
@@ -417,6 +423,7 @@ def build_single_morning_card_context(
         narrative=run_result.get("llm_narrative"),
         macro_signals=snap.get("macro_signals"),
         primary_snapshot=snap,
+        close_handoff=load_close_handoff_for_morning(settings=settings),
         settings=settings,
     )
 

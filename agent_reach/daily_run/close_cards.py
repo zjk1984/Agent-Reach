@@ -406,6 +406,12 @@ def render_forecast_verify_markdown(ctx: CloseCardContext) -> str:
         lines.extend(["", "**偏差：**"])
         for dev in devs[:3]:
             lines.append(f"- {dev}")
+
+    from agent_reach.daily_run.close_morning_handoff import render_morning_action_trace_markdown
+
+    trace_md = render_morning_action_trace_markdown(ctx)
+    if trace_md.strip():
+        lines.extend(["", trace_md])
     return "\n".join(lines).strip()
 
 
@@ -787,55 +793,13 @@ def render_hot_research_markdown(ctx: CloseCardContext) -> str:
 
 
 def render_tomorrow_focus_markdown(ctx: CloseCardContext) -> str:
-    lines: list[str] = []
-    seen: set[str] = set()
+    from agent_reach.daily_run.close_morning_handoff import (
+        collect_tomorrow_focus_items,
+        format_tomorrow_focus_markdown,
+    )
 
-    for row in ctx.symbol_rows:
-        verify = row.get("verify") or ctx.verify_by_code.get(str(row.get("code") or "")) or {}
-        for rec in verify.get("recommendations") or []:
-            text = str(rec).strip()
-            if not text or text in seen:
-                continue
-            seen.add(text)
-            lines.append(f"- **{row.get('name')}：** {text[:120]}")
-
-    for sc in ctx.technical_scenarios[:5]:
-        name = sc.get("name") or sc.get("code") or "—"
-        bull = (sc.get("bullish") or {}).get("label")
-        bear = (sc.get("bearish") or {}).get("label")
-        if bull:
-            key = f"{name}:bull:{bull}"
-            if key not in seen:
-                seen.add(key)
-                lines.append(f"- **{name} 触发做多：** {bull[:100]}")
-        if bear:
-            key = f"{name}:bear:{bear}"
-            if key not in seen:
-                seen.add(key)
-                lines.append(f"- **{name} 触发减仓：** {bear[:100]}")
-
-    narrative = ctx.narrative or {}
-    if not narrative.get("skipped"):
-        for item in narrative.get("focus_points") or []:
-            text = str(item).strip()
-            if text and text not in seen:
-                seen.add(text)
-                lines.append(f"- {text[:120]}")
-
-    for item in (ctx.improvements or {}).get("items") or []:
-        if not isinstance(item, dict):
-            continue
-        detail = str(item.get("detail") or item.get("title") or "").strip()
-        if not detail or detail in seen:
-            continue
-        if "明日" in detail or "早盘" in detail or item.get("priority") == "high":
-            seen.add(detail)
-            lines.append(f"- {detail[:120]}")
-
-    deploy = ctx.portfolio_summary.get("deploy_budget_line")
-    if deploy and str(deploy) not in seen:
-        lines.append(f"- {str(deploy)[:120]}")
-    return "\n".join(lines[:8]).strip() or "- 按 MSS 与 macro_veto 纪律执行，明日早盘再确认"
+    body = format_tomorrow_focus_markdown(collect_tomorrow_focus_items(ctx))
+    return body or "- 按 MSS 与 macro_veto 纪律执行，明日早盘再确认"
 
 
 _CARD_RENDERERS = {

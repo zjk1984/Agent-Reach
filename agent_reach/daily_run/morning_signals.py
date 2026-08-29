@@ -96,9 +96,9 @@ def _trigger_condition(
 
 
 def build_action_checklist_rows(ctx: Any) -> list[dict[str, str]]:
+    from agent_reach.daily_run.close_morning_handoff import close_position_weight
     from agent_reach.daily_run.morning_cards import (
         MorningCardContext,
-        _holding_weight_pct,
         _target_position_pct,
     )
     from agent_reach.daily_run.tradability import is_suspended
@@ -115,7 +115,7 @@ def build_action_checklist_rows(ctx: Any) -> list[dict[str, str]]:
         if int(holding.get("shares") or 0) <= 0:
             continue
         suspended = is_suspended(merged)
-        current = _holding_weight_pct(holding, ctx.portfolio)
+        current = close_position_weight(ctx, sym.code, fallback_holding=holding)
         if current is None:
             continue
         target, _source = _target_position_pct(
@@ -128,6 +128,7 @@ def build_action_checklist_rows(ctx: Any) -> list[dict[str, str]]:
         operation = _action_operation(current, target, verdict)
         rows.append(
             {
+                "code": sym.code,
                 "name": sym.name,
                 "operation": operation,
                 "trigger": _trigger_condition(
@@ -138,6 +139,8 @@ def build_action_checklist_rows(ctx: Any) -> list[dict[str, str]]:
                     suspended=suspended,
                 ),
                 "target_position": _target_position_label(current, target),
+                "current_weight_pct": round(current, 1),
+                "target_weight_pct": round(target, 1),
             }
         )
     return rows
@@ -416,13 +419,20 @@ def _collect_sector_risks(ctx: Any) -> list[str]:
 
 
 def render_today_risk_markdown(ctx: Any) -> str:
+    from agent_reach.daily_run.close_morning_handoff import render_risk_tracking_markdown
+
     holding = _collect_holding_risks(ctx)
     market = _collect_market_risks(ctx)
     sector = _collect_sector_risks(ctx)
-    if not holding and not market and not sector:
+    tracked = render_risk_tracking_markdown(ctx)
+    if not holding and not market and not sector and not tracked:
         return ""
 
     lines = ["**⚠️ 今日风险**", ""]
+    if tracked:
+        lines.append("**风险跟踪（昨收→今晨）**")
+        lines.extend(tracked)
+        lines.append("")
     if holding:
         lines.append("**持仓风险**")
         for item in holding:
@@ -477,6 +487,8 @@ def _describe_actual_move(holding: dict[str, Any], snapshot: dict[str, Any]) -> 
 
 def _prediction_hit(prediction: str, holding: dict[str, Any], snapshot: dict[str, Any]) -> bool:
     _actual, current_pct = _describe_actual_move(holding, snapshot)
+    if current_pct is None:
+        return True
     bearish = any(k in prediction for k in ("回落", "承压", "走弱", "减仓", "回避", "下探", "弱"))
     bullish = any(k in prediction for k in ("企稳", "反弹", "突破", "强势", "上行", "冲高"))
     if "冲高回落" in prediction:
@@ -519,6 +531,12 @@ def build_yesterday_prediction_lines(ctx: Any, *, limit: int = 2) -> list[str]:
 
 
 def render_yesterday_prediction_validation_markdown(ctx: Any) -> str:
+    from agent_reach.daily_run.close_morning_handoff import render_yesterday_focus_validation_markdown
+
+    focus_md = render_yesterday_focus_validation_markdown(ctx)
+    if focus_md.strip():
+        return focus_md
+
     lines = build_yesterday_prediction_lines(ctx, limit=2)
     if not lines:
         return ""

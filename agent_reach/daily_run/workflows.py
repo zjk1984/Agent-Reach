@@ -311,9 +311,17 @@ def run_morning(
                 "harness_markdown": harness_md,
                 "llm_narrative": morning_narrative,
             }
-            sections = render_morning_card_sections(
-                build_single_morning_card_context(run_payload, settings=cfg)
+            morning_ctx = build_single_morning_card_context(run_payload, settings=cfg)
+            from agent_reach.daily_run.close_morning_handoff import (
+                build_morning_handoff,
+                save_morning_handoff,
             )
+            from agent_reach.daily_run.morning_signals import build_action_checklist_rows
+
+            save_morning_handoff(
+                build_morning_handoff(morning_ctx, build_action_checklist_rows(morning_ctx))
+            )
+            sections = render_morning_card_sections(morning_ctx)
         else:
             sections = render_morning_sections(
                 team_markdown=team_md,
@@ -1140,25 +1148,27 @@ def run_close(
                 render_close_card_sections,
             )
 
-            sections = render_close_card_sections(
-                build_single_close_card_context(
-                    {
-                        "snapshot": enriched,
-                        "verify": verify_dict,
-                        "portfolio_summary": portfolio_summary_obj.to_dict()
-                        if portfolio_summary_obj
-                        else None,
-                        "market_review": market_review_obj,
-                        "forecast_review": forecast_review.to_dict() if forecast_review else None,
-                        "technical_watch": technical_watch_result,
-                        "research": research_results,
-                        "close_improvements": improvements.to_dict() if improvements else None,
-                        "llm_narrative": close_narrative,
-                        "harness": harness_result,
-                    },
-                    settings=cfg,
-                )
+            close_ctx = build_single_close_card_context(
+                {
+                    "snapshot": enriched,
+                    "verify": verify_dict,
+                    "portfolio_summary": portfolio_summary_obj.to_dict()
+                    if portfolio_summary_obj
+                    else None,
+                    "market_review": market_review_obj,
+                    "forecast_review": forecast_review.to_dict() if forecast_review else None,
+                    "technical_watch": technical_watch_result,
+                    "research": research_results,
+                    "close_improvements": improvements.to_dict() if improvements else None,
+                    "llm_narrative": close_narrative,
+                    "harness": harness_result,
+                },
+                settings=cfg,
             )
+            from agent_reach.daily_run.close_morning_handoff import build_close_handoff, save_close_handoff
+
+            save_close_handoff(build_close_handoff(close_ctx))
+            sections = render_close_card_sections(close_ctx)
         else:
             sections = render_close_sections(
             verify_name=verify.name or verify.code or "大盘",

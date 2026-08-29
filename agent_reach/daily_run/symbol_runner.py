@@ -232,17 +232,25 @@ def run_morning_for_symbols(
                         settings=cfg,
                     )
 
-            merged = render_morning_card_sections(
-                build_merged_morning_card_context(
-                    symbol_results=symbol_results,
-                    decision_entries=decision_entries,
-                    primary_snapshot=primary_snap,
-                    team_markdown=team_md,
-                    harness_markdown=harness_md,
-                    narrative=narrative if not narrative.get("skipped") else None,
-                    settings=cfg,
-                )
+            morning_ctx = build_merged_morning_card_context(
+                symbol_results=symbol_results,
+                decision_entries=decision_entries,
+                primary_snapshot=primary_snap,
+                team_markdown=team_md,
+                harness_markdown=harness_md,
+                narrative=narrative if not narrative.get("skipped") else None,
+                settings=cfg,
             )
+            from agent_reach.daily_run.close_morning_handoff import (
+                build_morning_handoff,
+                save_morning_handoff,
+            )
+            from agent_reach.daily_run.morning_signals import build_action_checklist_rows
+
+            save_morning_handoff(
+                build_morning_handoff(morning_ctx, build_action_checklist_rows(morning_ctx))
+            )
+            merged = render_morning_card_sections(morning_ctx)
             feishu_result = push_report_sections(
                 merged,
                 settings=cfg,
@@ -925,21 +933,23 @@ def run_close_for_symbols(
 
         if use_six_cards:
             primary_inner = symbol_results[0]["result"]
-            merged = render_close_card_sections(
-                build_merged_close_card_context(
-                    symbol_results=symbol_results,
-                    portfolio_summary=portfolio_summary_obj.to_dict(),
-                    primary_snapshot=primary_snap,
-                    market_review=primary_inner.get("market_review"),
-                    forecast_review=primary_inner.get("forecast_review"),
-                    technical_watch=technical_watch_result,
-                    research_results=primary_inner.get("research") or [],
-                    improvements=primary_inner.get("close_improvements"),
-                    narrative=narrative if not narrative.get("skipped") else None,
-                    harness_result=harness_result if defer_harness_layer_b else None,
-                    settings=cfg,
-                )
+            close_ctx = build_merged_close_card_context(
+                symbol_results=symbol_results,
+                portfolio_summary=portfolio_summary_obj.to_dict(),
+                primary_snapshot=primary_snap,
+                market_review=primary_inner.get("market_review"),
+                forecast_review=primary_inner.get("forecast_review"),
+                technical_watch=technical_watch_result,
+                research_results=primary_inner.get("research") or [],
+                improvements=primary_inner.get("close_improvements"),
+                narrative=narrative if not narrative.get("skipped") else None,
+                harness_result=harness_result if defer_harness_layer_b else None,
+                settings=cfg,
             )
+            from agent_reach.daily_run.close_morning_handoff import build_close_handoff, save_close_handoff
+
+            save_close_handoff(build_close_handoff(close_ctx))
+            merged = render_close_card_sections(close_ctx)
             sections_retitle_done = True
         elif not sections_retitle_done and merged:
             total = len(merged)
