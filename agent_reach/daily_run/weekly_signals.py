@@ -568,8 +568,15 @@ def render_position_change_markdown(summary: dict[str, Any]) -> list[str]:
     lines = ["## 📈 仓位变化"]
     if start_e is not None and end_e is not None:
         lines.append(f"- **股票仓位：** {float(start_e):.0f}% → {float(end_e):.0f}%")
+    if summary.get("start_source"):
+        lines.append(f"- **周初基准：** {summary['start_source']}")
+    if summary.get("end_source"):
+        lines.append(f"- **周末基准：** {summary['end_source']}")
     if summary.get("reason_text"):
         lines.append(f"- **变化原因：** {summary['reason_text']}")
+    daily_notes = summary.get("daily_notes") or []
+    if daily_notes:
+        lines.append("- **每日调仓：** " + "；".join(daily_notes[:5]))
     if summary.get("trend_text"):
         lines.append(f"- **周内趋势：** {summary['trend_text']}")
     lines.append("")

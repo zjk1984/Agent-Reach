@@ -78,6 +78,8 @@ class WeeklyReport:
     position_change: dict[str, Any] = field(default_factory=dict)
     strategy_validation: dict[str, Any] = field(default_factory=dict)
     next_week_outlook: dict[str, Any] = field(default_factory=dict)
+    outlook_backtrack: dict[str, Any] = field(default_factory=dict)
+    close_loop_meta: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -140,6 +142,8 @@ class WeeklyReport:
             "position_change": self.position_change,
             "strategy_validation": self.strategy_validation,
             "next_week_outlook": self.next_week_outlook,
+            "outlook_backtrack": self.outlook_backtrack,
+            "close_loop_meta": self.close_loop_meta,
         }
 
 
@@ -1071,33 +1075,27 @@ def generate_weekly_report(
 
     start_record = _start_manifest_record(manifests, morning_totals, close_totals, week_start)
     end_record = _end_manifest_record(manifests, close_totals)
-    holdings_as_of = f"截至 {week_end.isoformat()} 周五收盘"
+
+    from agent_reach.daily_run.weekly_close_loop import resolve_friday_close_portfolio
+
+    pf, _friday_holdings, holdings_source = resolve_friday_close_portfolio(end_record, pf)
+    holdings_as_of = f"截至 {week_end.isoformat()} 周五收盘（{holdings_source}）"
 
     if end_record:
         snap_end, enriched_end = _merged_enriched_from_manifest(end_record)
         if snap_end:
-            pf_end = dict(snap_end.get("portfolio") or {})
-            if pf_end.get("holdings"):
-                pf = dict(pf)
-                pf["holdings"] = [dict(h) for h in pf_end["holdings"]]
-                if pf_end.get("cash") is not None:
-                    pf["cash"] = pf_end["cash"]
-                if pf_end.get("cash_ratio") is not None:
-                    pf["cash_ratio"] = pf_end["cash_ratio"]
-                if pf_end.get("watchlist"):
-                    pf["watchlist"] = [dict(w) for w in pf_end["watchlist"]]
-                from agent_reach.daily_run.symbols import sync_snapshot_portfolio
+            from agent_reach.daily_run.symbols import sync_snapshot_portfolio
 
-                snap_for_symbols = dict(snapshot)
-                sync_snapshot_portfolio(snap_for_symbols, pf)
-                enriched = build_enriched_symbols(snap_for_symbols)
-                for code, row in enriched_end.items():
-                    if row.get("price") is not None:
-                        enriched.setdefault(code, {})["price"] = float(row["price"])
-                cash_raw = pf.get("cash")
-                cash = float(cash_raw) if cash_raw is not None else cash
-                ratio_raw = pf.get("cash_ratio")
-                cash_ratio = float(ratio_raw) if ratio_raw is not None else cash_ratio
+            snap_for_symbols = dict(snapshot)
+            sync_snapshot_portfolio(snap_for_symbols, pf)
+            enriched = build_enriched_symbols(snap_for_symbols)
+            for code, row in enriched_end.items():
+                if row.get("price") is not None:
+                    enriched.setdefault(code, {})["price"] = float(row["price"])
+            cash_raw = pf.get("cash")
+            cash = float(cash_raw) if cash_raw is not None else cash
+            ratio_raw = pf.get("cash_ratio")
+            cash_ratio = float(ratio_raw) if ratio_raw is not None else cash_ratio
 
     start_cash, start_stock_mv, end_cash, end_stock_mv = _resolve_weekly_balance_parts(
         start_record=start_record,
@@ -1322,6 +1320,32 @@ def generate_weekly_report(
         settings=settings,
     )
     trade_log = flatten_ledger_trades(trades)
+    from agent_reach.daily_run.weekly_close_loop import (
+        aggregate_close_card_trades,
+        build_close_loop_position_change,
+        load_outlook_plan_for_backtrack,
+        merge_weekly_trade_sources,
+        render_close_loop_trade_log_note,
+        resolve_target_week_holdings_for_backtrack,
+        summarize_close_card_predictions,
+        verify_outlook_plan_execution,
+    )
+
+    close_trades = aggregate_close_card_trades(
+        manifests,
+        week_start=week_start,
+        week_end=week_end,
+    )
+    ledger_trades = list(trade_log)
+    trade_log = merge_weekly_trade_sources(close_trades, ledger_trades)
+    close_loop_meta = {
+        "close_card_days": len({str(t.get("date") or "")[:10] for t in close_trades}),
+        "holdings_source": holdings_source,
+        "trade_source_note": render_close_loop_trade_log_note(
+            len({str(t.get("date") or "")[:10] for t in close_trades}),
+            ledger_fallback=len(trade_log) > len(close_trades),
+        ),
+    }
     trade_reconciliation = reconcile_week_trades(
         trades=trades,
         start_cash=start_cash,
@@ -1335,7 +1359,6 @@ def generate_weekly_report(
         build_weekly_macro_brief,
         enrich_trade_log_with_pnl,
         summarize_week_key_events,
-        summarize_week_prediction_verification,
     )
 
     trade_log_display = enrich_trade_log_with_pnl(trade_log, trade_pnl_detail)
@@ -1349,7 +1372,7 @@ def generate_weekly_report(
         market_review_weekly=market_review_weekly,
         benchmark_excess_pct=weekly_metrics.get("excess_return_pct"),
     )
-    prediction_verification = summarize_week_prediction_verification(
+    prediction_verification = summarize_close_card_predictions(
         manifests,
         week_start=week_start,
         week_end=week_end,
@@ -1359,7 +1382,6 @@ def generate_weekly_report(
         build_holdings_contribution_table,
         build_next_week_outlook,
         build_performance_overview_table,
-        build_position_change_summary,
         build_strategy_validation,
         _prior_week_win_rate,
     )
@@ -1373,13 +1395,13 @@ def generate_weekly_report(
         settings=settings,
     )
     holdings_contribution = build_holdings_contribution_table(holdings, start_total=start_total)
-    position_change = build_position_change_summary(
-        start_total=start_total,
-        end_total=end_total,
-        start_stock_mv=start_stock_mv,
-        end_stock_mv=end_stock_mv,
-        trade_log=trade_log,
-        daily_totals=daily_totals,
+    position_change = build_close_loop_position_change(
+        manifests,
+        week_start=week_start,
+        week_end=week_end,
+        start_record=start_record,
+        end_record=end_record,
+        close_trades=close_trades,
     )
     strategy_validation = build_strategy_validation(
         trade_log=trade_log,
@@ -1396,6 +1418,23 @@ def generate_weekly_report(
         settings=settings,
         watchlist_intel=watchlist_intel,
     )
+
+    outlook_backtrack: dict[str, Any] = {}
+    plan = load_outlook_plan_for_backtrack(week_start)
+    if plan:
+        target_start = date.fromisoformat(str(plan["target_week_start"]))
+        target_end = date.fromisoformat(str(plan["target_week_end"]))
+        target_manifests = _load_week_manifests(target_start, target_end)
+        target_holdings = resolve_target_week_holdings_for_backtrack(
+            target_manifests,
+            target_start=target_start,
+            target_end=target_end,
+        )
+        outlook_backtrack = verify_outlook_plan_execution(
+            plan,
+            manifests=target_manifests,
+            holdings=target_holdings,
+        )
 
     return WeeklyReport(
         week_start=week_start,
@@ -1455,6 +1494,8 @@ def generate_weekly_report(
         position_change=position_change,
         strategy_validation=strategy_validation,
         next_week_outlook=next_week_outlook,
+        outlook_backtrack=outlook_backtrack,
+        close_loop_meta=close_loop_meta,
     )
 
 
@@ -1757,6 +1798,7 @@ def _render_holdings_review_lines(report: WeeklyReport) -> list[str]:
         render_weekly_trade_log_compact_markdown(
             report.trade_log_display or report.trade_log,
             report.trade_reconciliation,
+            source_note=(report.close_loop_meta or {}).get("trade_source_note") or "",
         )
     )
     return lines
@@ -1766,6 +1808,12 @@ def _render_strategy_validation_lines(report: WeeklyReport) -> list[str]:
     from agent_reach.daily_run.weekly_signals import render_strategy_validation_markdown
 
     return render_strategy_validation_markdown(report.strategy_validation)
+
+
+def _render_outlook_backtrack_lines(report: WeeklyReport) -> list[str]:
+    from agent_reach.daily_run.weekly_close_loop import render_outlook_backtrack_markdown
+
+    return render_outlook_backtrack_markdown(report.outlook_backtrack)
 
 
 def _render_outlook_lines(report: WeeklyReport) -> list[str]:
@@ -1885,6 +1933,10 @@ def render_weekly_sections(report: WeeklyReport) -> list[WeeklySection]:
 
     overview_lines = _period_header_lines(report) + _render_overview_lines(report)
     sections.append(WeeklySection("总览", _join_section_lines(overview_lines)))
+
+    backtrack_lines = _period_header_lines(report, continuation=True) + _render_outlook_backtrack_lines(report)
+    if any(line.strip() for line in backtrack_lines):
+        sections.append(WeeklySection("计划回溯", _join_section_lines(backtrack_lines)))
 
     holdings_lines = (
         _period_header_lines(report, continuation=True) + _render_holdings_review_lines(report)

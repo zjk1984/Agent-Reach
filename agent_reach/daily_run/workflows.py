@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -1625,6 +1625,19 @@ def run_weekly(
     report = generate_weekly_report(snapshot, cfg, portfolio=portfolio)
     digest_path = save_weekly_digest(report.to_dict())
     steps.append("digest")
+
+    from agent_reach.daily_run.week_forecast import next_trading_week_range
+    from agent_reach.daily_run.weekly_close_loop import save_weekly_outlook_plan
+
+    next_start, next_end = next_trading_week_range(report.week_end + timedelta(days=1))
+    save_weekly_outlook_plan(
+        week_end=report.week_end,
+        week_start=report.week_start,
+        next_week_outlook=report.next_week_outlook,
+        target_week_start=next_start,
+        target_week_end=next_end,
+    )
+    steps.append("outlook_plan_saved")
 
     from agent_reach.daily_run.watchlist_candidates import update_candidates_from_weekly
 

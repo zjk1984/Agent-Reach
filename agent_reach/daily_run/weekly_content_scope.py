@@ -104,8 +104,11 @@ def enrich_trade_log_with_pnl(
 def render_weekly_trade_log_compact_markdown(
     trade_log: list[dict[str, Any]],
     reconciliation: dict[str, Any],
+    *,
+    source_note: str = "",
 ) -> list[str]:
-    lines = ["## 📝 本周交易日志", "- _来源：trade ledger 实际成交；详细数据见各日收盘卡片_"]
+    note = source_note or "- _来源：trade ledger 实际成交；详细数据见各日收盘卡片_"
+    lines = ["## 📝 本周交易日志", note]
     if not trade_log:
         lines.append("- 本周无 ledger 成交记录")
     else:
@@ -469,6 +472,25 @@ def render_weekly_prediction_verify_markdown(data: dict[str, Any]) -> list[str]:
         lines.append(
             f"| {row.get('type')} | {row.get('total')} | {row.get('hits')} | {float(row.get('accuracy_pct') or 0):.1f}% |"
         )
+    daily_rows = data.get("daily_rows") or []
+    if daily_rows:
+        lines.extend(["", "**每日收盘卡片预测验证：**", ""])
+        lines.extend(
+            [
+                "| 日期 | 标的命中 | MSS | 来源 |",
+                "|------|----------|-----|------|",
+            ]
+        )
+        for row in daily_rows:
+            hits = row.get("symbol_hits")
+            total = row.get("symbol_total")
+            sym_s = f"{hits}/{total}" if total else "—"
+            mss = row.get("mss_hit")
+            mss_s = "✅" if mss is True else "❌" if mss is False else "—"
+            lines.append(
+                f"| {row.get('weekday')} {str(row.get('date') or '')[5:]} | {sym_s} "
+                f"({float(row.get('accuracy_pct') or 0):.1f}%) | {mss_s} | {row.get('close_ref', '—')} |"
+            )
     featured = data.get("featured_cases") or []
     if featured:
         lines.extend(["", "**典型案例：**"])

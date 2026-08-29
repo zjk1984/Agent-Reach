@@ -268,7 +268,7 @@ class TestWeeklyReportIntegration:
         )
         assert report.weekly_metrics
         assert report.risk_metrics
-        assert report.holdings_as_of.endswith("周五收盘")
+        assert "周五收盘" in report.holdings_as_of
         assert "688008" in {h["code"] for h in report.holdings}
 
         md = render_weekly_markdown(report)
