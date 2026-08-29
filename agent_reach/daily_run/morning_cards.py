@@ -55,6 +55,7 @@ class MorningCardContext:
     harness_markdown: str = ""
     narrative: Optional[dict[str, Any]] = None
     macro_signals: Optional[dict[str, Any]] = None
+    primary_snapshot: Optional[dict[str, Any]] = None
     settings: Optional[dict[str, Any]] = None
 
 
@@ -376,6 +377,7 @@ def build_merged_morning_card_context(
         harness_markdown=harness_markdown,
         narrative=narrative,
         macro_signals=primary_snapshot.get("macro_signals"),
+        primary_snapshot=primary_snapshot,
         settings=settings,
     )
 
@@ -414,18 +416,48 @@ def build_single_morning_card_context(
         harness_markdown=run_result.get("harness_markdown") or "",
         narrative=run_result.get("llm_narrative"),
         macro_signals=snap.get("macro_signals"),
+        primary_snapshot=snap,
         settings=settings,
     )
 
 
 def render_holdings_overview_markdown(ctx: MorningCardContext) -> str:
     from agent_reach.daily_run.global_markets_collector import render_global_markets_markdown
+    from agent_reach.daily_run.morning_content_scope import (
+        render_domestic_market_brief,
+        render_macro_headlines_markdown,
+        render_prior_close_recap_markdown,
+        select_macro_headlines,
+    )
     from agent_reach.daily_run.tradability import is_suspended
 
     lines: list[str] = []
+    snap = ctx.primary_snapshot or {}
+
+    recap_md = render_prior_close_recap_markdown(ctx.portfolio, settings=ctx.settings)
+    if recap_md.strip():
+        lines.append(recap_md)
+        lines.append("")
+
     global_md = render_global_markets_markdown(ctx.global_markets)
     if global_md.strip():
         lines.append(global_md)
+        lines.append("")
+
+    market_md = render_domestic_market_brief(snapshot=snap, macro_signals=ctx.macro_signals)
+    if market_md.strip():
+        lines.append(market_md)
+        lines.append("")
+
+    featured, extra = select_macro_headlines(
+        macro_signals=ctx.macro_signals,
+        sources=snap.get("sources"),
+        portfolio=ctx.portfolio,
+        limit=3,
+    )
+    macro_md = render_macro_headlines_markdown(featured, extra)
+    if macro_md.strip():
+        lines.append(macro_md)
         lines.append("")
 
     lines.extend(
@@ -456,19 +488,22 @@ def render_holdings_overview_markdown(ctx: MorningCardContext) -> str:
 
 
 def render_decision_markdown(ctx: MorningCardContext) -> str:
-    if len(ctx.symbol_rows) <= 1:
-        from agent_reach.daily_run.pipeline import render_symbol_decision_markdown
-
-        row = ctx.symbol_rows[0]
-        return render_symbol_decision_markdown(row.report, snapshot=row.snapshot)
-    from agent_reach.daily_run.report_push import render_merged_decision_markdown
+    from agent_reach.daily_run.morning_content_scope import (
+        render_merged_symbol_logic_markdown,
+        render_symbol_morning_logic_markdown,
+    )
 
     entries = [
         (row.name, row.code, row.report, row.snapshot)
         for row in ctx.symbol_rows
         if row.report
     ]
-    return render_merged_decision_markdown(entries, report_kind="morning")
+    if not entries:
+        return ""
+    if len(entries) == 1:
+        row = ctx.symbol_rows[0]
+        return render_symbol_morning_logic_markdown(row.report, snapshot=row.snapshot)
+    return render_merged_symbol_logic_markdown(entries)
 
 
 def render_experts_markdown(ctx: MorningCardContext) -> str:
@@ -476,15 +511,11 @@ def render_experts_markdown(ctx: MorningCardContext) -> str:
 
 
 def render_xueqiu_hot_markdown(ctx: MorningCardContext) -> str:
-    from agent_reach.daily_run.xueqiu_hot_display import render_xueqiu_hot_markdown
-
-    return render_xueqiu_hot_markdown(ctx.macro_signals)
+    return ""
 
 
 def render_eastmoney_markdown(ctx: MorningCardContext) -> str:
-    from agent_reach.daily_run.eastmoney_intent import render_eastmoney_macro_markdown
-
-    return render_eastmoney_macro_markdown(macro_signals=ctx.macro_signals)
+    return ""
 
 
 def render_harness_markdown(ctx: MorningCardContext) -> str:
@@ -492,12 +523,9 @@ def render_harness_markdown(ctx: MorningCardContext) -> str:
 
 
 def render_ai_narrative_markdown(ctx: MorningCardContext) -> str:
-    narrative = ctx.narrative or {}
-    if narrative.get("skipped"):
-        return ""
-    from agent_reach.daily_run.report_narrative import render_narrative_markdown
+    from agent_reach.daily_run.morning_content_scope import render_scoped_morning_narrative_markdown
 
-    return render_narrative_markdown(narrative, job="morning")
+    return render_scoped_morning_narrative_markdown(ctx.narrative)
 
 
 _CARD_RENDERERS = {

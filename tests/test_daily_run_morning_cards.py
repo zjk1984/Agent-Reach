@@ -10,6 +10,7 @@ from agent_reach.daily_run.morning_cards import (
     MorningCardContext,
     MorningSymbolRow,
     morning_card_layout_enabled,
+    render_decision_markdown,
     render_holdings_overview_markdown,
     render_morning_card_sections,
     _change_vs_prev_close,
@@ -96,6 +97,19 @@ class TestMorningCardLayout:
     def test_render_holdings_overview_card(self):
         ctx = MorningCardContext(
             portfolio=PORTFOLIO,
+            primary_snapshot={
+                "macro_signals": {
+                    "index_change_pct": 0.5,
+                    "northbound_flow_yi": 8.0,
+                    "hot_topics": [{"title": "澜起科技半导体景气回升"}],
+                },
+                "sources": {},
+            },
+            macro_signals={
+                "index_change_pct": 0.5,
+                "northbound_flow_yi": 8.0,
+                "hot_topics": [{"title": "澜起科技半导体景气回升"}],
+            },
             symbol_rows=[
                 MorningSymbolRow(
                     code="688008",
@@ -126,6 +140,34 @@ class TestMorningCardLayout:
         assert "澜起科技" in md
         assert "🔒 停牌" in md
         assert "截至 08:00" in md
+        assert "**大盘分析**" in md
+        assert "**宏观要闻**" in md
+        assert "影响板块：" in md
+        assert "对持仓影响：" in md
+
+    def test_decision_card_no_market_analysis(self):
+        ctx = MorningCardContext(
+            portfolio=PORTFOLIO,
+            symbol_rows=[
+                MorningSymbolRow(
+                    code="688008",
+                    name="澜起科技",
+                    holding=PORTFOLIO["holdings"][0],
+                    report={
+                        "verdict": "观察",
+                        "confidence": "中",
+                        "mss_final": 48.0,
+                        "reasoning": "DDR 景气",
+                        "invalidation": "跌破 MA20",
+                    },
+                    snapshot={"code": "688008"},
+                )
+            ],
+        )
+        md = render_decision_markdown(ctx)
+        assert "**个股逻辑：**" in md
+        assert "**大盘分析**" not in md
+        assert "宏观要闻" not in md
 
     def test_render_morning_card_sections_order(self):
         ctx = MorningCardContext(
