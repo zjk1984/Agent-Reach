@@ -338,19 +338,77 @@ def save_weekly_outlook_plan(
 
 
 def load_outlook_plan_for_backtrack(current_week_start: date) -> Optional[dict[str, Any]]:
-    """Load the outlook saved two weekly reports ago (executed last week)."""
-    verify_target_start = current_week_start - timedelta(days=7)
+    """Load the outlook plan that targeted the week being reviewed."""
     if not _OUTLOOK_DIR.is_dir():
         return None
+
+    target_start = current_week_start.isoformat()
+
+    def _match(data: dict[str, Any]) -> bool:
+        return str(data.get("target_week_start") or "") == target_start
+
     for path in sorted(_OUTLOOK_DIR.glob("*.json"), reverse=True):
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             continue
-        if str(data.get("target_week_start") or "") == verify_target_start.isoformat():
+        if _match(data):
             data["_path"] = str(path)
             return data
+
+    from agent_reach.daily_run.weekly_report import trading_week_range
+
+    prior_ws, prior_we = trading_week_range(current_week_start - timedelta(days=7))
+    prior_path = outlook_plan_path(prior_we)
+    if prior_path.is_file():
+        try:
+            data = json.loads(prior_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return None
+        if _match(data):
+            data["_path"] = str(prior_path)
+            return data
+        _ = prior_ws
     return None
+
+
+def synthesize_outlook_plan_for_backtrack(
+    current_week_start: date,
+    current_week_end: date,
+    *,
+    settings: Optional[dict[str, Any]] = None,
+    holdings: Optional[list[dict[str, Any]]] = None,
+    watchlist_intel: Optional[dict[str, Any]] = None,
+) -> Optional[dict[str, Any]]:
+    """Rebuild last week's saved outlook when the JSON file is missing."""
+    from agent_reach.daily_run.week_forecast import next_trading_week_range
+    from agent_reach.daily_run.weekly_report import trading_week_range
+    from agent_reach.daily_run.weekly_signals import build_next_week_outlook
+
+    prior_ws, prior_we = trading_week_range(current_week_start - timedelta(days=7))
+    next_start, next_end = next_trading_week_range(prior_we + timedelta(days=1))
+    if next_start != current_week_start or next_end != current_week_end:
+        return None
+
+    outlook = build_next_week_outlook(
+        week_end=prior_we,
+        holdings=list(holdings or []),
+        watchlist=[],
+        settings=settings,
+        watchlist_intel=watchlist_intel,
+    )
+    operation_plan = outlook.get("operation_plan") or []
+    if not operation_plan:
+        return None
+    return {
+        "saved_week_end": prior_we.isoformat(),
+        "saved_week_start": prior_ws.isoformat(),
+        "target_week_start": current_week_start.isoformat(),
+        "target_week_end": current_week_end.isoformat(),
+        "operation_plan": operation_plan,
+        "risk_calendar": outlook.get("risk_calendar") or [],
+        "_synthesized": True,
+    }
 
 
 def resolve_target_week_holdings_for_backtrack(
@@ -441,16 +499,18 @@ def verify_outlook_plan_execution(
         "rows": rows,
         "executed_count": done,
         "total_count": len(rows),
+        "synthesized": bool(plan.get("_synthesized")),
     }
 
 
 def render_outlook_backtrack_markdown(backtrack: dict[str, Any]) -> list[str]:
     if not backtrack or not backtrack.get("rows"):
         return []
+    synth_note = "（由上周收盘 handoff 重建）" if backtrack.get("synthesized") else ""
     lines = [
         "## 🔁 计划执行回溯",
         f"- _对照 {backtrack.get('target_week_start')} ~ {backtrack.get('target_week_end')} "
-        f"（计划保存于 {backtrack.get('plan_saved_week_end')} 周报）_",
+        f"（计划保存于 {backtrack.get('plan_saved_week_end')} 周报{synth_note}）_",
         "",
         "| 股票 | 计划操作 | 触发条件 | 执行结果 | 盈亏 |",
         "|------|----------|----------|----------|------|",

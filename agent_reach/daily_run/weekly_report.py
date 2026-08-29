@@ -1428,7 +1428,20 @@ def generate_weekly_report(
     )
 
     outlook_backtrack: dict[str, Any] = {}
+    from agent_reach.daily_run.weekly_close_loop import (
+        load_outlook_plan_for_backtrack,
+        synthesize_outlook_plan_for_backtrack,
+    )
+
     plan = load_outlook_plan_for_backtrack(week_start)
+    if not plan:
+        plan = synthesize_outlook_plan_for_backtrack(
+            week_start,
+            week_end,
+            settings=settings,
+            holdings=holdings,
+            watchlist_intel=watchlist_intel,
+        )
     if plan:
         target_start = date.fromisoformat(str(plan["target_week_start"]))
         target_end = date.fromisoformat(str(plan["target_week_end"]))

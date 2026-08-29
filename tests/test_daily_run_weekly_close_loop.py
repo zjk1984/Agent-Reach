@@ -221,7 +221,7 @@ class TestOutlookBacktrack:
             target_week_start=date(2026, 8, 4),
             target_week_end=date(2026, 8, 8),
         )
-        loaded = load_outlook_plan_for_backtrack(date(2026, 8, 11))
+        loaded = load_outlook_plan_for_backtrack(date(2026, 8, 4))
         assert loaded is not None
         assert loaded["target_week_start"] == "2026-08-04"
 
@@ -255,6 +255,25 @@ class TestOutlookBacktrack:
         md = "\n".join(render_outlook_backtrack_markdown(backtrack))
         assert "计划执行回溯" in md
         assert "澜起科技" in md
+
+    def test_synthesize_outlook_plan_when_file_missing(self, tmp_path, monkeypatch):
+        outlook_dir = tmp_path / "weekly_outlook"
+        monkeypatch.setattr(
+            "agent_reach.daily_run.weekly_close_loop._OUTLOOK_DIR",
+            outlook_dir,
+        )
+        from agent_reach.daily_run.weekly_close_loop import synthesize_outlook_plan_for_backtrack
+
+        plan = synthesize_outlook_plan_for_backtrack(
+            date(2026, 8, 24),
+            date(2026, 8, 28),
+            holdings=[
+                {"code": "688008", "name": "澜起科技", "market_value": 20000},
+            ],
+        )
+        assert plan is not None
+        assert plan["target_week_start"] == "2026-08-24"
+        assert plan.get("operation_plan")
 
 
 class TestGenerateWeeklyReportCloseLoop:
