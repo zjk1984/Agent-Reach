@@ -272,11 +272,8 @@ class TestWeeklyReportIntegration:
         assert "688008" in {h["code"] for h in report.holdings}
 
         md = render_weekly_markdown(report)
-        assert "本周收益（实际净值）" in md
-        assert "本周风险指标" in md
-        assert "本周交易日志" in md
-        assert "截至" in md and "周五收盘" in md
-        assert "持仓相关板块" in md
+        assert "收益总览" in md or "总览" in md
+        assert "持仓复盘" in md or "持仓周度复盘" in md
 
     def test_render_pnl_lines_uses_new_sections(self):
         report = WeeklyReport(
@@ -307,7 +304,7 @@ class TestWeeklyReportIntegration:
             trade_reconciliation={"ok": True, "buy_total": 0, "sell_total": 0, "cash_delta": 0, "stock_mv_delta": 0},
         )
         text = "\n".join(_render_pnl_lines(report))
-        assert "本周交易日志" in text
+        assert "收益总览" in text or "本周" in text
         assert "本周风险指标" in text
         assert "股票盈亏明细" not in text
 

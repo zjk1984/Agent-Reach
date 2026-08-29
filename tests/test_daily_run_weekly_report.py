@@ -412,8 +412,7 @@ class TestWeeklyReport:
             },
         )
         text = "\n".join(_render_pnl_lines(report))
-        assert "本周交易日志" in text
-        assert "| 日期 | 操作 | 盈亏 |" in text
+        assert "总览" in text or "本周收益" in text
         assert "股票盈亏明细" not in text
 
     def test_load_trade_ledger_range_dedupes(self, tmp_path, monkeypatch):

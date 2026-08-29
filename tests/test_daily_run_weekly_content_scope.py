@@ -175,6 +175,7 @@ class TestWeeklySectionDedup:
         )
         labels = [s.label for s in render_weekly_sections(report)]
         assert "雪球热门" not in labels
+        assert "总览" in labels
         assert "市场环境" in labels
         assert "预测验证" in labels
 
@@ -194,7 +195,8 @@ class TestWeeklySectionDedup:
             trade_pnl_detail={"sells": [{"name": "澜起科技", "realized_pnl": 500}]},
         )
         text = "\n".join(_render_pnl_lines(report))
-        assert "本周交易日志" in text
+        assert "总览" in text
+        assert "本周交易日志" not in text
         assert "股票盈亏明细" not in text
         assert "成交现金流" not in text
 

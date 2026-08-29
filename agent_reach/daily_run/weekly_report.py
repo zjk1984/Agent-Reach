@@ -73,6 +73,11 @@ class WeeklyReport:
     macro_brief: list[dict[str, Any]] = field(default_factory=list)
     prediction_verification: dict[str, Any] = field(default_factory=dict)
     trade_log_display: list[dict[str, Any]] = field(default_factory=list)
+    performance_overview: dict[str, Any] = field(default_factory=dict)
+    holdings_contribution: list[dict[str, Any]] = field(default_factory=list)
+    position_change: dict[str, Any] = field(default_factory=dict)
+    strategy_validation: dict[str, Any] = field(default_factory=dict)
+    next_week_outlook: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -130,6 +135,11 @@ class WeeklyReport:
             "macro_brief": self.macro_brief,
             "prediction_verification": self.prediction_verification,
             "trade_log_display": self.trade_log_display,
+            "performance_overview": self.performance_overview,
+            "holdings_contribution": self.holdings_contribution,
+            "position_change": self.position_change,
+            "strategy_validation": self.strategy_validation,
+            "next_week_outlook": self.next_week_outlook,
         }
 
 
@@ -1345,6 +1355,48 @@ def generate_weekly_report(
         week_end=week_end,
     )
 
+    from agent_reach.daily_run.weekly_signals import (
+        build_holdings_contribution_table,
+        build_next_week_outlook,
+        build_performance_overview_table,
+        build_position_change_summary,
+        build_strategy_validation,
+        _prior_week_win_rate,
+    )
+
+    performance_overview = build_performance_overview_table(
+        week_start=week_start,
+        week_end=week_end,
+        start_total=start_total,
+        end_total=end_total,
+        weekly_metrics=weekly_metrics,
+        settings=settings,
+    )
+    holdings_contribution = build_holdings_contribution_table(holdings, start_total=start_total)
+    position_change = build_position_change_summary(
+        start_total=start_total,
+        end_total=end_total,
+        start_stock_mv=start_stock_mv,
+        end_stock_mv=end_stock_mv,
+        trade_log=trade_log,
+        daily_totals=daily_totals,
+    )
+    strategy_validation = build_strategy_validation(
+        trade_log=trade_log,
+        trade_pnl_detail=trade_pnl_detail,
+        prediction_verification=prediction_verification,
+        sell_rules_whatif=sell_rules_whatif,
+        buy_rules_whatif=buy_rules_whatif,
+        prior_week_win_rate=_prior_week_win_rate(week_start, settings=settings),
+    )
+    next_week_outlook = build_next_week_outlook(
+        week_end=week_end,
+        holdings=holdings,
+        watchlist=watchlist,
+        settings=settings,
+        watchlist_intel=watchlist_intel,
+    )
+
     return WeeklyReport(
         week_start=week_start,
         week_end=week_end,
@@ -1398,6 +1450,11 @@ def generate_weekly_report(
         macro_brief=macro_brief,
         prediction_verification=prediction_verification,
         trade_log_display=trade_log_display,
+        performance_overview=performance_overview,
+        holdings_contribution=holdings_contribution,
+        position_change=position_change,
+        strategy_validation=strategy_validation,
+        next_week_outlook=next_week_outlook,
     )
 
 
@@ -1643,52 +1700,83 @@ def build_weekly_pnl_explanation(report: WeeklyReport | dict[str, Any]) -> list[
     return lines
 
 
-def _render_pnl_lines(report: WeeklyReport) -> list[str]:
-    from agent_reach.daily_run.weekly_card_metrics import (
-        render_weekly_return_markdown,
-        render_weekly_risk_markdown,
-    )
+def _render_overview_lines(report: WeeklyReport) -> list[str]:
+    from agent_reach.daily_run.weekly_card_metrics import render_weekly_risk_markdown
     from agent_reach.daily_run.weekly_content_scope import (
         build_weekly_pnl_brief,
         render_week_key_events_markdown,
-        render_weekly_trade_log_compact_markdown,
+    )
+    from agent_reach.daily_run.weekly_signals import (
+        render_performance_overview_markdown,
+        render_position_change_markdown,
     )
 
     lines: list[str] = []
-    lines.extend(render_weekly_return_markdown(report.weekly_metrics))
+    if report.performance_overview:
+        lines.extend(render_performance_overview_markdown(report.performance_overview))
+    else:
+        from agent_reach.daily_run.weekly_card_metrics import render_weekly_return_markdown
+
+        lines.extend(render_weekly_return_markdown(report.weekly_metrics))
     lines.extend(build_weekly_pnl_brief(report.to_dict()))
+    lines.extend(render_position_change_markdown(report.position_change))
     lines.extend(render_weekly_risk_markdown(report.risk_metrics))
+    lines.extend(render_week_key_events_markdown(report.key_events))
+    for note in report.notes:
+        if "无早盘 manifest" in note or "周初净值" in note or "缺少周初" in note:
+            lines.append(f"- _{note}_")
+            break
+    lines.append("")
+    return lines
+
+
+def _render_holdings_review_lines(report: WeeklyReport) -> list[str]:
+    from agent_reach.daily_run.weekly_content_scope import (
+        render_holdings_stock_logic_markdown,
+        render_weekly_trade_log_compact_markdown,
+    )
+    from agent_reach.daily_run.weekly_signals import render_holdings_contribution_markdown
+
+    lines: list[str] = []
+    lines.extend(
+        render_holdings_contribution_markdown(
+            report.holdings_contribution,
+            as_of=report.holdings_as_of,
+        )
+    )
+    bench = (report.weekly_metrics or {}).get("benchmark") or {}
+    bench_pct = bench.get("return_pct") if bench.get("ok") else None
+    lines.extend(
+        render_holdings_stock_logic_markdown(
+            report.holdings,
+            holdings_as_of="",
+            benchmark_return_pct=bench_pct,
+        )
+    )
     lines.extend(
         render_weekly_trade_log_compact_markdown(
             report.trade_log_display or report.trade_log,
             report.trade_reconciliation,
         )
     )
-    lines.extend(render_week_key_events_markdown(report.key_events))
-    if (
-        (report.sell_rules_whatif and not report.sell_rules_whatif.get("skipped"))
-        or (report.buy_rules_whatif and not report.buy_rules_whatif.get("skipped"))
-        or (report.intraday_friction_whatif and not report.intraday_friction_whatif.get("skipped"))
-        or (report.intraday_sell_whatif and not report.intraday_sell_whatif.get("skipped"))
-    ):
-        from agent_reach.daily_run.sell_rules_whatif import render_trade_rules_whatif_markdown
-
-        lines.append("")
-        lines.append(
-            render_trade_rules_whatif_markdown(
-                sell=report.sell_rules_whatif,
-                buy=report.buy_rules_whatif,
-                intraday=report.intraday_friction_whatif,
-                intraday_sell=report.intraday_sell_whatif,
-            )
-        )
-    for note in report.notes:
-        if not any(note in line for line in lines):
-            if "无早盘 manifest" in note or "周初净值" in note or "缺少周初" in note:
-                lines.append(f"- _{note}_")
-                break
-    lines.append("")
     return lines
+
+
+def _render_strategy_validation_lines(report: WeeklyReport) -> list[str]:
+    from agent_reach.daily_run.weekly_signals import render_strategy_validation_markdown
+
+    return render_strategy_validation_markdown(report.strategy_validation)
+
+
+def _render_outlook_lines(report: WeeklyReport) -> list[str]:
+    from agent_reach.daily_run.weekly_signals import render_next_week_outlook_markdown
+
+    return render_next_week_outlook_markdown(report.next_week_outlook)
+
+
+def _render_pnl_lines(report: WeeklyReport) -> list[str]:
+    """Legacy alias — overview card body."""
+    return _render_overview_lines(report)
 
 
 def _render_holdings_lines(report: WeeklyReport) -> list[str]:
@@ -1795,13 +1883,17 @@ def render_weekly_sections(report: WeeklyReport) -> list[WeeklySection]:
     """Split weekly report into Feishu-friendly sections (one card each)."""
     sections: list[WeeklySection] = []
 
-    portfolio_lines = (
-        _period_header_lines(report)
-        + _render_pnl_lines(report)
-        + _render_holdings_lines(report)
-        + _render_watchlist_lines(report)
+    overview_lines = _period_header_lines(report) + _render_overview_lines(report)
+    sections.append(WeeklySection("总览", _join_section_lines(overview_lines)))
+
+    holdings_lines = (
+        _period_header_lines(report, continuation=True) + _render_holdings_review_lines(report)
     )
-    sections.append(WeeklySection("盈亏·持仓", _join_section_lines(portfolio_lines)))
+    sections.append(WeeklySection("持仓复盘", _join_section_lines(holdings_lines)))
+
+    strategy_lines = _period_header_lines(report, continuation=True) + _render_strategy_validation_lines(report)
+    if any(line.strip() for line in strategy_lines):
+        sections.append(WeeklySection("策略验证", _join_section_lines(strategy_lines)))
 
     market_lines = _period_header_lines(report, continuation=True) + _render_market_lines(report)
     wl_update = report.watchlist_candidates_update or {}
@@ -1815,6 +1907,14 @@ def render_weekly_sections(report: WeeklyReport) -> list[WeeklySection]:
     pred_lines = _period_header_lines(report, continuation=True) + _render_prediction_verify_lines(report)
     if any(line.strip() for line in pred_lines):
         sections.append(WeeklySection("预测验证", _join_section_lines(pred_lines)))
+
+    outlook_lines = _period_header_lines(report, continuation=True) + _render_outlook_lines(report)
+    if any(line.strip() for line in outlook_lines):
+        sections.append(WeeklySection("下周展望", _join_section_lines(outlook_lines)))
+
+    watchlist_lines = _period_header_lines(report, continuation=True) + _render_watchlist_lines(report)
+    if any(line.strip() for line in watchlist_lines if line.startswith("- **") or line.startswith("- 观察")):
+        sections.append(WeeklySection("观察池", _join_section_lines(watchlist_lines)))
 
     from agent_reach.daily_run.watchlist_intel import render_watchlist_intel_markdown
 
