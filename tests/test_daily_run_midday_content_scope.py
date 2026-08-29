@@ -52,3 +52,26 @@ def test_build_morning_reference_line():
 
 def test_compact_afternoon_display_unchanged():
     assert compact_afternoon_display({"changed": False}) == MIDDAY_PLAN_UNCHANGED
+
+
+def test_enrich_plan_row_signals():
+    from agent_reach.daily_run.midday_content_scope import enrich_plan_row_signals
+
+    row = enrich_plan_row_signals(
+        {
+            "name": "中际旭创",
+            "operation": "减仓",
+            "trigger": "跌破 120.00 元",
+            "verify_label": "已成交",
+            "filled": True,
+            "changed": False,
+            "change_pct": -4.87,
+            "volume_ratio": 1.5,
+            "data_stale": False,
+            "afternoon_action": "维持早盘计划",
+            "stats": {"low": 118.0, "high": 124.0, "price": 119.2},
+        }
+    )
+    assert row["verify_status"] == "✅ 已减仓"
+    assert row["verify_am_actual"] == "最低118.00"
+    assert row["adjust_reason"] == "已按计划减仓"

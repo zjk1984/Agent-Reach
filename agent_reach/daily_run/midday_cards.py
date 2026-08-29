@@ -23,9 +23,9 @@ MIDDAY_CARD_ORDER: tuple[str, ...] = (
 )
 
 MIDDAY_CARD_LABELS: dict[str, str] = {
-    "plan_verify": "📋 早盘验证 · 下午展望",
-    "session_brief": "☀️ 上午盘面要点",
-    "afternoon_risk": "⚠️ 个股风险",
+    "plan_verify": "📋 早盘验证 · 下午调整",
+    "session_brief": "☀️ 持仓上午速览",
+    "afternoon_risk": "⚠️ 上午异常 · 个股风险",
 }
 
 
@@ -58,6 +58,10 @@ class MiddayCardContext:
     market_key_points: list[str] = field(default_factory=list)
     macro_impact_line: str = ""
     morning_reference: str = ""
+    holdings_am_rows: list[dict[str, Any]] = field(default_factory=list)
+    timeline_nodes: list[dict[str, str]] = field(default_factory=list)
+    prediction_verify_lines: list[str] = field(default_factory=list)
+    anomaly_signals: list[str] = field(default_factory=list)
     settings: Optional[dict[str, Any]] = None
 
 
@@ -549,6 +553,7 @@ def build_midday_plan_rows(
     settings: Optional[dict[str, Any]] = None,
     day: Optional[date] = None,
 ) -> list[dict[str, Any]]:
+    from agent_reach.daily_run.midday_content_scope import enrich_plan_row_signals
     from agent_reach.daily_run.morning_cards import _holding_weight_pct
     from agent_reach.daily_run.trade_calendar import today_shanghai
 
@@ -574,6 +579,7 @@ def build_midday_plan_rows(
         snapshot = _snapshot_fields(enriched, code)
         stats = _session_price_stats(holding, snapshot, am_scans)
         change_pct = _change_pct(holding, snapshot)
+        volume_ratio = _optional_float(holding.get("volume_ratio") or snapshot.get("volume_ratio"))
         target_weight = _optional_float(action.get("target_weight_pct"))
         morning_current = _optional_float(action.get("current_weight_pct"))
         am_weight = _holding_weight_pct(holding, portfolio)
@@ -627,6 +633,8 @@ def build_midday_plan_rows(
                 "trigger": trigger,
                 "morning_plan": morning_plan,
                 "am_actual": am_actual,
+                "change_pct": change_pct,
+                "volume_ratio": volume_ratio,
                 "verify": verify,
                 "verify_icon": verify_icon,
                 "verify_label": verify_label,
@@ -670,11 +678,7 @@ def build_midday_plan_rows(
             )
             row["afternoon_action"] = afternoon
             row["changed"] = bool(row.get("changed")) or changed
-    for row in rows:
-        row.pop("stats", None)
-        row.pop("operation", None)
-        row.pop("trigger", None)
-    return rows
+    return [enrich_plan_row_signals(dict(row)) for row in rows]
 
 
 def build_midday_card_context(
@@ -685,9 +689,13 @@ def build_midday_card_context(
 ) -> MiddayCardContext:
     from agent_reach.daily_run.close_morning_handoff import load_close_handoff_for_morning, load_morning_handoff
     from agent_reach.daily_run.midday_content_scope import (
+        build_afternoon_timeline_nodes,
+        build_am_anomaly_signals,
         build_am_market_key_points,
         build_holding_risk_lines,
+        build_holdings_am_brief_rows,
         build_macro_holdings_impact_line,
+        build_morning_prediction_verify_lines,
         build_morning_reference_line,
     )
     from agent_reach.daily_run.trade_calendar import today_shanghai
@@ -728,6 +736,30 @@ def build_midday_card_context(
     )
 
     am_scans = _am_scans(state)
+    holdings_am_rows = build_holdings_am_brief_rows(
+        portfolio=portfolio,
+        plan_rows=plan_rows,
+        enriched=enriched,
+        am_scans=am_scans,
+    )
+    timeline_nodes = build_afternoon_timeline_nodes(
+        enriched=enriched,
+        portfolio=portfolio,
+        settings=settings,
+    )
+    prediction_verify_lines = build_morning_prediction_verify_lines(
+        morning_handoff=morning_handoff,
+        close_handoff=close_handoff,
+        portfolio=portfolio,
+        enriched=enriched,
+    )
+    anomaly_signals = build_am_anomaly_signals(
+        enriched=enriched,
+        portfolio=portfolio,
+        plan_rows=plan_rows,
+        market_key_points=market_key_points,
+    )
+
     last_am = am_scans[-1] if am_scans else scan
     session_brief = {
         "last_scan_id": last_am.get("scan_id") or scan.get("reference_scan_id") or "—",
@@ -769,12 +801,20 @@ def build_midday_card_context(
         market_key_points=market_key_points,
         macro_impact_line=macro_impact_line,
         morning_reference=morning_reference,
+        holdings_am_rows=holdings_am_rows,
+        timeline_nodes=timeline_nodes,
+        prediction_verify_lines=prediction_verify_lines,
+        anomaly_signals=anomaly_signals,
         settings=settings,
     )
 
 
 def render_plan_verify_markdown(ctx: MiddayCardContext) -> str:
-    from agent_reach.daily_run.midday_content_scope import compact_afternoon_display
+    from agent_reach.daily_run.midday_content_scope import (
+        render_adjustment_table,
+        render_timeline_table,
+        render_verify_summary_table,
+    )
 
     lines: list[str] = []
     if ctx.audit_banner:
@@ -791,60 +831,36 @@ def render_plan_verify_markdown(ctx: MiddayCardContext) -> str:
         lines.extend(["", "- 无早盘操作清单，下午维持持仓观察"])
         return "\n".join(lines).strip()
 
-    lines.extend(
-        [
-            "",
-            "**早盘验证**",
-            "",
-            "| 股票 | 早盘计划 | 上午实际 | 验证结果 |",
-            "|------|----------|----------|----------|",
-        ]
-    )
-    for row in ctx.plan_rows:
-        verify = str(row.get("verify") or "—")
-        source = str(row.get("verify_source") or "").strip()
-        if source and source not in verify:
-            verify = f"{verify}（{source}）"
-        lines.append(
-            f"| {row.get('name')} | {row.get('morning_plan')} | {row.get('am_actual')} | {verify} |"
-        )
-
-    lines.extend(
-        [
-            "",
-            "**下午展望**",
-            "",
-            "| 股票 | 下午操作 |",
-            "|------|----------|",
-        ]
-    )
-    for row in ctx.plan_rows:
-        afternoon = compact_afternoon_display(row)
-        if row.get("changed") and afternoon != "维持早盘计划" and "**" not in afternoon:
-            afternoon = f"**{afternoon}**"
-        lines.append(f"| {row.get('name')} | {afternoon} |")
+    lines.extend(["", *render_verify_summary_table(ctx.plan_rows)])
+    lines.extend(render_adjustment_table(ctx.plan_rows))
+    lines.extend(render_timeline_table(ctx.timeline_nodes or []))
     return "\n".join(lines).strip()
 
 
 def render_session_brief_markdown(ctx: MiddayCardContext) -> str:
-    brief = ctx.session_brief or {}
-    if not brief and not ctx.market_key_points:
-        return ""
+    from agent_reach.daily_run.midday_content_scope import render_holdings_am_brief_table
 
+    brief = ctx.session_brief or {}
     lines = [f"**{ctx.data_as_of or MIDDAY_DATA_CUTOFF}**"]
+
+    holdings_lines = render_holdings_am_brief_table(ctx.holdings_am_rows or [])
+    if holdings_lines:
+        lines.extend(["", *holdings_lines])
+
+    pred_lines = list(ctx.prediction_verify_lines or [])
+    if pred_lines:
+        lines.extend(["", "**早盘预测验证**", ""])
+        lines.extend(pred_lines)
+
     key_points = list(ctx.market_key_points or brief.get("market_key_points") or [])
     if key_points:
-        lines.append(f"- {'，'.join(key_points[:5])}")
+        lines.extend(["", f"- {'，'.join(key_points[:5])}"])
 
     macro_line = str(ctx.macro_impact_line or brief.get("macro_impact_line") or "").strip()
     if macro_line:
         lines.append(f"- {macro_line}")
 
-    morning_ref = str(ctx.morning_reference or brief.get("morning_reference") or "").strip()
-    if morning_ref:
-        lines.append(f"- {morning_ref}")
-
-    if not key_points and not macro_line:
+    if not holdings_lines and not pred_lines and not key_points and not macro_line:
         mss = brief.get("mss")
         if mss is not None:
             lines.append(f"- 组合 MSS **{float(mss):.0f}** · **{brief.get('verdict', '观察')}**")
@@ -852,9 +868,23 @@ def render_session_brief_markdown(ctx: MiddayCardContext) -> str:
 
 
 def render_afternoon_risk_markdown(ctx: MiddayCardContext) -> str:
-    if not ctx.risk_lines:
-        return "- 暂无个股特有风险"
-    return "\n".join(ctx.risk_lines[:5]).strip()
+    lines: list[str] = []
+    anomalies = list(ctx.anomaly_signals or [])
+    if anomalies:
+        lines.extend(["**上午异常信号**", ""])
+        lines.extend(anomalies)
+
+    if ctx.risk_lines:
+        if lines:
+            lines.extend(["", "**个股特有风险**", ""])
+        else:
+            lines.append("**个股特有风险**")
+            lines.append("")
+        lines.extend(ctx.risk_lines[:5])
+
+    if not lines:
+        return "- 暂无上午异常或个股特有风险"
+    return "\n".join(lines).strip()
 
 
 _CARD_RENDERERS = {

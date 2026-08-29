@@ -3,11 +3,21 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Optional
 
 from agent_reach.daily_run.snapshot_builder import _normalize_code
 
 MIDDAY_PLAN_UNCHANGED = "维持早盘计划"
+
+_PM_SESSION_NODES: tuple[tuple[str, str, str], ...] = (
+    ("13:00", "下午开盘", "—"),
+    ("13:05", "S8 盘中扫描", "确认 Lookback 与趋势"),
+)
+_MACRO_EVENT_PATTERNS: tuple[tuple[str, str, str], ...] = (
+    (r"美联储|Fed|鲍威尔|非农|CPI|PPI", "14:00", "科技股波动"),
+    (r"复牌|暂停上市", "14:30", "个股波动"),
+)
 
 
 def _optional_float(value: Any) -> Optional[float]:
@@ -309,3 +319,451 @@ def compact_afternoon_display(row: dict[str, Any]) -> str:
         if action.startswith(prefix):
             action = action[len(prefix) :]
     return action or MIDDAY_PLAN_UNCHANGED
+
+
+def _parse_level_from_text(text: str) -> Optional[float]:
+    match = re.search(r"(\d+(?:\.\d+)?)\s*元?", str(text or ""))
+    if match:
+        return float(match.group(1))
+    return None
+
+
+def format_trigger_cond(trigger: str) -> str:
+    raw = str(trigger or "").strip()
+    if not raw or raw in {"—", "-"}:
+        return "—"
+    level = _parse_level_from_text(raw)
+    if level is not None:
+        if "跌破" in raw:
+            return f"跌破{level:g}"
+        if "突破" in raw:
+            return f"突破{level:g}"
+        return f"{level:g}"
+    return raw.replace("元", "").strip()[:20]
+
+
+def format_verify_am_actual(
+    *,
+    operation: str,
+    trigger: str,
+    stats: dict[str, Optional[float]],
+    change_pct: Optional[float],
+    data_stale: bool,
+) -> str:
+    if data_stale:
+        return "⚠️ 数据更新中"
+    op = str(operation or "")
+    trig = str(trigger or "")
+    if op in ("减仓", "止损") or "跌破" in trig:
+        low = stats.get("low")
+        if low is not None:
+            return f"最低{low:.2f}"
+    if op == "加仓" or "突破" in trig:
+        high = stats.get("high")
+        if high is not None:
+            return f"最高{high:.2f}"
+    if change_pct is not None:
+        return f"{change_pct:+.1f}%"
+    return "—"
+
+
+def format_verify_status(row: dict[str, Any]) -> str:
+    if row.get("data_stale"):
+        return "⚠️ 数据更新中"
+    label = str(row.get("verify_label") or "")
+    if row.get("filled") or label == "已成交":
+        op = str(row.get("operation") or "")
+        if op == "减仓":
+            return "✅ 已减仓"
+        return "✅ 已成交"
+    if label == "已执行":
+        return "✅ 已执行"
+    if label == "未触发":
+        return "❌ 未触发"
+    if label == "触及未成交":
+        return "⚠️ 触及未成交"
+    if label in {"超预期", "偏弱"}:
+        return "⚠️ 超预期"
+    if label == "符合预期" or str(row.get("operation") or "") in {"观望", "持有"}:
+        return "⏸️ 维持"
+    return "⏸️ 维持"
+
+
+def _derive_adjusted_operation(row: dict[str, Any]) -> str:
+    afternoon = str(row.get("afternoon_action") or "")
+    if not row.get("changed"):
+        if row.get("filled"):
+            return "维持"
+        return str(row.get("operation") or "维持")
+    if "减仓" in afternoon:
+        return "减仓"
+    if "观望" in afternoon or MIDDAY_PLAN_UNCHANGED in afternoon:
+        return "观望"
+    if "加仓" in afternoon:
+        return "加仓"
+    if "保守" in afternoon:
+        return "观望"
+    return str(row.get("operation") or "维持")
+
+
+def _derive_adjust_reason(row: dict[str, Any], *, change_pct: Optional[float]) -> str:
+    if row.get("filled"):
+        op = str(row.get("operation") or "")
+        if op == "减仓":
+            return "已按计划减仓"
+        if op == "加仓":
+            return "已按计划加仓"
+        return "已按计划执行"
+    label = str(row.get("verify_label") or "")
+    if label == "未触发":
+        vol = row.get("volume_ratio")
+        if vol is not None and float(vol) < 1.0:
+            return "上午未突破，量能不足"
+        return "上午未触发条件"
+    if label == "超预期":
+        vol = row.get("volume_ratio")
+        if vol is not None and float(vol) >= 1.2 and change_pct is not None and change_pct > 0:
+            return "上午放量冲高，技术面超买"
+        return "上午走势超预期"
+    if label == "偏弱":
+        return "上午走弱，宜保守"
+    if label == "触及未成交":
+        return "价格触及但未成交"
+    if not row.get("changed"):
+        return "上午走势符合预期"
+    return "下午策略微调"
+
+
+def _derive_afternoon_trigger(row: dict[str, Any], stats: dict[str, Optional[float]]) -> str:
+    afternoon = str(row.get("afternoon_action") or "")
+    match = re.search(r"\*\*(\d+(?:\.\d+)?)\*\*", afternoon)
+    if match:
+        return f"反弹至{match.group(1)}"
+    if "等待" in afternoon or "明确信号" in afternoon:
+        return "等待明确信号"
+    if row.get("filled"):
+        return "—"
+    if not row.get("changed"):
+        return "—"
+    stop = _parse_level_from_text(str(row.get("trigger") or ""))
+    if stop is not None and "跌破" in str(row.get("afternoon_action") or ""):
+        return f"跌破{stop:g}"
+    price = stats.get("price")
+    if price is not None and "止损" in afternoon:
+        return f"跌破{price:.2f}"
+    return "—"
+
+
+def enrich_plan_row_signals(row: dict[str, Any]) -> dict[str, Any]:
+    stats = dict(row.pop("stats", {}) or {})
+    change_pct = row.get("change_pct")
+    row["verify_operation"] = str(row.get("operation") or "—")
+    row["trigger_cond"] = format_trigger_cond(str(row.get("trigger") or ""))
+    row["verify_am_actual"] = format_verify_am_actual(
+        operation=str(row.get("operation") or ""),
+        trigger=str(row.get("trigger") or ""),
+        stats=stats,
+        change_pct=_optional_float(change_pct),
+        data_stale=bool(row.get("data_stale")),
+    )
+    row["verify_status"] = format_verify_status(row)
+    row["original_plan"] = str(row.get("operation") or "—")
+    row["adjusted_plan"] = _derive_adjusted_operation(row)
+    row["adjust_reason"] = _derive_adjust_reason(row, change_pct=_optional_float(change_pct))
+    row["afternoon_trigger"] = _derive_afternoon_trigger(row, stats)
+    row["operation_status"] = row["verify_status"].replace("✅ 已成交", "✅ 已减仓")
+    return row
+
+
+def build_holdings_am_brief_rows(
+    *,
+    portfolio: dict[str, Any],
+    plan_rows: list[dict[str, Any]],
+    enriched: dict[str, Any],
+    am_scans: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    from agent_reach.daily_run.morning_signals import _prev_close_value
+
+    by_code = {_normalize_code(str(r.get("code") or "")): r for r in plan_rows if r.get("code")}
+    rows: list[dict[str, Any]] = []
+    for holding in portfolio.get("holdings") or []:
+        if not isinstance(holding, dict):
+            continue
+        code = _normalize_code(str(holding.get("code") or ""))
+        if not code:
+            continue
+        name = str(holding.get("name") or code)
+        prev = _prev_close_value(holding, enriched)
+        price = _optional_float(holding.get("price"))
+        high = _optional_float(holding.get("high"))
+        low = _optional_float(holding.get("low"))
+        for scan in am_scans:
+            px = _optional_float(scan.get("price"))
+            if px is not None and px > 0:
+                high = max(filter(None, [high, px]), default=high)
+                low = min(filter(None, [low, px]), default=low)
+        change_pct = _holding_change_pct(holding)
+        vol = _optional_float(holding.get("volume_ratio") or enriched.get("volume_ratio"))
+        plan = by_code.get(code) or {}
+        rows.append(
+            {
+                "code": code,
+                "name": name,
+                "prev_close": prev,
+                "am_close": price,
+                "change_pct": change_pct,
+                "am_high": high,
+                "am_low": low,
+                "volume_ratio": vol,
+                "operation_status": plan.get("operation_status")
+                or plan.get("verify_status")
+                or "⏸️ 持有",
+            }
+        )
+    return rows
+
+
+def build_morning_prediction_verify_lines(
+    *,
+    morning_handoff: Optional[dict[str, Any]],
+    close_handoff: Optional[dict[str, Any]],
+    portfolio: dict[str, Any],
+    enriched: dict[str, Any],
+    limit: int = 2,
+) -> list[str]:
+    from agent_reach.daily_run.morning_signals import _prediction_hit
+
+    lines: list[str] = []
+    seen: set[str] = set()
+
+    def _append(name: str, prediction: str, holding: dict[str, Any]) -> None:
+        if not prediction or name in seen:
+            return
+        pct = _holding_change_pct(holding)
+        if pct is None:
+            return
+        hit = _prediction_hit(prediction, holding, enriched)
+        mark = "✅" if hit else "❌"
+        tail = "符合预期" if hit else "超预期"
+        lines.append(
+            f'- 早盘预测"{name}{prediction[:16]}" → {mark} 上午实际{pct:+.2f}%，{tail}'
+        )
+        seen.add(name)
+
+    for item in (close_handoff or {}).get("tomorrow_focus") or []:
+        if not isinstance(item, dict):
+            continue
+        code = _normalize_code(str(item.get("code") or ""))
+        name = str(item.get("name") or code or "").strip()
+        text = str(item.get("text") or "").strip()
+        if not name or not text:
+            continue
+        holding = _find_holding(portfolio, code, name)
+        _append(name, text, holding)
+        if len(lines) >= limit:
+            return lines[:limit]
+
+    for action in (morning_handoff or {}).get("action_checklist") or []:
+        if not isinstance(action, dict):
+            continue
+        code = _normalize_code(str(action.get("code") or ""))
+        name = str(action.get("name") or code or "").strip()
+        note = str(action.get("reasoning") or action.get("note") or action.get("target_position") or "").strip()
+        if not name or not note:
+            continue
+        holding = _find_holding(portfolio, code, name)
+        _append(name, note, holding)
+        if len(lines) >= limit:
+            break
+    return lines[:limit]
+
+
+def build_am_anomaly_signals(
+    *,
+    enriched: dict[str, Any],
+    portfolio: dict[str, Any],
+    plan_rows: list[dict[str, Any]],
+    market_key_points: list[str],
+) -> list[str]:
+    lines: list[str] = []
+    for row in plan_rows:
+        name = str(row.get("name") or "")
+        pct = _optional_float(row.get("change_pct"))
+        vol = _optional_float(row.get("volume_ratio"))
+        code = _normalize_code(str(row.get("code") or ""))
+        holding = _find_holding(portfolio, code, name)
+        ma20 = _optional_float(holding.get("ma20") or enriched.get("ma20"))
+        price = _optional_float(holding.get("price"))
+        if pct is not None and pct <= -3.0 and vol is not None and vol >= 1.2:
+            detail = f"上午放量下跌 {pct:.2f}%，量比 {vol:.1f}x"
+            if ma20 is not None and price is not None and price < ma20:
+                detail += "，跌破 20 日均线，下午关注是否继续下探"
+            lines.append(f"- 🔴 **{name}**{detail}")
+        elif pct is not None and pct >= 3.0 and vol is not None and vol >= 1.3:
+            lines.append(f"- 🟡 **{name}** 上午放量上涨 {pct:+.2f}%，量比 {vol:.1f}x，注意冲高回落")
+
+    sector_pcts: dict[str, list[float]] = {}
+    for holding in portfolio.get("holdings") or []:
+        if not isinstance(holding, dict):
+            continue
+        sector = str(holding.get("sector") or holding.get("industry") or "").strip()
+        pct = _holding_change_pct(holding)
+        if sector and pct is not None:
+            sector_pcts.setdefault(sector, []).append(pct)
+    if len(sector_pcts) >= 2:
+        avgs = {k: sum(v) / len(v) for k, v in sector_pcts.items()}
+        best = max(avgs, key=avgs.get)
+        worst = min(avgs, key=avgs.get)
+        if avgs[best] - avgs[worst] >= 1.5:
+            lines.append(
+                f"- 🟡 **{worst}** 板块上午整体{'走弱' if avgs[worst] < 0 else '震荡'}，"
+                f"但 **{best}** 细分{'逆势上涨' if avgs[best] > 0 else '相对抗跌'}，板块内部分化加剧"
+            )
+
+    volume_line = next((p for p in market_key_points if p.startswith("成交额")), "")
+    if volume_line:
+        lines.append(f"- 🟡 大盘{volume_line}，下午关注量能是否恢复")
+
+    return lines[:5]
+
+
+def build_afternoon_timeline_nodes(
+    *,
+    enriched: dict[str, Any],
+    portfolio: dict[str, Any],
+    settings: Optional[dict[str, Any]] = None,
+) -> list[dict[str, str]]:
+    nodes: list[dict[str, str]] = [
+        {"time": t, "event": ev, "impact": imp} for t, ev, imp in _PM_SESSION_NODES
+    ]
+    seen: set[str] = set()
+
+    def _add(time_s: str, event: str, impact: str) -> None:
+        key = f"{time_s}:{event}"
+        if key in seen:
+            return
+        seen.add(key)
+        nodes.append({"time": time_s, "event": event[:48], "impact": impact[:32]})
+
+    texts: list[str] = []
+    signals = enriched.get("macro_signals") or {}
+    for bucket in ("hot_topics_matched", "hot_topics"):
+        for item in signals.get(bucket) or []:
+            texts.append(str((item or {}).get("title") if isinstance(item, dict) else item))
+    blob = "；".join(texts)
+    for pattern, time_s, impact in _MACRO_EVENT_PATTERNS:
+        if re.search(pattern, blob, flags=re.IGNORECASE):
+            match = re.search(pattern, blob, flags=re.IGNORECASE)
+            label = match.group(0) if match else "宏观事件"
+            _add(time_s, label, impact)
+
+    try:
+        from agent_reach.daily_run.tradability import is_suspended
+
+        for holding in portfolio.get("holdings") or []:
+            if not isinstance(holding, dict):
+                continue
+            merged = {**enriched, **holding}
+            if is_suspended(merged):
+                name = str(holding.get("name") or holding.get("code") or "个股")
+                _add("14:30", f"{name}复牌/交易状态变化", "个股波动")
+    except Exception:
+        pass
+
+    cfg = (settings or {}).get("midday") or {}
+    for item in cfg.get("time_nodes") or []:
+        if not isinstance(item, dict):
+            continue
+        _add(
+            str(item.get("time") or "—"),
+            str(item.get("event") or "—"),
+            str(item.get("impact") or "—"),
+        )
+
+    nodes.sort(key=lambda r: r.get("time") or "")
+    deduped: list[dict[str, str]] = []
+    seen_rows: set[str] = set()
+    for row in nodes:
+        key = f"{row['time']}|{row['event']}"
+        if key in seen_rows:
+            continue
+        seen_rows.add(key)
+        deduped.append(row)
+    return deduped[:8]
+
+
+def render_verify_summary_table(rows: list[dict[str, Any]]) -> list[str]:
+    if not rows:
+        return []
+    lines = [
+        "**早盘计划验证汇总**",
+        "",
+        "| 股票 | 早盘计划 | 触发条件 | 上午实际 | 状态 |",
+        "|------|----------|----------|----------|------|",
+    ]
+    for row in rows:
+        lines.append(
+            f"| {row.get('name')} | {row.get('verify_operation')} | {row.get('trigger_cond')} "
+            f"| {row.get('verify_am_actual')} | {row.get('verify_status')} |"
+        )
+    return lines
+
+
+def render_adjustment_table(rows: list[dict[str, Any]]) -> list[str]:
+    if not rows:
+        return []
+    lines = [
+        "",
+        "**下午操作调整清单**",
+        "",
+        "| 股票 | 原计划 | 调整后 | 调整原因 | 触发条件 |",
+        "|------|--------|--------|----------|----------|",
+    ]
+    for row in rows:
+        original = str(row.get("original_plan") or "—")
+        if row.get("filled"):
+            original = "—"
+        lines.append(
+            f"| {row.get('name')} | {original} | {row.get('adjusted_plan')} "
+            f"| {row.get('adjust_reason')} | {row.get('afternoon_trigger')} |"
+        )
+    return lines
+
+
+def render_timeline_table(nodes: list[dict[str, str]]) -> list[str]:
+    if not nodes:
+        return []
+    lines = [
+        "",
+        "**下午时间节点**",
+        "",
+        "| 时间 | 事件 | 影响 |",
+        "|------|------|------|",
+    ]
+    for row in nodes:
+        lines.append(f"| {row.get('time')} | {row.get('event')} | {row.get('impact')} |")
+    return lines
+
+
+def render_holdings_am_brief_table(rows: list[dict[str, Any]]) -> list[str]:
+    if not rows:
+        return []
+    lines = [
+        "**持仓上午速览**",
+        "",
+        "| 股票 | 昨收 | 上午收盘 | 涨跌幅 | 上午最高 | 上午最低 | 量比 | 操作状态 |",
+        "|------|------|----------|--------|----------|----------|------|----------|",
+    ]
+    for row in rows:
+        prev_s = f"{float(row['prev_close']):.2f}" if row.get("prev_close") is not None else "—"
+        price_s = f"{float(row['am_close']):.2f}" if row.get("am_close") is not None else "—"
+        pct_s = f"{float(row['change_pct']):+.2f}%" if row.get("change_pct") is not None else "—"
+        high_s = f"{float(row['am_high']):.2f}" if row.get("am_high") is not None else "—"
+        low_s = f"{float(row['am_low']):.2f}" if row.get("am_low") is not None else "—"
+        vol = row.get("volume_ratio")
+        vol_s = f"{float(vol):.1f}x" if vol is not None else "—"
+        lines.append(
+            f"| {row.get('name')} | {prev_s} | {price_s} | {pct_s} | {high_s} | {low_s} "
+            f"| {vol_s} | {row.get('operation_status') or '—'} |"
+        )
+    return lines

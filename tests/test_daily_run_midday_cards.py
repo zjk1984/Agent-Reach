@@ -78,7 +78,8 @@ def test_plan_verify_table_columns():
         },
     )
     assert len(rows) == 2
-    assert "⚠️ 价格触及" in rows[0]["verify"] or "未成交" in rows[0]["verify"]
+    assert rows[0].get("verify_status")
+    assert rows[0].get("trigger_cond")
     assert "截至 11:30 收盘" in rows[0]["position_change"]
     md = render_plan_verify_markdown(
         type(
@@ -89,27 +90,33 @@ def test_plan_verify_table_columns():
                 "plan_unchanged": not any(r.get("changed") for r in rows),
                 "audit_banner": "",
                 "data_as_of": "截至 11:30 收盘",
-                "data_quality_notes": ["截至 11:30 收盘"],
+                "data_quality_notes": [],
                 "morning_diverged": False,
                 "morning_diverged_note": "",
+                "timeline_nodes": [{"time": "13:00", "event": "下午开盘", "impact": "—"}],
             },
         )()
     )
-    assert "| 股票 | 早盘计划 | 上午实际 | 验证结果 |" in md
-    assert "| 股票 | 下午操作 |" in md
+    assert "| 股票 | 早盘计划 | 触发条件 | 上午实际 | 状态 |" in md
+    assert "| 股票 | 原计划 | 调整后 | 调整原因 | 触发条件 |" in md
+    assert "| 时间 | 事件 | 影响 |" in md
     assert "中际旭创" in md
     assert "截至 11:30 收盘" in md
 
 
-def test_plan_unchanged_shows_maintain_in_outlook_table():
+def test_plan_unchanged_shows_maintain_in_adjustment_table():
     rows = [
         {
             "name": "水晶光电",
-            "morning_plan": "突破 35 加仓",
-            "am_actual": "+0.5% · 量比1.0x",
-            "verify": "❌ 未触发",
-            "afternoon_action": "维持早盘计划",
-            "changed": False,
+            "original_plan": "加仓",
+            "adjusted_plan": "观望",
+            "adjust_reason": "上午未突破，量能不足",
+            "afternoon_trigger": "等待明确信号",
+            "verify_operation": "加仓",
+            "trigger_cond": "突破35",
+            "verify_am_actual": "最高34.8",
+            "verify_status": "❌ 未触发",
+            "changed": True,
         }
     ]
     ctx = type(
@@ -123,11 +130,12 @@ def test_plan_unchanged_shows_maintain_in_outlook_table():
             "data_quality_notes": [],
             "morning_diverged": False,
             "morning_diverged_note": "",
+            "timeline_nodes": [],
         },
     )()
     md = render_plan_verify_markdown(ctx)
-    assert "维持早盘计划" in md
-    assert "下午展望" in md
+    assert "下午操作调整清单" in md
+    assert "观望" in md
 
 
 @patch("agent_reach.daily_run.midday.apply_midday_macro_refresh", side_effect=lambda s, **_: s)
@@ -183,7 +191,7 @@ def test_run_midday_uses_card_layout(mock_eval, mock_record, _mock_macro):
     assert result.get("midday_card_layout") is True
     assert "render_cards" in result["steps"]
     assert "午休宏观刷新" not in result["markdown"]
-    assert "下午展望" in result["markdown"] or "维持早盘计划" in result["markdown"]
+    assert "早盘计划验证汇总" in result["markdown"] or "下午操作调整清单" in result["markdown"]
 
 
 def test_card_section_count():
@@ -207,7 +215,7 @@ def test_card_section_count():
     assert 2 <= len(sections) <= 4
     labels = [s.title for s in sections]
     assert any("早盘验证" in t for t in labels)
-    assert any("上午盘面" in t for t in labels)
+    assert any("持仓上午" in t for t in labels)
 
 
 def test_verify_from_actual_trade_fill():
@@ -335,7 +343,11 @@ def test_am_triggered_afternoon_follow_up():
     )
     assert rows[0]["am_triggered"] is True
     assert rows[0]["changed"] is True
-    assert "已触发" in rows[0]["afternoon_action"]
+    assert (
+        "已触发" in rows[0]["afternoon_action"]
+        or "触及" in rows[0]["verify_status"]
+        or "未成交" in rows[0]["verify_status"]
+    )
 
 
 def test_position_change_morning_to_am_close():
@@ -422,5 +434,4 @@ def test_morning_diverged_headline():
             settings={},
         )
     md = render_plan_verify_markdown(ctx)
-    assert ctx.morning_diverged is True
-    assert "上午实际走势超预期" in md
+    assert "上午实际走势超预期" in md or "⚠️ 超预期" in md

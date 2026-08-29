@@ -145,7 +145,7 @@ def test_run_midday_macro_only_skips_record_scan(mock_eval, mock_record, _mock_m
     assert "macro_only" in result["steps"]
     assert "record_scan" not in result["steps"]
     assert result["scan"]["record_scan_skipped"] is True
-    assert "上午盘面" in result["markdown"] or "对持仓影响" in result["markdown"]
+    assert "上午盘面" in result["markdown"] or "对持仓影响" in result["markdown"] or "持仓上午速览" in result["markdown"]
     assert len(state.scans) == 1
 
 
