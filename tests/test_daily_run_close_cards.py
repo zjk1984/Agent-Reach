@@ -5,9 +5,11 @@ from agent_reach.daily_run.close_cards import (
     CLOSE_CARD_ORDER,
     CloseCardContext,
     close_card_layout_enabled,
+    collect_harness_evolution_rows,
     render_close_card_sections,
     render_close_summary_markdown,
     render_forecast_verify_markdown,
+    render_harness_evolution_markdown,
     render_holdings_detail_markdown,
     render_tomorrow_focus_markdown,
 )
@@ -114,6 +116,37 @@ class TestCloseCardLayout:
         assert [s.category for s in sections] == list(CLOSE_CARD_ORDER)
         assert sections[0].title.startswith("📊 收盘摘要 1/")
         assert sections[2].title.startswith("🔮 预测验证")
+        assert sections[4].title.startswith("🧬 Harness 自进化")
+
+    def test_harness_evolution_table(self):
+        ctx = CloseCardContext(
+            portfolio_summary=PORTFOLIO_SUMMARY,
+            settings={
+                "harness_runtime": {
+                    "threshold_overlay": {
+                        "macro_veto": {"base": 40.0, "effective": 30.0},
+                        "min_cash_ratio": {"base": 0.0, "effective": 0.5},
+                    },
+                    "position_overlay": {
+                        "deploy_ratio": {"base": 1.0, "effective": 0.15},
+                    },
+                    "trade_signals": {"defensive_trim": True},
+                }
+            },
+            harness_result={
+                "layer_a": {"refinement_id": "refine_0001", "changes": 2, "proposal_summary": "收盘 Layer A 调参"},
+                "layer_b": {"refinement_id": "refine_0002", "changes": 1, "proposal_summary": "macro_veto 下调"},
+            },
+        )
+        rows = collect_harness_evolution_rows(ctx)
+        assert len(rows) >= 3
+        macro = next(r for r in rows if r["param"] == "宏观否决线")
+        assert macro["baseline"] == "40"
+        assert macro["evolved"] == "30"
+        md = render_harness_evolution_markdown(ctx)
+        assert "| 参数 | 原有 | 自进化 | 原因 |" in md
+        assert "宏观否决线" in md
+        assert "deploy_ratio" in md
 
     def test_summary_contains_pnl_and_table(self):
         ctx = CloseCardContext(

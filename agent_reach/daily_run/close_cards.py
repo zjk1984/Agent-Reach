@@ -1,5 +1,5 @@
 # -*- coding: utf-8
-"""Six-card Feishu layout for merged close review."""
+"""Seven-card Feishu layout for merged close review."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ CLOSE_CARD_ORDER: tuple[str, ...] = (
     "holdings_detail",
     "forecast_verify",
     "key_signals",
+    "harness_evolution",
     "hot_research",
     "tomorrow_focus",
 )
@@ -23,6 +24,7 @@ CLOSE_CARD_LABELS: dict[str, str] = {
     "holdings_detail": "📈 持仓详情",
     "forecast_verify": "🔮 预测验证",
     "key_signals": "⚠️ 关键信号",
+    "harness_evolution": "🧬 Harness 自进化",
     "hot_research": "🔥 热点与调研",
     "tomorrow_focus": "📋 明日关注",
 }
@@ -46,6 +48,7 @@ class CloseCardContext:
     research_results: list[dict[str, Any]] = field(default_factory=list)
     improvements: Optional[dict[str, Any]] = None
     narrative: Optional[dict[str, Any]] = None
+    harness_result: Optional[dict[str, Any]] = None
     primary_snapshot: Optional[dict[str, Any]] = None
     settings: Optional[dict[str, Any]] = None
 
@@ -222,6 +225,7 @@ def build_merged_close_card_context(
     research_results: Optional[list[dict[str, Any]]] = None,
     improvements: Optional[dict[str, Any]] = None,
     narrative: Optional[dict[str, Any]] = None,
+    harness_result: Optional[dict[str, Any]] = None,
     settings: Optional[dict[str, Any]] = None,
 ) -> CloseCardContext:
     verify_by_code: dict[str, dict[str, Any]] = {}
@@ -246,6 +250,7 @@ def build_merged_close_card_context(
         research_results=list(research_results or []),
         improvements=improvements,
         narrative=narrative,
+        harness_result=harness_result,
         primary_snapshot=primary_snapshot,
         settings=settings,
     )
@@ -279,6 +284,7 @@ def build_single_close_card_context(
         research_results=list(run_result.get("research") or []),
         improvements=run_result.get("close_improvements"),
         narrative=run_result.get("llm_narrative"),
+        harness_result=run_result.get("harness") or run_result.get("harness_result"),
         primary_snapshot=snap,
         settings=settings,
     )
@@ -464,6 +470,254 @@ def render_key_signals_markdown(ctx: CloseCardContext) -> str:
     return "\n".join(lines).strip() or "暂无额外关键信号"
 
 
+_POSITION_EVOLUTION_LABELS: dict[str, str] = {
+    "deploy_ratio": "deploy_ratio",
+    "max_position_pct": "max_position_pct",
+}
+
+_RUNTIME_EVOLUTION_LABELS: dict[str, str] = {
+    "trade_min_scans": "最少扫描次数",
+    "trade_every_n_scans": "交易间隔扫描",
+    "max_applied_trades_per_day": "日最大成交笔数",
+    "max_trade_evaluations_per_symbol": "单票最大评估次数",
+    "max_holdings": "最大持仓数",
+    "max_total_symbols": "最大标的数",
+    "holding_lock_days": "锁仓天数",
+    "stop_loss_ma20_pct": "MA20止损比例",
+    "friction_min_return_pct": "摩擦最小收益",
+}
+
+_MSS_WEIGHT_LABELS: dict[str, str] = {
+    "fx": "汇率",
+    "flow": "资金流",
+    "global": "全球",
+    "sentiment": "舆情",
+    "technical": "技术面",
+    "quant": "量化",
+    "risk": "风控",
+}
+
+
+def _overlay_param_label(section: str, key: str) -> str:
+    from agent_reach.daily_run.harness_display import THRESHOLD_REF_SPECS
+
+    if section == "threshold_overlay":
+        return {spec[0]: spec[2] for spec in THRESHOLD_REF_SPECS}.get(key, key)
+    if section == "position_overlay":
+        return _POSITION_EVOLUTION_LABELS.get(key, key)
+    if section == "runtime_overlay":
+        return _RUNTIME_EVOLUTION_LABELS.get(key, key)
+    if section == "mss_weights_overlay":
+        return _MSS_WEIGHT_LABELS.get(key, key)
+    return key
+
+
+def _overlay_value_display(section: str, key: str, value: Any) -> str:
+    from agent_reach.daily_run.harness_display import THRESHOLD_REF_SPECS, format_threshold_display
+
+    if section == "threshold_overlay":
+        fmt_by_key = {spec[0]: spec[3] for spec in THRESHOLD_REF_SPECS}
+        return format_threshold_display(float(value), fmt_by_key.get(key, "float"))
+    if section in ("position_overlay", "runtime_overlay"):
+        val = float(value)
+        if 0 <= val <= 1:
+            return f"{val:.0%}"
+        if val == int(val):
+            return str(int(val))
+        return f"{val:.2f}"
+    if section == "mss_weights_overlay":
+        return f"{float(value):.0%}"
+    if isinstance(value, (list, tuple)):
+        from agent_reach.daily_run.harness_display import format_lookback_weights_pct
+
+        return format_lookback_weights_pct(list(value))
+    return str(value)
+
+
+def _match_harness_reason(param_label: str, param_key: str, reason_lines: list[str]) -> str:
+    needles = [param_label, param_key]
+    for line in reason_lines:
+        text = str(line).strip()
+        if not text:
+            continue
+        for needle in needles:
+            if needle and needle in text:
+                return text[:120]
+    return ""
+
+
+def _harness_tuning_reason_lines(
+    *,
+    portfolio_summary: dict[str, Any],
+    harness_result: Optional[dict[str, Any]],
+    settings: Optional[dict[str, Any]],
+) -> tuple[list[str], str]:
+    from agent_reach.daily_run.report_narrative import build_harness_tuning_summary
+
+    ctx = {
+        "job": "close",
+        "portfolio_daily_pnl": portfolio_summary.get("daily_pnl"),
+        "portfolio_daily_pnl_pct": portfolio_summary.get("daily_pnl_pct"),
+        "sell_rules_whatif": portfolio_summary.get("sell_rules_whatif"),
+        "buy_rules_whatif": portfolio_summary.get("buy_rules_whatif"),
+        "intraday_friction_whatif": portfolio_summary.get("intraday_friction_whatif"),
+        "intraday_sell_whatif": portfolio_summary.get("intraday_sell_whatif"),
+        "harness_result": harness_result or {},
+    }
+    tuning = build_harness_tuning_summary(ctx, settings=settings) or {}
+    lines: list[str] = []
+    for bucket in ("policy_lines", "plan_lines", "playbook_lines", "execution_lines", "overlay_lines"):
+        lines.extend(str(item).strip() for item in (tuning.get(bucket) or []) if str(item).strip())
+    default_reason = str(tuning.get("summary") or "").strip()
+    return lines, default_reason
+
+
+def _session_harness_reason(harness_result: Optional[dict[str, Any]]) -> str:
+    from agent_reach.daily_run.harness import _collect_harness_refinement_layers
+
+    layers = _collect_harness_refinement_layers(harness_result or {})
+    for _label, layer in reversed(layers):
+        summary = str(layer.get("proposal_summary") or layer.get("reason") or "").strip()
+        if summary:
+            return summary[:120]
+    if harness_result and harness_result.get("skipped"):
+        return str(harness_result.get("reason") or harness_result.get("error") or "").strip()[:120]
+    return ""
+
+
+def collect_harness_evolution_rows(ctx: CloseCardContext) -> list[dict[str, str]]:
+    """Build table rows: param / baseline / evolved / reason."""
+    from agent_reach.daily_run.settings import effective_settings
+
+    settings = ctx.settings or {}
+    eff = effective_settings(settings)
+    runtime = dict(eff.get("harness_runtime") or {})
+    harness_result = ctx.harness_result or {}
+    close_skills = harness_result.get("close_skills") or {}
+    if isinstance(close_skills, dict):
+        overlay = close_skills.get("effective_overlay") or {}
+        for section, block in overlay.items():
+            if block and not runtime.get(section):
+                runtime[section] = block
+
+    reason_lines, default_reason = _harness_tuning_reason_lines(
+        portfolio_summary=ctx.portfolio_summary,
+        harness_result=harness_result,
+        settings=settings,
+    )
+    session_reason = _session_harness_reason(harness_result)
+    fallback_reason = session_reason or default_reason or "收盘 harness 累积进化"
+
+    rows: list[dict[str, str]] = []
+    sections = (
+        "threshold_overlay",
+        "position_overlay",
+        "runtime_overlay",
+        "lookback_overlay",
+        "mss_weights_overlay",
+    )
+    for section in sections:
+        block = runtime.get(section) or {}
+        if section == "lookback_overlay":
+            lb = block.get("lookback_weights") if isinstance(block, dict) else block
+            if not isinstance(lb, dict):
+                continue
+            base = lb.get("base")
+            eff_w = lb.get("effective")
+            if not base or not eff_w or list(base) == list(eff_w):
+                continue
+            label = "Lookback 权重"
+            reason = _match_harness_reason(label, "lookback", reason_lines) or fallback_reason
+            rows.append(
+                {
+                    "param": label,
+                    "baseline": _overlay_value_display(section, "lookback_weights", base),
+                    "evolved": _overlay_value_display(section, "lookback_weights", eff_w),
+                    "reason": reason,
+                }
+            )
+            continue
+        if not isinstance(block, dict):
+            continue
+        for key, change in block.items():
+            if not isinstance(change, dict):
+                continue
+            base = change.get("base")
+            eff_val = change.get("effective")
+            if base is None or eff_val is None:
+                continue
+            if isinstance(base, (int, float)) and isinstance(eff_val, (int, float)):
+                if abs(float(eff_val) - float(base)) < 0.0001:
+                    continue
+            label = _overlay_param_label(section, str(key))
+            reason = _match_harness_reason(label, str(key), reason_lines) or fallback_reason
+            rows.append(
+                {
+                    "param": label,
+                    "baseline": _overlay_value_display(section, str(key), base),
+                    "evolved": _overlay_value_display(section, str(key), eff_val),
+                    "reason": reason,
+                }
+            )
+
+    trade_signals = runtime.get("trade_signals") or {}
+    if isinstance(trade_signals, dict):
+        active = [str(k) for k, v in trade_signals.items() if v]
+        if active:
+            rows.append(
+                {
+                    "param": "交易信号",
+                    "baseline": "—",
+                    "evolved": "、".join(active[:6]),
+                    "reason": _match_harness_reason("交易信号", "trade_signals", reason_lines)
+                    or fallback_reason,
+                }
+            )
+    return rows
+
+
+def render_harness_evolution_markdown(ctx: CloseCardContext) -> str:
+    harness_result = ctx.harness_result or {}
+    rows = collect_harness_evolution_rows(ctx)
+    lines: list[str] = []
+
+    if harness_result.get("skipped") and harness_result.get("error") and not rows:
+        return f"Harness 跳过：{harness_result['error']}"
+
+    rollback = harness_result.get("auto_rollback") or {}
+    if rollback.get("triggered"):
+        lines.append(
+            f"⚠️ **坏交易回滚**：{rollback.get('pnl_label') or 'PnL'} "
+            f"{rollback.get('pnl_pct')}% ≤ {rollback.get('threshold')}% · "
+            f"已撤销 {rollback.get('count', 0)} 次 refine"
+        )
+        lines.append("")
+
+    if rows:
+        lines.extend(
+            [
+                "| 参数 | 原有 | 自进化 | 原因 |",
+                "|------|------|--------|------|",
+            ]
+        )
+        for row in rows[:12]:
+            lines.append(
+                f"| {row['param']} | {row['baseline']} | {row['evolved']} | {row['reason'][:80]} |"
+            )
+        return "\n".join(lines).strip()
+
+    from agent_reach.daily_run.report_narrative import _compact_harness_execution_summary
+
+    execution = _compact_harness_execution_summary(harness_result)
+    if execution:
+        lines.append("**本次精炼**")
+        for item in execution[:4]:
+            lines.append(f"- {item}")
+        return "\n".join(lines).strip()
+
+    return "今日无 harness 参数调整，维持当前有效值"
+
+
 def _holding_codes(portfolio_summary: dict[str, Any]) -> set[str]:
     codes: set[str] = set()
     for row in portfolio_summary.get("holdings") or []:
@@ -589,6 +843,7 @@ _CARD_RENDERERS = {
     "holdings_detail": render_holdings_detail_markdown,
     "forecast_verify": render_forecast_verify_markdown,
     "key_signals": render_key_signals_markdown,
+    "harness_evolution": render_harness_evolution_markdown,
     "hot_research": render_hot_research_markdown,
     "tomorrow_focus": render_tomorrow_focus_markdown,
 }

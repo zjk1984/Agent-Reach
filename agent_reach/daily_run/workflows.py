@@ -1135,6 +1135,7 @@ def run_close(
                         "research": research_results,
                         "close_improvements": improvements.to_dict() if improvements else None,
                         "llm_narrative": close_narrative,
+                        "harness": harness_result,
                     },
                     settings=cfg,
                 )

@@ -856,6 +856,7 @@ def run_close_for_symbols(
                     research_results=primary_inner.get("research") or [],
                     improvements=primary_inner.get("close_improvements"),
                     narrative=narrative if not narrative.get("skipped") else None,
+                    harness_result=harness_result if defer_harness_layer_b else None,
                     settings=cfg,
                 )
             )
