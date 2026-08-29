@@ -55,6 +55,7 @@ def test_plan_verify_table_columns():
                         "low": 118.0,
                         "high": 121.0,
                         "prev_close": 122.0,
+                        "volume_ratio": 1.2,
                     },
                     {
                         "code": "000725",
@@ -65,6 +66,7 @@ def test_plan_verify_table_columns():
                         "low": 4.1,
                         "high": 4.5,
                         "prev_close": 4.45,
+                        "volume_ratio": 0.9,
                     },
                 ]
             }
@@ -76,7 +78,8 @@ def test_plan_verify_table_columns():
         },
     )
     assert len(rows) == 2
-    assert rows[0]["verify"].startswith("✅")
+    assert "⚠️ 价格触及" in rows[0]["verify"] or "未成交" in rows[0]["verify"]
+    assert "截至 11:30 收盘" in rows[0]["position_change"]
     md = render_plan_verify_markdown(
         type(
             "Ctx",
@@ -85,11 +88,16 @@ def test_plan_verify_table_columns():
                 "plan_rows": rows,
                 "plan_unchanged": not any(r.get("changed") for r in rows),
                 "audit_banner": "",
+                "data_as_of": "截至 11:30 收盘",
+                "data_quality_notes": ["截至 11:30 收盘"],
+                "morning_diverged": False,
+                "morning_diverged_note": "",
             },
         )()
     )
     assert "| 股票 | 早盘计划 | 上午实际 | 验证结果 | 下午操作 |" in md
     assert "中际旭创" in md
+    assert "截至 11:30 收盘" in md
 
 
 def test_plan_unchanged_headline():
@@ -109,6 +117,10 @@ def test_plan_unchanged_headline():
             ],
             "plan_unchanged": True,
             "audit_banner": "",
+            "data_as_of": "截至 11:30 收盘",
+            "data_quality_notes": [],
+            "morning_diverged": False,
+            "morning_diverged_note": "",
         },
     )()
     md = render_plan_verify_markdown(ctx)
@@ -192,3 +204,219 @@ def test_card_section_count():
     assert 2 <= len(sections) <= 4
     labels = [s.title for s in sections]
     assert any("早盘验证" in t for t in labels)
+
+
+def test_verify_from_actual_trade_fill():
+    rows = build_midday_plan_rows(
+        morning_handoff={
+            "action_checklist": [
+                {
+                    "code": "300308",
+                    "name": "中际旭创",
+                    "operation": "减仓",
+                    "trigger": "跌破 120.00 元",
+                    "target_position": "12% → 10%",
+                    "current_weight_pct": 12.0,
+                    "target_weight_pct": 10.0,
+                }
+            ]
+        },
+        enriched={
+            "portfolio": {
+                "cash": 88000,
+                "holdings": [
+                    {
+                        "code": "300308",
+                        "name": "中际旭创",
+                        "shares": 100,
+                        "price": 119.5,
+                        "open": 119.0,
+                        "low": 118.0,
+                        "high": 121.0,
+                        "prev_close": 122.0,
+                        "volume_ratio": 1.1,
+                    }
+                ],
+            }
+        },
+        state={
+            "trades": [
+                {
+                    "as_of": "2026-08-29T03:15:00+00:00",
+                    "portfolio_applied": True,
+                    "portfolio_actions": [
+                        {
+                            "side": "sell",
+                            "code": "300308",
+                            "shares": 20,
+                            "price": 119.5,
+                        }
+                    ],
+                }
+            ]
+        },
+        day=date(2026, 8, 29),
+    )
+    assert len(rows) == 1
+    assert "已成交" in rows[0]["verify"]
+    assert "119.5" in rows[0]["verify"]
+    assert rows[0]["verify_source"] == "成交记录"
+
+
+def test_stale_data_shows_updating():
+    rows = build_midday_plan_rows(
+        morning_handoff={
+            "action_checklist": [
+                {
+                    "code": "300308",
+                    "name": "中际旭创",
+                    "operation": "持有",
+                    "trigger": "—",
+                    "current_weight_pct": 12.0,
+                    "target_weight_pct": 12.0,
+                }
+            ]
+        },
+        enriched={
+            "portfolio": {
+                "holdings": [
+                    {
+                        "code": "300308",
+                        "name": "中际旭创",
+                        "shares": 100,
+                        "price": 118.5,
+                        "prev_close": 122.0,
+                    }
+                ]
+            }
+        },
+        state={"scans": []},
+    )
+    assert rows[0]["am_actual"] == "⚠️ 数据更新中"
+    assert "待行情更新" in rows[0]["afternoon_action"]
+
+
+def test_am_triggered_afternoon_follow_up():
+    rows = build_midday_plan_rows(
+        morning_handoff={
+            "action_checklist": [
+                {
+                    "code": "300308",
+                    "name": "中际旭创",
+                    "operation": "减仓",
+                    "trigger": "跌破 120.00 元",
+                    "current_weight_pct": 12.0,
+                    "target_weight_pct": 10.0,
+                }
+            ]
+        },
+        enriched={
+            "portfolio": {
+                "cash": 88000,
+                "holdings": [
+                    {
+                        "code": "300308",
+                        "name": "中际旭创",
+                        "shares": 100,
+                        "price": 118.5,
+                        "open": 119.0,
+                        "low": 118.0,
+                        "high": 121.0,
+                        "prev_close": 122.0,
+                        "volume_ratio": 1.0,
+                    }
+                ],
+            }
+        },
+        state={"scans": []},
+    )
+    assert rows[0]["am_triggered"] is True
+    assert "上午已触发" in rows[0]["afternoon_action"]
+
+
+def test_position_change_morning_to_am_close():
+    rows = build_midday_plan_rows(
+        morning_handoff={
+            "action_checklist": [
+                {
+                    "code": "300308",
+                    "name": "中际旭创",
+                    "operation": "减仓",
+                    "trigger": "—",
+                    "current_weight_pct": 12.0,
+                    "target_weight_pct": 10.0,
+                }
+            ]
+        },
+        enriched={
+            "portfolio": {
+                "cash": 90000,
+                "holdings": [
+                    {
+                        "code": "300308",
+                        "name": "中际旭创",
+                        "shares": 80,
+                        "price": 100.0,
+                        "open": 100.0,
+                        "low": 99.0,
+                        "high": 101.0,
+                        "prev_close": 100.0,
+                        "volume_ratio": 1.0,
+                    }
+                ],
+            }
+        },
+        state={"scans": []},
+    )
+    assert "早盘 12% → 上午收盘" in rows[0]["position_change"]
+
+
+def test_morning_diverged_headline():
+    with patch(
+        "agent_reach.daily_run.close_morning_handoff.load_morning_handoff",
+        return_value={
+            "action_checklist": [
+                {
+                    "code": "000725",
+                    "name": "京东方",
+                    "operation": "观望",
+                    "trigger": "—",
+                    "current_weight_pct": 8.0,
+                    "target_weight_pct": 8.0,
+                }
+            ]
+        },
+    ):
+        ctx = build_midday_card_context(
+            {
+                "scan": {"scan_id": "12:30", "mss_final": 55, "verdict": "观察"},
+                "state": {"scans": [{"scan_id": "S7", "mss_final": 55, "verdict": "观察"}]},
+                "enriched": {
+                    "code": "000725",
+                    "name": "京东方",
+                    "portfolio": {
+                        "cash": 92000,
+                        "holdings": [
+                            {
+                                "code": "000725",
+                                "name": "京东方",
+                                "shares": 1000,
+                                "price": 4.5,
+                                "open": 4.2,
+                                "low": 4.1,
+                                "high": 4.5,
+                                "prev_close": 4.45,
+                                "volume_ratio": 0.9,
+                            }
+                        ],
+                    },
+                },
+                "lookback_mss": 54.0,
+                "trend": "flat",
+                "anchor_trend": "flat",
+            },
+            settings={},
+        )
+    md = render_plan_verify_markdown(ctx)
+    assert ctx.morning_diverged is True
+    assert "上午实际走势超预期" in md
