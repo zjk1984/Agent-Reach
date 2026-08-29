@@ -54,6 +54,117 @@ def fetch_benchmark_return_between(
     return None
 
 
+def _is_valid_nav(total: Any) -> bool:
+    try:
+        return total is not None and float(total) > 0
+    except (TypeError, ValueError):
+        return False
+
+
+def _portfolio_total_from_manifest_day(
+    day: date,
+    *,
+    job: str = "close",
+    direction: str = "on_or_before",
+    search_days: int = 21,
+) -> Optional[float]:
+    from agent_reach.daily_run.weekly_report import (
+        _load_week_manifests,
+        _manifest_sort_key,
+        _portfolio_total_from_manifest,
+    )
+
+    for offset in range(search_days):
+        probe = day - timedelta(days=offset) if direction == "on_or_before" else day + timedelta(days=offset)
+        records = sorted(_load_week_manifests(probe, probe), key=_manifest_sort_key)
+        ordered = reversed(records) if direction == "on_or_before" else records
+        for record in ordered:
+            if record.get("job") != job:
+                continue
+            total = _portfolio_total_from_manifest(record)
+            if _is_valid_nav(total):
+                return float(total)
+    return None
+
+
+def _weekly_range_return_from_manifests(
+    week_start: date,
+    week_end: date,
+    *,
+    settings: Optional[dict[str, Any]] = None,
+) -> Optional[float]:
+    from agent_reach.daily_run.weekly_report import (
+        _load_prior_close_total,
+        _load_week_manifests,
+        _portfolio_total_from_manifest,
+    )
+
+    _ = settings
+    manifests = _load_week_manifests(week_start, week_end)
+    morning_totals: list[tuple[str, float]] = []
+    close_totals: list[tuple[str, float]] = []
+    for record in manifests:
+        job = record.get("job")
+        day = str(record.get("_run_date") or "")
+        total = _portfolio_total_from_manifest(record)
+        if not _is_valid_nav(total):
+            continue
+        if job == "morning":
+            morning_totals.append((day, float(total)))
+        elif job == "close":
+            close_totals.append((day, float(total)))
+
+    start_total: Optional[float] = None
+    if morning_totals:
+        morning_totals.sort(key=lambda x: x[0])
+        start_total = morning_totals[0][1]
+    elif close_totals:
+        close_totals.sort(key=lambda x: x[0])
+        start_total = close_totals[0][1]
+    else:
+        start_total = _load_prior_close_total(week_start)
+
+    end_total: Optional[float] = None
+    if close_totals:
+        close_totals.sort(key=lambda x: x[0])
+        end_total = close_totals[-1][1]
+
+    if not _is_valid_nav(start_total) or not _is_valid_nav(end_total):
+        return None
+    return round((float(end_total) - float(start_total)) / float(start_total) * 100.0, 2)
+
+
+def _resolve_portfolio_total(
+    day: date,
+    *,
+    settings: Optional[dict[str, Any]] = None,
+    hint: Optional[float] = None,
+    prefer_job: str = "close",
+    direction: str = "on_or_before",
+) -> Optional[float]:
+    if _is_valid_nav(hint):
+        return float(hint)
+
+    rows_total = _portfolio_total_on_day(day, settings=settings)
+    if _is_valid_nav(rows_total):
+        return float(rows_total)
+
+    if prefer_job == "morning":
+        morning = _portfolio_total_from_manifest_day(day, job="morning", direction=direction)
+        if _is_valid_nav(morning):
+            return morning
+
+    close = _portfolio_total_from_manifest_day(day, job="close", direction=direction)
+    if _is_valid_nav(close):
+        return close
+
+    if prefer_job != "morning":
+        morning = _portfolio_total_from_manifest_day(day, job="morning", direction=direction)
+        if _is_valid_nav(morning):
+            return morning
+    return None
+
+
 def _portfolio_total_on_day(
     day: date,
     *,
@@ -63,9 +174,9 @@ def _portfolio_total_on_day(
 
     rows = load_daily_pnl_history(start=day, end=day, settings=settings)
     for row in reversed(rows):
-        if row.end_total is not None:
+        if _is_valid_nav(row.end_total):
             return float(row.end_total)
-        if row.start_total is not None:
+        if _is_valid_nav(row.start_total):
             return float(row.start_total)
     return None
 
@@ -78,19 +189,74 @@ def portfolio_return_between(
     end_total_hint: Optional[float] = None,
     start_total_hint: Optional[float] = None,
 ) -> Optional[float]:
-    start_total = start_total_hint
-    end_total = end_total_hint
-    if start_total is None:
-        from agent_reach.daily_run.daily_pnl_history import load_daily_pnl_history
+    if start <= end and (start.weekday() <= 4 and end.weekday() <= 4):
+        from agent_reach.daily_run.weekly_report import trading_week_range
 
-        start_rows = load_daily_pnl_history(start=start, end=start, settings=settings)
-        if start_rows:
-            start_total = start_rows[0].start_total or start_rows[0].end_total
-        if start_total is None:
-            start_total = _portfolio_total_on_day(start, settings=settings)
-    if end_total is None:
-        end_total = _portfolio_total_on_day(end, settings=settings)
-    if start_total is None or end_total is None or float(start_total) <= 0:
+        ws, we = trading_week_range(start)
+        if ws == start and we >= end:
+            manifest_ret = _weekly_range_return_from_manifests(ws, min(we, end), settings=settings)
+            if manifest_ret is not None:
+                return manifest_ret
+
+    start_total = _resolve_portfolio_total(
+        start,
+        settings=settings,
+        hint=start_total_hint,
+        prefer_job="morning",
+        direction="on_or_after",
+    )
+    if not _is_valid_nav(start_total):
+        from agent_reach.daily_run.weekly_report import _load_prior_close_total
+
+        start_total = _load_prior_close_total(start + timedelta(days=1))
+    if not _is_valid_nav(start_total):
+        start_total = _portfolio_total_from_manifest_day(
+            start,
+            job="close",
+            direction="on_or_before",
+        )
+
+    end_total = _resolve_portfolio_total(
+        end,
+        settings=settings,
+        hint=end_total_hint,
+        prefer_job="close",
+        direction="on_or_before",
+    )
+
+    if not _is_valid_nav(start_total) or not _is_valid_nav(end_total):
+        return None
+    return round((float(end_total) - float(start_total)) / float(start_total) * 100.0, 2)
+
+
+def _return_since_year_start(
+    week_end: date,
+    *,
+    settings: Optional[dict[str, Any]] = None,
+    end_total_hint: Optional[float] = None,
+) -> Optional[float]:
+    ytd_start = date(week_end.year, 1, 1)
+    start_total = _portfolio_total_from_manifest_day(
+        ytd_start,
+        job="morning",
+        direction="on_or_after",
+        search_days=366,
+    )
+    if not _is_valid_nav(start_total):
+        start_total = _portfolio_total_from_manifest_day(
+            ytd_start,
+            job="close",
+            direction="on_or_after",
+            search_days=366,
+        )
+    end_total = _resolve_portfolio_total(
+        week_end,
+        settings=settings,
+        hint=end_total_hint,
+        prefer_job="close",
+        direction="on_or_before",
+    )
+    if not _is_valid_nav(start_total) or not _is_valid_nav(end_total):
         return None
     return round((float(end_total) - float(start_total)) / float(start_total) * 100.0, 2)
 
@@ -119,7 +285,9 @@ def build_performance_overview_table(
     if week_excess is None and week_port is not None and week_bench is not None:
         week_excess = round(float(week_port) - float(week_bench), 2)
 
-    four_week_start = week_start - timedelta(days=28)
+    from agent_reach.daily_run.weekly_report import trading_week_range
+
+    four_week_start, _ = trading_week_range(week_end - timedelta(days=21))
     four_port = portfolio_return_between(
         four_week_start,
         week_end,
@@ -134,7 +302,7 @@ def build_performance_overview_table(
     )
 
     ytd_start = date(week_end.year, 1, 1)
-    ytd_port = portfolio_return_between(ytd_start, week_end, settings=settings, end_total_hint=end_total)
+    ytd_port = _return_since_year_start(week_end, settings=settings, end_total_hint=end_total)
     ytd_bench = fetch_benchmark_return_between(ytd_start, week_end, settings=settings)
     ytd_excess = (
         round(float(ytd_port) - float(ytd_bench), 2) if ytd_port is not None and ytd_bench is not None else None

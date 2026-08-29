@@ -92,18 +92,27 @@ def build_four_week_trends(
     """Rolling 4 trading weeks: return, win rate, max drawdown per week."""
     from agent_reach.daily_run.weekly_card_metrics import build_weekly_risk_metrics
     from agent_reach.daily_run.weekly_report import _load_week_manifests, trading_week_range
-    from agent_reach.daily_run.weekly_signals import portfolio_return_between
+    from agent_reach.daily_run.weekly_signals import (
+        _weekly_range_return_from_manifests,
+        portfolio_return_between,
+    )
 
     weeks: list[dict[str, Any]] = []
     for offset in range(3, -1, -1):
         ref = week_end - timedelta(days=7 * offset)
         ws, we = trading_week_range(ref)
         label = "本周" if offset == 0 else f"W-{offset}"
+        manifests = _load_week_manifests(ws, we)
         ret = current_return_pct if offset == 0 and current_return_pct is not None else None
         if ret is None:
-            ret = portfolio_return_between(ws, we, settings=settings)
+            ret = portfolio_return_between(
+                ws,
+                we,
+                settings=settings,
+            )
+        if ret is None:
+            ret = _weekly_range_return_from_manifests(ws, we, settings=settings)
 
-        manifests = _load_week_manifests(ws, we)
         daily_totals = _daily_totals_from_manifests(manifests)
         risk = current_risk if offset == 0 and current_risk else build_weekly_risk_metrics(
             week_start=ws,

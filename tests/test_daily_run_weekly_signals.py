@@ -12,6 +12,7 @@ from agent_reach.daily_run.weekly_signals import (
     build_performance_overview_table,
     build_position_change_summary,
     build_strategy_validation,
+    portfolio_return_between,
     render_holdings_contribution_markdown,
     render_next_week_outlook_markdown,
     render_performance_overview_markdown,
@@ -37,6 +38,34 @@ class TestPerformanceOverview:
         assert "组合收益率" in md
         assert "超额收益" in md
         assert "+2.3%" in md or "2.3%" in md
+
+    def test_portfolio_return_between_uses_manifest_fallback(self, monkeypatch):
+        def _fake_load(_start, _end):
+            return [
+                {
+                    "job": "morning",
+                    "_run_date": "2026-08-04",
+                    "payload": {"result": {"portfolio_summary": {"end_total": 100000.0}}},
+                },
+                {
+                    "job": "close",
+                    "_run_date": "2026-08-08",
+                    "payload": {"result": {"portfolio_summary": {"end_total": 102300.0}}},
+                },
+            ]
+
+        monkeypatch.setattr(
+            "agent_reach.daily_run.weekly_report._load_week_manifests",
+            _fake_load,
+        )
+        ret = portfolio_return_between(date(2026, 8, 4), date(2026, 8, 8))
+        assert ret == pytest.approx(2.3)
+
+        trends = __import__(
+            "agent_reach.daily_run.weekly_analytics", fromlist=["build_four_week_trends"]
+        ).build_four_week_trends(week_end=date(2026, 8, 8), current_return_pct=2.3)
+        assert trends["weeks"][-1]["return_pct"] == 2.3
+        assert any(w.get("return_pct") is not None for w in trends["weeks"])
 
 
 class TestHoldingsContribution:
