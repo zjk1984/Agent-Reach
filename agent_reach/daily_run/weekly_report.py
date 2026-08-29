@@ -63,6 +63,12 @@ class WeeklyReport:
     kronos_whatif: Optional[dict[str, Any]] = None
     macro_signals: dict[str, Any] = field(default_factory=dict)
     watchlist_intel: dict[str, Any] = field(default_factory=dict)
+    weekly_metrics: dict[str, Any] = field(default_factory=dict)
+    risk_metrics: dict[str, Any] = field(default_factory=dict)
+    trade_log: list[dict[str, Any]] = field(default_factory=list)
+    trade_reconciliation: dict[str, Any] = field(default_factory=dict)
+    sector_snapshot: dict[str, Any] = field(default_factory=dict)
+    holdings_as_of: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -110,6 +116,12 @@ class WeeklyReport:
             "kronos_whatif": self.kronos_whatif,
             "macro_signals": self.macro_signals,
             "watchlist_intel": self.watchlist_intel,
+            "weekly_metrics": self.weekly_metrics,
+            "risk_metrics": self.risk_metrics,
+            "trade_log": self.trade_log,
+            "trade_reconciliation": self.trade_reconciliation,
+            "sector_snapshot": self.sector_snapshot,
+            "holdings_as_of": self.holdings_as_of,
         }
 
 
@@ -1041,6 +1053,34 @@ def generate_weekly_report(
 
     start_record = _start_manifest_record(manifests, morning_totals, close_totals, week_start)
     end_record = _end_manifest_record(manifests, close_totals)
+    holdings_as_of = f"截至 {week_end.isoformat()} 周五收盘"
+
+    if end_record:
+        snap_end, enriched_end = _merged_enriched_from_manifest(end_record)
+        if snap_end:
+            pf_end = dict(snap_end.get("portfolio") or {})
+            if pf_end.get("holdings"):
+                pf = dict(pf)
+                pf["holdings"] = [dict(h) for h in pf_end["holdings"]]
+                if pf_end.get("cash") is not None:
+                    pf["cash"] = pf_end["cash"]
+                if pf_end.get("cash_ratio") is not None:
+                    pf["cash_ratio"] = pf_end["cash_ratio"]
+                if pf_end.get("watchlist"):
+                    pf["watchlist"] = [dict(w) for w in pf_end["watchlist"]]
+                from agent_reach.daily_run.symbols import sync_snapshot_portfolio
+
+                snap_for_symbols = dict(snapshot)
+                sync_snapshot_portfolio(snap_for_symbols, pf)
+                enriched = build_enriched_symbols(snap_for_symbols)
+                for code, row in enriched_end.items():
+                    if row.get("price") is not None:
+                        enriched.setdefault(code, {})["price"] = float(row["price"])
+                cash_raw = pf.get("cash")
+                cash = float(cash_raw) if cash_raw is not None else cash
+                ratio_raw = pf.get("cash_ratio")
+                cash_ratio = float(ratio_raw) if ratio_raw is not None else cash_ratio
+
     start_cash, start_stock_mv, end_cash, end_stock_mv = _resolve_weekly_balance_parts(
         start_record=start_record,
         end_record=end_record,
@@ -1240,6 +1280,39 @@ def generate_weekly_report(
 
         watchlist_intel = collect_watchlist_intel(pf, settings=settings)
 
+    from agent_reach.daily_run.weekly_card_metrics import (
+        build_holdings_sector_snapshot,
+        build_weekly_return_metrics,
+        build_weekly_risk_metrics,
+        flatten_ledger_trades,
+        reconcile_week_trades,
+    )
+
+    weekly_metrics = build_weekly_return_metrics(
+        week_start=week_start,
+        week_end=week_end,
+        start_total=start_total,
+        end_total=end_total,
+        weekly_pnl=weekly_pnl,
+        weekly_pnl_pct=weekly_pnl_pct,
+        settings=settings,
+    )
+    risk_metrics = build_weekly_risk_metrics(
+        week_start=week_start,
+        week_end=week_end,
+        daily_totals=daily_totals,
+        settings=settings,
+    )
+    trade_log = flatten_ledger_trades(trades)
+    trade_reconciliation = reconcile_week_trades(
+        trades=trades,
+        start_cash=start_cash,
+        end_cash=end_cash,
+        start_stock_mv=start_stock_mv,
+        end_stock_mv=end_stock_mv,
+    )
+    sector_snapshot = build_holdings_sector_snapshot(holdings, settings=settings)
+
     return WeeklyReport(
         week_start=week_start,
         week_end=week_end,
@@ -1283,6 +1356,12 @@ def generate_weekly_report(
         kronos_whatif=kronos_whatif,
         macro_signals=macro_signals,
         watchlist_intel=watchlist_intel,
+        weekly_metrics=weekly_metrics,
+        risk_metrics=risk_metrics,
+        trade_log=trade_log,
+        trade_reconciliation=trade_reconciliation,
+        sector_snapshot=sector_snapshot,
+        holdings_as_of=holdings_as_of,
     )
 
 
@@ -1529,25 +1608,20 @@ def build_weekly_pnl_explanation(report: WeeklyReport | dict[str, Any]) -> list[
 
 
 def _render_pnl_lines(report: WeeklyReport) -> list[str]:
-    lines = ["## 💰 本周盈亏"]
-    if report.weekly_pnl is not None:
-        sign = "+" if report.weekly_pnl >= 0 else ""
-        pct = ""
-        if report.weekly_pnl_pct is not None:
-            pct = f"（{sign}{report.weekly_pnl_pct}%）"
-        lines.append(f"- **组合净值变动：** {sign}¥{report.weekly_pnl:,.2f}{pct}")
-        if report.start_total is not None and report.end_total is not None:
-            lines.append(f"- 周初 ¥{report.start_total:,.2f} → 周末 ¥{report.end_total:,.2f}")
-    else:
-        lines.append("- 暂无完整净值数据（需本周 daily-run manifest）")
-    if report.trades and abs(report.trade_cash_flow) > 0.01:
-        sign = "+" if report.trade_cash_flow >= 0 else ""
-        lines.append(f"- **本周成交现金流（ledger，去重后）：** {sign}¥{report.trade_cash_flow:,.2f}")
+    from agent_reach.daily_run.weekly_card_metrics import (
+        render_weekly_return_markdown,
+        render_weekly_risk_markdown,
+        render_weekly_trade_log_markdown,
+    )
+
+    lines: list[str] = []
+    lines.extend(render_weekly_return_markdown(report.weekly_metrics))
+    lines.extend(render_weekly_risk_markdown(report.risk_metrics))
+    lines.extend(render_weekly_trade_log_markdown(report.trade_log, report.trade_reconciliation))
+
     if report.realized_pnl and abs(report.realized_pnl) > 0.01:
         sign = "+" if report.realized_pnl >= 0 else ""
         lines.append(f"- **本周已实现盈亏（FIFO）：** {sign}¥{report.realized_pnl:,.2f}")
-    if report.trades:
-        lines.append(f"- 成交笔数：**{len(report.trades)}**")
     if (
         (report.sell_rules_whatif and not report.sell_rules_whatif.get("skipped"))
         or (report.buy_rules_whatif and not report.buy_rules_whatif.get("skipped"))
@@ -1582,6 +1656,8 @@ def _render_pnl_lines(report: WeeklyReport) -> list[str]:
 
 def _render_holdings_lines(report: WeeklyReport) -> list[str]:
     lines = ["## 📊 持股（本周盈亏）"]
+    if report.holdings_as_of:
+        lines.append(f"- **{report.holdings_as_of}**")
     if report.holdings:
         rows = sorted(
             report.holdings,
@@ -1633,31 +1709,9 @@ def _render_watchlist_lines(report: WeeklyReport) -> list[str]:
 
 
 def _render_market_lines(report: WeeklyReport) -> list[str]:
-    lines = ["## 🔥 热门板块 / 强势标的"]
-    if report.hot_sectors:
-        for item in report.hot_sectors:
-            lines.append(
-                f"- **{item['name']}** ({item['code']}) {item['change_pct']:+.2f}% · {item['sector']}"
-            )
-    else:
-        lines.append("- 本周暂无涨幅 >1% 的持仓/观察标的")
-    lines.append("")
+    from agent_reach.daily_run.weekly_card_metrics import render_holdings_sector_markdown
 
-    lines.append("## 🏭 板块分析")
-    if report.sector_groups:
-        for sector, symbols in list(report.sector_groups.items())[:6]:
-            parts = []
-            for s in symbols[:4]:
-                name = s.get("name") or s.get("code")
-                chg = s.get("change_pct")
-                if chg is not None:
-                    parts.append(f"{name} {float(chg):+.1f}%")
-                else:
-                    parts.append(str(name))
-            lines.append(f"- **{sector}：** " + "、".join(parts))
-    else:
-        lines.append("- 无板块分组数据")
-    lines.append("")
+    lines = render_holdings_sector_markdown(report.sector_snapshot)
 
     if report.sector_research:
         lines.append("### 板块深度（Exa）")
