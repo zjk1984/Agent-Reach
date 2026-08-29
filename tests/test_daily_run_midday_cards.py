@@ -95,26 +95,28 @@ def test_plan_verify_table_columns():
             },
         )()
     )
-    assert "| 股票 | 早盘计划 | 上午实际 | 验证结果 | 下午操作 |" in md
+    assert "| 股票 | 早盘计划 | 上午实际 | 验证结果 |" in md
+    assert "| 股票 | 下午操作 |" in md
     assert "中际旭创" in md
     assert "截至 11:30 收盘" in md
 
 
-def test_plan_unchanged_headline():
+def test_plan_unchanged_shows_maintain_in_outlook_table():
+    rows = [
+        {
+            "name": "水晶光电",
+            "morning_plan": "突破 35 加仓",
+            "am_actual": "+0.5% · 量比1.0x",
+            "verify": "❌ 未触发",
+            "afternoon_action": "维持早盘计划",
+            "changed": False,
+        }
+    ]
     ctx = type(
         "Ctx",
         (),
         {
-            "plan_rows": [
-                {
-                    "name": "水晶光电",
-                    "morning_plan": "突破 35 加仓",
-                    "am_actual": "最高34.8，未触发",
-                    "verify": "❌ 未触发",
-                    "afternoon_action": "继续等待，跌破 **33.25** 止损",
-                    "changed": False,
-                }
-            ],
+            "plan_rows": rows,
             "plan_unchanged": True,
             "audit_banner": "",
             "data_as_of": "截至 11:30 收盘",
@@ -124,7 +126,8 @@ def test_plan_unchanged_headline():
         },
     )()
     md = render_plan_verify_markdown(ctx)
-    assert "✅ 早盘计划不变，下午维持原策略" in md
+    assert "维持早盘计划" in md
+    assert "下午展望" in md
 
 
 @patch("agent_reach.daily_run.midday.apply_midday_macro_refresh", side_effect=lambda s, **_: s)
@@ -180,7 +183,7 @@ def test_run_midday_uses_card_layout(mock_eval, mock_record, _mock_macro):
     assert result.get("midday_card_layout") is True
     assert "render_cards" in result["steps"]
     assert "午休宏观刷新" not in result["markdown"]
-    assert "早盘计划" in result["markdown"] or "早盘计划不变" in result["markdown"]
+    assert "下午展望" in result["markdown"] or "维持早盘计划" in result["markdown"]
 
 
 def test_card_section_count():
@@ -204,6 +207,7 @@ def test_card_section_count():
     assert 2 <= len(sections) <= 4
     labels = [s.title for s in sections]
     assert any("早盘验证" in t for t in labels)
+    assert any("上午盘面" in t for t in labels)
 
 
 def test_verify_from_actual_trade_fill():
@@ -295,7 +299,6 @@ def test_stale_data_shows_updating():
     assert rows[0]["am_actual"] == "⚠️ 数据更新中"
     assert "待行情更新" in rows[0]["afternoon_action"]
 
-
 def test_am_triggered_afternoon_follow_up():
     rows = build_midday_plan_rows(
         morning_handoff={
@@ -331,7 +334,8 @@ def test_am_triggered_afternoon_follow_up():
         state={"scans": []},
     )
     assert rows[0]["am_triggered"] is True
-    assert "上午已触发" in rows[0]["afternoon_action"]
+    assert rows[0]["changed"] is True
+    assert "已触发" in rows[0]["afternoon_action"]
 
 
 def test_position_change_morning_to_am_close():

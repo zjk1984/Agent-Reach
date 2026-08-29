@@ -23,9 +23,9 @@ MIDDAY_CARD_ORDER: tuple[str, ...] = (
 )
 
 MIDDAY_CARD_LABELS: dict[str, str] = {
-    "plan_verify": "📋 早盘验证 · 下午调整",
-    "session_brief": "☀️ 半天速览",
-    "afternoon_risk": "⚠️ 下午风险提醒",
+    "plan_verify": "📋 早盘验证 · 下午展望",
+    "session_brief": "☀️ 上午盘面要点",
+    "afternoon_risk": "⚠️ 个股风险",
 }
 
 
@@ -55,6 +55,9 @@ class MiddayCardContext:
     data_quality_notes: list[str] = field(default_factory=list)
     morning_diverged: bool = False
     morning_diverged_note: str = ""
+    market_key_points: list[str] = field(default_factory=list)
+    macro_impact_line: str = ""
+    morning_reference: str = ""
     settings: Optional[dict[str, Any]] = None
 
 
@@ -329,13 +332,7 @@ def _format_am_actual(
     price = stats.get("price")
     if change_pct is None or vol is None or price is None:
         return "⚠️ 数据更新中", True
-    parts = [f"{change_pct:+.1f}%"]
-    high = stats.get("high")
-    low = stats.get("low")
-    if high is not None and low is not None:
-        parts.append(f"高{high:.2f}/低{low:.2f}")
-    parts.append(f"量比{vol:.1f}x")
-    return "，".join(parts), False
+    return f"{change_pct:+.1f}% · 量比{vol:.1f}x", False
 
 
 def _format_position_change(
@@ -411,23 +408,24 @@ def _verify_plan(
         return verify, "⚠️", "触及未成交", "价格扫描", False, True, trigger_warning, am_triggered
 
     if operation in ("观望", "持有") or "观望" in plan_lower:
-        open_px = stats.get("open")
-        price = stats.get("price")
         if change_pct is not None:
-            if change_pct >= 1.0 and open_px is not None and price is not None and price > open_px:
-                return (
-                    f"低开高走，{change_pct:+.1f}%",
-                    "⚠️",
-                    "超预期",
-                    "上午行情",
-                    False,
-                    False,
-                    trigger_warning,
-                    am_triggered,
-                )
+            if change_pct >= 1.0 and stats.get("open") is not None and stats.get("price") is not None:
+                open_px = stats.get("open")
+                price = stats.get("price")
+                if open_px is not None and price is not None and price > open_px:
+                    return (
+                        "⚠️ 超预期",
+                        "⚠️",
+                        "超预期",
+                        "上午行情",
+                        False,
+                        False,
+                        trigger_warning,
+                        am_triggered,
+                    )
             if change_pct <= -1.0:
                 return (
-                    f"走弱 {change_pct:+.1f}%",
+                    "⚠️ 偏弱",
                     "⚠️",
                     "偏弱",
                     "上午行情",
@@ -437,7 +435,7 @@ def _verify_plan(
                     am_triggered,
                 )
             return (
-                f"波动 {change_pct:+.1f}%",
+                "✅ 符合预期",
                 "✅",
                 "符合预期",
                 "上午行情",
@@ -453,7 +451,7 @@ def _verify_plan(
 
     if change_pct is not None:
         return (
-            f"上午 {change_pct:+.1f}%，未触发",
+            "❌ 未触发",
             "❌",
             "未触发",
             "价格扫描",
@@ -485,82 +483,62 @@ def _afternoon_action(
     position_change: str,
 ) -> tuple[str, bool]:
     """Return (afternoon_action_markdown, is_changed)."""
+    from agent_reach.daily_run.midday_content_scope import MIDDAY_PLAN_UNCHANGED
+
     target_s = f"{target_weight:.0f}%" if target_weight is not None else "原目标"
-    maintain = f"维持{target_s}仓位" if target_weight is not None else "维持原仓位"
     stop = _parse_level_from_text(trigger)
     price = stats.get("price")
 
-    prefix = ""
-    if position_change:
-        prefix = f"{position_change} · "
-
     if data_stale:
-        return f"{prefix}⚠️ 待行情更新后再定下午操作", False
+        return "⚠️ 待行情更新", False
 
     if trigger_warning:
-        warn_action = f"{trigger_warning}，下午重新确认触发价"
         if am_triggered:
-            warn_action = f"✅ 上午已触发，下午关注后续走势 · {warn_action}"
-        return f"{prefix}{warn_action}", True
+            return f"上午已触发 · {trigger_warning}，下午复核价位", True
+        return f"{trigger_warning}，下午复核触发价", True
 
     if am_triggered and filled:
         rebound = stats.get("high") or stats.get("price")
         if operation == "减仓" and rebound is not None:
-            return (
-                f"{prefix}✅ 上午已触发并成交，下午关注后续走势 · 反弹至 **{rebound:.1f}** 可继续减仓",
-                True,
-            )
+            return f"已成交，反弹至 **{rebound:.1f}** 可继续减", True
         if operation == "加仓":
-            return f"{prefix}✅ 上午已触发并成交，下午关注趋势延续", True
-        return f"{prefix}✅ 上午已触发并成交，下午关注后续走势", False
+            return "已成交，下午关注趋势延续", True
+        return MIDDAY_PLAN_UNCHANGED, False
 
     if am_triggered and not filled:
         if operation == "减仓":
-            return (
-                f"{prefix}✅ 上午已触发，下午关注后续走势 · 限价未成交，可下调卖价或改市价",
-                True,
-            )
+            return "上午已触发未成交，可下调卖价", True
         if operation == "加仓":
-            return (
-                f"{prefix}✅ 上午已触发，下午关注后续走势 · 限价未成交，可上调买价或改市价",
-                True,
-            )
-        return f"{prefix}✅ 上午已触发，下午关注后续走势", True
+            return "上午已触发未成交，可上调买价", True
+        return "上午已触发，下午跟踪", True
 
     if morning_diverged and verify_label in {"超预期", "偏弱"}:
         rebound = stats.get("high") or stats.get("price")
         if rebound is not None and operation in ("观望", "持有", "减仓"):
-            return f"{prefix}上午实际走势超预期，调整下午预测 · 反弹至 **{rebound:.1f}** 减仓", True
-        return f"{prefix}上午实际走势超预期，调整下午预测 · 下午宜保守", True
+            return f"反弹至 **{rebound:.1f}** 减仓", True
+        return "下午宜保守", True
 
     if verify_icon == "✅" and verify_label in {"已成交", "已执行"}:
-        if operation == "减仓":
-            return f"{prefix}{maintain}", False
-        if operation == "加仓":
-            return f"{prefix}按计划加仓至 **{target_s}**", True
+        return MIDDAY_PLAN_UNCHANGED, False
 
     if verify_icon == "❌" and verify_label == "未触发":
         if operation == "加仓" and stop is not None:
             stop_loss = round(stop * 0.95, 2) if stop > 1 else stop
             if price is not None and stop_loss >= price:
-                return f"{prefix}⚠️ 价位待确认 · 止损位高于现价", True
-            return f"{prefix}继续等待，跌破 **{stop_loss:.2f}** 止损", False
-        if operation == "减仓":
-            return f"{prefix}{maintain}", False
-        return f"{prefix}继续等待触发条件", False
+                return "⚠️ 止损位待确认", True
+            return f"跌破 **{stop_loss:.2f}** 止损", False
+        return MIDDAY_PLAN_UNCHANGED, False
 
     if verify_icon == "⚠️" and verify_label == "超预期":
         rebound = stats.get("high") or stats.get("price")
         if rebound is not None:
-            return f"{prefix}反弹至 **{rebound:.1f}** 减仓", True
-        return f"{prefix}**超预期**，下午择机减仓", True
+            return f"反弹至 **{rebound:.1f}** 减仓", True
+        return "下午择机减仓", True
 
-    if not changed:
-        if operation in ("观望", "持有"):
-            return f"{prefix}下午维持观望", False
-        return f"{prefix}{maintain}", False
+    if operation in ("观望", "持有"):
+        return MIDDAY_PLAN_UNCHANGED, False
 
-    return f"{prefix}**{morning_plan}** → {maintain}", True
+    return MIDDAY_PLAN_UNCHANGED, False
 
 
 def build_midday_plan_rows(
@@ -705,14 +683,21 @@ def build_midday_card_context(
     settings: Optional[dict[str, Any]] = None,
     audit: Any = None,
 ) -> MiddayCardContext:
-    from agent_reach.daily_run.close_morning_handoff import load_morning_handoff, render_risk_tracking_markdown
-    from agent_reach.daily_run.morning_cards import MorningCardContext, MorningSymbolRow
+    from agent_reach.daily_run.close_morning_handoff import load_close_handoff_for_morning, load_morning_handoff
+    from agent_reach.daily_run.midday_content_scope import (
+        build_am_market_key_points,
+        build_holding_risk_lines,
+        build_macro_holdings_impact_line,
+        build_morning_reference_line,
+    )
     from agent_reach.daily_run.trade_calendar import today_shanghai
 
     enriched = dict(scan_result.get("enriched") or {})
     state = dict(scan_result.get("state") or {})
     scan = dict(scan_result.get("scan") or {})
     morning_handoff = load_morning_handoff(morning_day=today_shanghai())
+    close_handoff = load_close_handoff_for_morning(settings=settings)
+    portfolio = dict(enriched.get("portfolio") or {})
 
     plan_rows = build_midday_plan_rows(
         morning_handoff=morning_handoff,
@@ -724,22 +709,24 @@ def build_midday_card_context(
     plan_unchanged = not plan_rows or (
         not morning_diverged and not any(r.get("changed") for r in plan_rows)
     )
-    data_quality_notes: list[str] = [MIDDAY_DATA_CUTOFF]
+    data_quality_notes: list[str] = []
     if any(r.get("data_stale") for r in plan_rows):
         data_quality_notes.append("部分标的涨跌幅/量比缺失，已标注「⚠️ 数据更新中」")
     morning_diverged_note = ""
     if morning_diverged:
         morning_diverged_note = "**上午实际走势超预期，调整下午预测如下**"
 
-    trend_map = {
-        "rising": "上升",
-        "falling": "下降",
-        "turning_up": "拐点向上",
-        "turning_down": "拐点向下",
-        "flat": "横盘",
-        "mixed": "震荡",
-        "insufficient": "数据不足",
-    }
+    market_key_points = build_am_market_key_points(enriched, portfolio=portfolio)
+    macro_impact_line = build_macro_holdings_impact_line(
+        enriched,
+        portfolio=portfolio,
+        settings=settings,
+    )
+    morning_reference = build_morning_reference_line(
+        morning_handoff,
+        close_handoff=close_handoff,
+    )
+
     am_scans = _am_scans(state)
     last_am = am_scans[-1] if am_scans else scan
     session_brief = {
@@ -747,38 +734,18 @@ def build_midday_card_context(
         "mss": last_am.get("mss_final") or scan.get("mss_final"),
         "verdict": last_am.get("verdict") or scan.get("verdict") or "观察",
         "lookback_mss": scan_result.get("lookback_mss"),
-        "trend": trend_map.get(
-            str(scan_result.get("anchor_trend") or scan_result.get("trend") or "flat"),
-            "横盘",
-        ),
         "data_as_of": MIDDAY_DATA_CUTOFF,
+        "market_key_points": market_key_points,
+        "macro_impact_line": macro_impact_line,
+        "morning_reference": morning_reference,
     }
 
-    risk_lines: list[str] = []
-    pf = dict(enriched.get("portfolio") or {})
-    code = str(enriched.get("code") or scan.get("code") or "")
-    holding = _holding_for_code(enriched, code)
-    pseudo_ctx = MorningCardContext(
-        portfolio=pf,
-        symbol_rows=[
-            MorningSymbolRow(
-                code=code,
-                name=str(enriched.get("name") or scan.get("name") or code),
-                holding=holding,
-                report=(scan_result.get("evaluation") or {}).get("report") or {},
-                snapshot=enriched,
-            )
-        ],
+    risk_lines = build_holding_risk_lines(
+        portfolio=portfolio,
+        enriched=enriched,
+        evaluation=scan_result.get("evaluation"),
         settings=settings,
     )
-    risk_lines.extend(render_risk_tracking_markdown(pseudo_ctx))
-
-    trend = str(scan_result.get("anchor_trend") or scan_result.get("trend") or "")
-    verdict = str(session_brief.get("verdict") or "")
-    if verdict in {"回避", "观察"} and trend in {"falling", "turning_down"}:
-        risk_lines.append("- 上午 MSS 未确认进攻，**下午宜守现金或轻仓试探**")
-    if scan.get("record_scan_skipped"):
-        risk_lines.append("- 12:30 不写入 MSS 扫描，**13:05 起以 S8+ 扫描确认**")
 
     audit_banner = ""
     if audit is not None and (not getattr(audit, "passed", True) or getattr(audit, "warnings", None)):
@@ -793,33 +760,32 @@ def build_midday_card_context(
         plan_rows=plan_rows,
         plan_unchanged=plan_unchanged,
         session_brief=session_brief,
-        risk_lines=risk_lines[:6],
+        risk_lines=risk_lines[:5],
         audit_banner=audit_banner,
         data_as_of=MIDDAY_DATA_CUTOFF,
         data_quality_notes=data_quality_notes,
         morning_diverged=morning_diverged,
         morning_diverged_note=morning_diverged_note,
+        market_key_points=market_key_points,
+        macro_impact_line=macro_impact_line,
+        morning_reference=morning_reference,
         settings=settings,
     )
 
 
 def render_plan_verify_markdown(ctx: MiddayCardContext) -> str:
+    from agent_reach.daily_run.midday_content_scope import compact_afternoon_display
+
     lines: list[str] = []
     if ctx.audit_banner:
         lines.extend([ctx.audit_banner, "", "---", ""])
 
     lines.append(f"**{ctx.data_as_of or MIDDAY_DATA_CUTOFF}**")
     for note in ctx.data_quality_notes or []:
-        if note != ctx.data_as_of:
-            lines.append(f"- {note}")
+        lines.append(f"- {note}")
 
     if ctx.morning_diverged_note:
         lines.extend(["", ctx.morning_diverged_note])
-
-    if ctx.plan_unchanged:
-        lines.extend(["", "**✅ 早盘计划不变，下午维持原策略**"])
-    else:
-        lines.extend(["", "**下午操作调整（相对早盘计划）**"])
 
     if not ctx.plan_rows:
         lines.extend(["", "- 无早盘操作清单，下午维持持仓观察"])
@@ -828,47 +794,67 @@ def render_plan_verify_markdown(ctx: MiddayCardContext) -> str:
     lines.extend(
         [
             "",
-            "| 股票 | 早盘计划 | 上午实际 | 验证结果 | 下午操作 |",
-            "|------|----------|----------|----------|----------|",
+            "**早盘验证**",
+            "",
+            "| 股票 | 早盘计划 | 上午实际 | 验证结果 |",
+            "|------|----------|----------|----------|",
         ]
     )
     for row in ctx.plan_rows:
-        afternoon = str(row.get("afternoon_action") or "—")
-        if row.get("changed") and "**" not in afternoon:
-            afternoon = f"**{afternoon}**"
         verify = str(row.get("verify") or "—")
         source = str(row.get("verify_source") or "").strip()
         if source and source not in verify:
             verify = f"{verify}（{source}）"
         lines.append(
-            f"| {row.get('name')} | {row.get('morning_plan')} | {row.get('am_actual')} "
-            f"| {verify} | {afternoon} |"
+            f"| {row.get('name')} | {row.get('morning_plan')} | {row.get('am_actual')} | {verify} |"
         )
+
+    lines.extend(
+        [
+            "",
+            "**下午展望**",
+            "",
+            "| 股票 | 下午操作 |",
+            "|------|----------|",
+        ]
+    )
+    for row in ctx.plan_rows:
+        afternoon = compact_afternoon_display(row)
+        if row.get("changed") and afternoon != "维持早盘计划" and "**" not in afternoon:
+            afternoon = f"**{afternoon}**"
+        lines.append(f"| {row.get('name')} | {afternoon} |")
     return "\n".join(lines).strip()
 
 
 def render_session_brief_markdown(ctx: MiddayCardContext) -> str:
     brief = ctx.session_brief or {}
-    if not brief:
+    if not brief and not ctx.market_key_points:
         return ""
-    data_as_of = brief.get("data_as_of") or ctx.data_as_of or MIDDAY_DATA_CUTOFF
-    lines = [
-        f"- **{data_as_of}**",
-        f"- **上午末扫 {brief.get('last_scan_id')}：** MSS **{brief.get('mss', '—')}** · "
-        f"**{brief.get('verdict', '观察')}**",
-    ]
-    if brief.get("lookback_mss") is not None:
-        lines.append(
-            f"- **Lookback：** {float(brief['lookback_mss']):.1f} 分 · 趋势 **{brief.get('trend', '—')}**"
-        )
-    lines.append("- _13:05 起常规盘中扫描确认，勿仅凭午休信息激进调仓_")
+
+    lines = [f"**{ctx.data_as_of or MIDDAY_DATA_CUTOFF}**"]
+    key_points = list(ctx.market_key_points or brief.get("market_key_points") or [])
+    if key_points:
+        lines.append(f"- {'，'.join(key_points[:5])}")
+
+    macro_line = str(ctx.macro_impact_line or brief.get("macro_impact_line") or "").strip()
+    if macro_line:
+        lines.append(f"- {macro_line}")
+
+    morning_ref = str(ctx.morning_reference or brief.get("morning_reference") or "").strip()
+    if morning_ref:
+        lines.append(f"- {morning_ref}")
+
+    if not key_points and not macro_line:
+        mss = brief.get("mss")
+        if mss is not None:
+            lines.append(f"- 组合 MSS **{float(mss):.0f}** · **{brief.get('verdict', '观察')}**")
     return "\n".join(lines).strip()
 
 
 def render_afternoon_risk_markdown(ctx: MiddayCardContext) -> str:
     if not ctx.risk_lines:
-        return "- 暂无新增下午风险提醒"
-    return "\n".join(ctx.risk_lines[:6]).strip()
+        return "- 暂无个股特有风险"
+    return "\n".join(ctx.risk_lines[:5]).strip()
 
 
 _CARD_RENDERERS = {

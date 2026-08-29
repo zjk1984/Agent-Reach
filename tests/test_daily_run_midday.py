@@ -115,7 +115,7 @@ def test_run_midday_records_source_midday_when_record_scan_enabled(mock_eval, mo
     )
     assert mock_record.call_args.kwargs["source"] == "midday"
     assert "record_scan" in result["steps"]
-    assert "早盘验证" in result["markdown"] or "早盘计划" in result["markdown"]
+    assert "早盘验证" in result["markdown"] or "截至 11:30 收盘" in result["markdown"]
 
 
 @patch("agent_reach.daily_run.midday.apply_midday_macro_refresh", side_effect=lambda s, **_: s)
@@ -145,7 +145,7 @@ def test_run_midday_macro_only_skips_record_scan(mock_eval, mock_record, _mock_m
     assert "macro_only" in result["steps"]
     assert "record_scan" not in result["steps"]
     assert result["scan"]["record_scan_skipped"] is True
-    assert "13:05" in result["markdown"] or "S8" in result["markdown"]
+    assert "上午盘面" in result["markdown"] or "对持仓影响" in result["markdown"]
     assert len(state.scans) == 1
 
 
