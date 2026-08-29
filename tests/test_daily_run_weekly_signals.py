@@ -198,7 +198,7 @@ class TestWeeklySections:
         assert "总览" in labels
         assert "持仓复盘" in labels
         assert "策略验证" in labels
-        assert "下周展望" in labels
+        assert "下周展望" not in labels
 
     @patch("agent_reach.daily_run.weekly_report.run_sector_research", return_value=[])
     @patch("agent_reach.daily_run.weekly_report._load_trade_ledger_range", return_value=[])

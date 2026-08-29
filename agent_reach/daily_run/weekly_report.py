@@ -2049,10 +2049,6 @@ def render_weekly_sections(report: WeeklyReport) -> list[WeeklySection]:
     if any(line.strip() for line in pred_lines):
         sections.append(WeeklySection("预测验证", _join_section_lines(pred_lines)))
 
-    outlook_lines = _period_header_lines(report, continuation=True) + _render_outlook_lines(report)
-    if any(line.strip() for line in outlook_lines):
-        sections.append(WeeklySection("下周展望", _join_section_lines(outlook_lines)))
-
     issues_lines = _period_header_lines(report, continuation=True) + _render_pending_issues_lines(report)
     if any(line.strip() for line in issues_lines):
         sections.append(WeeklySection("待办事项", _join_section_lines(issues_lines)))
