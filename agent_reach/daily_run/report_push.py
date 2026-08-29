@@ -45,6 +45,7 @@ _CATEGORY_LABELS: dict[str, str] = {
     "key_signals": "⚠️ 关键信号",
     "hot_research": "🔥 热点与调研",
     "tomorrow_focus": "📋 明日关注",
+    "holdings_overview": "📋 持仓早盘速览",
     "close_improvements": "改进建议",
     "technical_watch": "技术情景",
 }

@@ -297,14 +297,32 @@ def run_morning(
 
     feishu_result = None
     if push:
-        sections = render_morning_sections(
-            team_markdown=team_md,
-            report_markdown=report_md,
-            report=report,
-            harness_markdown=harness_md,
-            narrative=morning_narrative,
-            macro_signals=enriched.get("macro_signals"),
+        from agent_reach.daily_run.morning_cards import (
+            build_single_morning_card_context,
+            morning_card_layout_enabled,
+            render_morning_card_sections,
         )
+
+        if morning_card_layout_enabled(cfg):
+            run_payload = {
+                "snapshot": enriched,
+                "evaluation": evaluation,
+                "team_markdown": team_md,
+                "harness_markdown": harness_md,
+                "llm_narrative": morning_narrative,
+            }
+            sections = render_morning_card_sections(
+                build_single_morning_card_context(run_payload, settings=cfg)
+            )
+        else:
+            sections = render_morning_sections(
+                team_markdown=team_md,
+                report_markdown=report_md,
+                report=report,
+                harness_markdown=harness_md,
+                narrative=morning_narrative,
+                macro_signals=enriched.get("macro_signals"),
+            )
         feishu_result = push_report_sections(
             sections,
             settings=cfg,
@@ -339,6 +357,7 @@ def run_morning(
         "feishu": feishu_result,
         "harness_plan_closeout": plan_close,
         "harness_morning": morning_harness_result,
+        "harness_markdown": harness_md,
         "xueqiu_hit_record": xueqiu_hit_record,
         **({"harness_errors": morning_harness_errors} if morning_harness_errors else {}),
     }

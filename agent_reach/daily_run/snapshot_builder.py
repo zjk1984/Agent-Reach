@@ -506,6 +506,10 @@ def enrich_holding(
             out["price"] = quote["price"]
         if quote.get("change_pct") is not None:
             out["change_pct"] = quote.get("change_pct")
+        if quote.get("open") is not None:
+            out["open"] = quote.get("open")
+        if quote.get("reference_price") is not None:
+            out["prev_close"] = quote.get("reference_price")
         out["name"] = quote.get("name") or out.get("name")
         out["quote_source"] = quote.get("source")
         for k in _TECHNICAL_KEYS:
