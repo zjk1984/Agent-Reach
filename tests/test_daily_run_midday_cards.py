@@ -9,8 +9,10 @@ from agent_reach.daily_run.midday_cards import (
     build_midday_card_context,
     build_midday_plan_rows,
     midday_card_layout_enabled,
+    render_afternoon_risk_markdown,
     render_midday_card_sections,
     render_plan_verify_markdown,
+    render_session_brief_markdown,
 )
 
 
@@ -435,3 +437,46 @@ def test_morning_diverged_headline():
         )
     md = render_plan_verify_markdown(ctx)
     assert "上午实际走势超预期" in md or "⚠️ 超预期" in md
+
+
+def test_midday_am_features_render_in_cards():
+    ctx = build_midday_card_context(
+        {
+            "scan": {"scan_id": "12:30", "mss_final": 55, "verdict": "观察"},
+            "state": {"scans": [{"scan_id": "S7", "mss_final": 55, "verdict": "观察"}]},
+            "enriched": {
+                "portfolio": {
+                    "cash": 20000.0,
+                    "holdings": [
+                        {
+                            "code": "300308",
+                            "name": "中际旭创",
+                            "shares": 100,
+                            "price": 118.5,
+                            "open": 119.0,
+                            "low": 116.5,
+                            "high": 121.0,
+                            "prev_close": 122.0,
+                            "volume_ratio": 1.5,
+                        }
+                    ],
+                },
+                "watchlist_intel": {
+                    "300308": {"announcements": [{"title": "签订重大合同公告"}]},
+                },
+            },
+            "lookback_mss": 54.0,
+            "trend": "flat",
+            "anchor_trend": "flat",
+        },
+        settings={},
+    )
+    plan_md = render_plan_verify_markdown(ctx)
+    brief_md = render_session_brief_markdown(ctx)
+    risk_md = render_afternoon_risk_markdown(ctx)
+
+    assert "调仓窗口提醒" in plan_md
+    assert "14:00" in plan_md
+    assert "上午盈亏" in brief_md
+    assert "午间消息面" in brief_md or "中际旭创" in brief_md
+    assert "T+0" in risk_md

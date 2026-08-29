@@ -65,6 +65,10 @@ class MiddayCardContext:
     anomaly_signals: list[str] = field(default_factory=list)
     anomaly_signal_items: list[dict[str, Any]] = field(default_factory=list)
     morning_handoff: Optional[dict[str, Any]] = None
+    halfday_pnl: Optional[dict[str, Any]] = None
+    rebalance_window_reminder: str = ""
+    lunch_news_lines: list[str] = field(default_factory=list)
+    t0_opportunity_lines: list[str] = field(default_factory=list)
     settings: Optional[dict[str, Any]] = None
 
 
@@ -698,10 +702,14 @@ def build_midday_card_context(
         build_am_market_key_points,
         build_holding_risk_lines,
         build_holdings_am_brief_rows,
+        build_lunch_news_lines,
         build_macro_holdings_impact_line,
         build_morning_prediction_verify_items,
         build_morning_prediction_verify_lines,
         build_morning_reference_line,
+        build_rebalance_window_reminder,
+        build_t0_opportunity_lines,
+        compute_halfday_pnl,
     )
     from agent_reach.daily_run.trade_calendar import today_shanghai
 
@@ -776,6 +784,10 @@ def build_midday_card_context(
         plan_rows=plan_rows,
         market_key_points=market_key_points,
     )
+    halfday_pnl = compute_halfday_pnl(portfolio=portfolio, holdings_am_rows=holdings_am_rows)
+    rebalance_window_reminder = build_rebalance_window_reminder()
+    lunch_news_lines = build_lunch_news_lines(enriched, portfolio)
+    t0_opportunity_lines = build_t0_opportunity_lines(holdings_am_rows)
 
     last_am = am_scans[-1] if am_scans else scan
     session_brief = {
@@ -825,12 +837,17 @@ def build_midday_card_context(
         anomaly_signals=anomaly_signals,
         anomaly_signal_items=anomaly_signal_items,
         morning_handoff=morning_handoff,
+        halfday_pnl=halfday_pnl,
+        rebalance_window_reminder=rebalance_window_reminder,
+        lunch_news_lines=lunch_news_lines,
+        t0_opportunity_lines=t0_opportunity_lines,
         settings=settings,
     )
 
 
 def render_plan_verify_markdown(ctx: MiddayCardContext) -> str:
     from agent_reach.daily_run.midday_content_scope import (
+        build_rebalance_window_reminder,
         render_adjustment_table,
         render_timeline_table,
         render_verify_summary_table,
@@ -848,11 +865,15 @@ def render_plan_verify_markdown(ctx: MiddayCardContext) -> str:
         lines.extend(["", ctx.morning_diverged_note])
 
     if not ctx.plan_rows:
-        lines.extend(["", "- 无早盘操作清单，下午维持持仓观察"])
+        reminder = getattr(ctx, "rebalance_window_reminder", None) or build_rebalance_window_reminder()
+        lines.extend(["", reminder, "", "- 无早盘操作清单，下午维持持仓观察"])
         return "\n".join(lines).strip()
 
     lines.extend(["", *render_verify_summary_table(ctx.plan_rows)])
     lines.extend(render_adjustment_table(ctx.plan_rows))
+    reminder = getattr(ctx, "rebalance_window_reminder", None) or build_rebalance_window_reminder()
+    if reminder:
+        lines.extend(["", reminder])
     lines.extend(render_timeline_table(ctx.timeline_nodes or []))
     return "\n".join(lines).strip()
 
@@ -863,9 +884,18 @@ def render_session_brief_markdown(ctx: MiddayCardContext) -> str:
     brief = ctx.session_brief or {}
     lines = [f"**{ctx.data_as_of or MIDDAY_DATA_CUTOFF}**"]
 
+    pnl_line = str((getattr(ctx, "halfday_pnl", None) or {}).get("line") or "").strip()
+    if pnl_line:
+        lines.extend(["", pnl_line])
+
     holdings_lines = render_holdings_am_brief_table(ctx.holdings_am_rows or [])
     if holdings_lines:
         lines.extend(["", *holdings_lines])
+
+    lunch_news = list(getattr(ctx, "lunch_news_lines", None) or [])
+    if lunch_news:
+        lines.extend(["", "**午间消息面（持仓相关）**", ""])
+        lines.extend(lunch_news)
 
     pred_lines = list(ctx.prediction_verify_lines or [])
     if pred_lines:
@@ -889,9 +919,17 @@ def render_session_brief_markdown(ctx: MiddayCardContext) -> str:
 
 def render_afternoon_risk_markdown(ctx: MiddayCardContext) -> str:
     lines: list[str] = []
+    t0_lines = list(getattr(ctx, "t0_opportunity_lines", None) or [])
+    if t0_lines:
+        lines.extend(["**T+0 操作机会**", ""])
+        lines.extend(t0_lines)
+
     anomalies = list(ctx.anomaly_signals or [])
     if anomalies:
-        lines.extend(["**上午异常信号**", ""])
+        if lines:
+            lines.extend(["", "**上午异常信号**", ""])
+        else:
+            lines.extend(["**上午异常信号**", ""])
         lines.extend(anomalies)
 
     if ctx.risk_lines:

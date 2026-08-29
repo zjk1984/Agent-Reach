@@ -10,6 +10,11 @@ from agent_reach.daily_run.snapshot_builder import _normalize_code
 
 MIDDAY_PLAN_UNCHANGED = "维持早盘计划"
 
+MIDDAY_REBALANCE_REMINDER = (
+    "⏰ **调仓窗口提醒**：A股下午仅 2 小时交易，14:30 后流动性可能下降，"
+    "建议在 **14:00 前**完成主要调仓，避免尾盘被动。"
+)
+
 _PM_SESSION_NODES: tuple[tuple[str, str, str], ...] = (
     ("13:00", "下午开盘", "—"),
     ("13:05", "S8 盘中扫描", "确认 Lookback 与趋势"),
@@ -734,6 +739,185 @@ def build_am_anomaly_signals(
     ]
 
 
+def compute_halfday_pnl(
+    *,
+    portfolio: dict[str, Any],
+    holdings_am_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Half-day P&L from prev close → 11:30 AM mark (holdings + cash baseline)."""
+    cash = _optional_float(portfolio.get("cash")) or 0.0
+    am_by_code = {_normalize_code(str(r.get("code") or "")): r for r in holdings_am_rows if r.get("code")}
+
+    stock_pnl = 0.0
+    base_mv = 0.0
+    has_data = False
+
+    for holding in portfolio.get("holdings") or []:
+        if not isinstance(holding, dict):
+            continue
+        code = _normalize_code(str(holding.get("code") or ""))
+        shares = int(holding.get("shares") or 0)
+        if shares <= 0:
+            continue
+        row = am_by_code.get(code) or {}
+        prev = _optional_float(row.get("prev_close") or holding.get("prev_close") or holding.get("pre_close"))
+        am_px = _optional_float(row.get("am_close") or holding.get("price"))
+        if prev is None or prev <= 0 or am_px is None:
+            continue
+        stock_pnl += shares * (am_px - prev)
+        base_mv += shares * prev
+        has_data = True
+
+    if not has_data:
+        return {"halfday_pnl": None, "halfday_pnl_pct": None, "line": ""}
+
+    start_total = base_mv + cash
+    halfday_pnl = round(stock_pnl, 2)
+    halfday_pnl_pct = round(halfday_pnl / start_total * 100, 2) if start_total > 0 else None
+    sign = "+" if halfday_pnl >= 0 else ""
+    pct_s = f"（{halfday_pnl_pct:+.2f}%）" if halfday_pnl_pct is not None else ""
+    line = f"**上午盈亏：** {sign}¥{halfday_pnl:,.0f}{pct_s}"
+    return {
+        "halfday_pnl": halfday_pnl,
+        "halfday_pnl_pct": halfday_pnl_pct,
+        "line": line,
+        "start_total": round(start_total, 2) if start_total > 0 else None,
+    }
+
+
+def build_rebalance_window_reminder() -> str:
+    return MIDDAY_REBALANCE_REMINDER
+
+
+def build_lunch_news_lines(
+    enriched: dict[str, Any],
+    portfolio: dict[str, Any],
+    *,
+    limit: int = 3,
+) -> list[str]:
+    """11:30–13:00 lunch-break scan: 1–3 messages tied to current holdings."""
+    from agent_reach.daily_run.symbol_news import symbol_news_summary
+    from agent_reach.daily_run.watchlist_intel import _item_title
+
+    lines: list[str] = []
+    seen: set[str] = set()
+    holding_meta: list[tuple[str, str, str]] = []
+    names: set[str] = set()
+    sectors: set[str] = set()
+
+    for holding in portfolio.get("holdings") or []:
+        if not isinstance(holding, dict):
+            continue
+        code = _normalize_code(str(holding.get("code") or ""))
+        name = str(holding.get("name") or code or "").strip()
+        if int(holding.get("shares") or 0) <= 0 or not code:
+            continue
+        holding_meta.append((code, name, str(holding.get("sector") or holding.get("industry") or "")))
+        if name:
+            names.add(name)
+        sector = str(holding.get("sector") or holding.get("industry") or "").strip()
+        if sector:
+            sectors.add(sector)
+
+    intel_by = enriched.get("watchlist_intel") or {}
+    for code, name, _sector in holding_meta:
+        intel = intel_by.get(code) or {}
+        for key, label in (("announcements", "公告"), ("news", "资讯")):
+            for item in (intel.get(key) or [])[:1]:
+                if not isinstance(item, dict):
+                    continue
+                title = _item_title(item)
+                if not title or title in seen:
+                    continue
+                seen.add(title)
+                lines.append(f"- **{name}** {label}：{title[:72]}")
+                if len(lines) >= limit:
+                    return lines[:limit]
+
+    for code, name, _sector in holding_meta:
+        summary = symbol_news_summary(code, enriched, name=name, limit=1)
+        if not summary or summary in seen:
+            continue
+        seen.add(summary)
+        lines.append(f"- {summary[:100]}")
+        if len(lines) >= limit:
+            return lines[:limit]
+
+    signals = enriched.get("macro_signals") or {}
+    for bucket in ("hot_topics_matched", "hot_topics"):
+        for item in signals.get(bucket) or []:
+            title = str((item or {}).get("title") if isinstance(item, dict) else item or "").strip()
+            if not title or title in seen:
+                continue
+            matched = any(n and n in title for n in names) or any(s and s in title for s in sectors)
+            if not matched and bucket != "hot_topics_matched":
+                continue
+            seen.add(title)
+            lines.append(f"- **午间热点：** {title[:72]}")
+            if len(lines) >= limit:
+                return lines[:limit]
+
+    macro_summary = str(enriched.get("macro_summary") or "").strip()
+    if macro_summary and len(lines) < limit:
+        snippet = macro_summary.splitlines()[0][:72]
+        if snippet and snippet not in seen:
+            lines.append(f"- **宏观速览：** {snippet}")
+
+    return lines[:limit]
+
+
+def build_t0_opportunity_lines(
+    holdings_am_rows: list[dict[str, Any]],
+    *,
+    limit: int = 2,
+) -> list[str]:
+    """T+0 hints for volatile held names after AM session."""
+    candidates: list[tuple[float, str]] = []
+
+    for row in holdings_am_rows:
+        name = str(row.get("name") or "—")
+        pct = _optional_float(row.get("change_pct"))
+        prev = _optional_float(row.get("prev_close"))
+        am_close = _optional_float(row.get("am_close"))
+        am_high = _optional_float(row.get("am_high"))
+        am_low = _optional_float(row.get("am_low"))
+        if pct is None or prev is None or prev <= 0:
+            continue
+        intraday_range = None
+        if am_high is not None and am_low is not None and am_high > am_low:
+            intraday_range = (am_high - am_low) / prev * 100.0
+        volatile = abs(pct) >= 2.5 or (intraday_range is not None and intraday_range >= 3.0)
+        if not volatile:
+            continue
+
+        rebound = am_high if am_high is not None else am_close
+        support = am_low if am_low is not None else am_close
+        if rebound is None or support is None:
+            continue
+
+        if pct <= -2.0:
+            text = (
+                f"- **{name}** 上午大跌 {pct:+.2f}%，下午若反弹至 **{rebound:.2f}** "
+                f"可做 T+0 减仓，回落至 **{support:.2f}** 接回"
+            )
+        elif pct >= 2.0:
+            trim = round(rebound + max(prev * 0.003, 0.05), 2)
+            text = (
+                f"- **{name}** 上午强势 {pct:+.2f}%，下午若冲高至 **{trim:.2f}** "
+                f"可 T+0 减仓，回落至 **{am_close:.2f}** 接回"
+            )
+        else:
+            text = (
+                f"- **{name}** 上午振幅较大，可在 **{support:.2f}–{rebound:.2f}** "
+                f"区间考虑 T+0 差价"
+            )
+        score = abs(pct) + (intraday_range or 0.0)
+        candidates.append((score, text))
+
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return [text for _, text in candidates[:limit]]
+
+
 def build_afternoon_timeline_nodes(
     *,
     enriched: dict[str, Any],
@@ -751,6 +935,8 @@ def build_afternoon_timeline_nodes(
             return
         seen.add(key)
         nodes.append({"time": time_s, "event": event[:48], "impact": impact[:32]})
+
+    _add("14:00", "调仓窗口收窄", "建议完成主要操作")
 
     texts: list[str] = []
     signals = enriched.get("macro_signals") or {}
