@@ -307,9 +307,9 @@ class TestWeeklyReportIntegration:
             trade_reconciliation={"ok": True, "buy_total": 0, "sell_total": 0, "cash_delta": 0, "stock_mv_delta": 0},
         )
         text = "\n".join(_render_pnl_lines(report))
-        assert "本周收益（实际净值）" in text
-        assert "本周风险指标" in text
         assert "本周交易日志" in text
+        assert "本周风险指标" in text
+        assert "股票盈亏明细" not in text
 
     @patch("agent_reach.daily_run.eastmoney_market.fetch_indices", return_value={})
     def test_render_market_lines_holdings_sectors_only(self, _mock_fetch):
@@ -326,7 +326,8 @@ class TestWeeklyReportIntegration:
             ),
         )
         text = "\n".join(_render_market_lines(report))
-        assert "持仓相关板块" in text
+        assert "市场环境" in text
+        assert "宏观要闻" in text
         assert "热门板块" not in text
 
     @patch("agent_reach.daily_run.weekly_report.run_sector_research", return_value=[])

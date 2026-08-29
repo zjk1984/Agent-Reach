@@ -2470,11 +2470,7 @@ def _weekly_deterministic(ctx: dict[str, Any]) -> dict[str, Any]:
         focus.append(
             f"盈亏分解：股票 {float(stock_pnl or 0):+,.0f} · 现金 {float(cash_pnl or 0):+,.0f}"
         )
-    overlap = (
-        ctx.get("portfolio_hot_stock_summary")
-        or ctx.get("portfolio_hot_post_summary")
-        or ctx.get("xueqiu_hot_summary")
-    )
+    overlap = ctx.get("portfolio_hot_stock_summary") or ctx.get("portfolio_hot_post_summary")
     if overlap and ctx.get("portfolio_scope") != "symbol":
         focus.insert(1, overlap[:100])
     for idx, extra in enumerate(_narrative_intel_focus(ctx)):
@@ -2493,11 +2489,6 @@ def _weekly_deterministic(ctx: dict[str, Any]) -> dict[str, Any]:
             bits.append(f"换仓及其它 {float(rebalance):+,.0f}")
         if bits:
             focus.append("归因：" + " · ".join(bits))
-    for sec in ctx.get("hot_sectors") or []:
-        name = sec.get("sector") or sec.get("name") or "板块"
-        chg = sec.get("avg_change_pct") or sec.get("change_pct")
-        if chg is not None:
-            focus.append(f"热点 {name} 周均 {float(chg):+.1f}%")
     for imp in ctx.get("process_improvements") or []:
         if imp.get("title"):
             focus.append(f"改进：{imp['title']}")

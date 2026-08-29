@@ -69,6 +69,10 @@ class WeeklyReport:
     trade_reconciliation: dict[str, Any] = field(default_factory=dict)
     sector_snapshot: dict[str, Any] = field(default_factory=dict)
     holdings_as_of: str = ""
+    key_events: list[dict[str, Any]] = field(default_factory=list)
+    macro_brief: list[dict[str, Any]] = field(default_factory=list)
+    prediction_verification: dict[str, Any] = field(default_factory=dict)
+    trade_log_display: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -122,6 +126,10 @@ class WeeklyReport:
             "trade_reconciliation": self.trade_reconciliation,
             "sector_snapshot": self.sector_snapshot,
             "holdings_as_of": self.holdings_as_of,
+            "key_events": self.key_events,
+            "macro_brief": self.macro_brief,
+            "prediction_verification": self.prediction_verification,
+            "trade_log_display": self.trade_log_display,
         }
 
 
@@ -1313,6 +1321,30 @@ def generate_weekly_report(
     )
     sector_snapshot = build_holdings_sector_snapshot(holdings, settings=settings)
 
+    from agent_reach.daily_run.weekly_content_scope import (
+        build_weekly_macro_brief,
+        enrich_trade_log_with_pnl,
+        summarize_week_key_events,
+        summarize_week_prediction_verification,
+    )
+
+    trade_log_display = enrich_trade_log_with_pnl(trade_log, trade_pnl_detail)
+    key_events = summarize_week_key_events(manifests, trades=trades)
+    macro_brief = build_weekly_macro_brief(
+        portfolio=pf,
+        macro_signals=macro_signals,
+        sources=snap_for_symbols.get("sources") if isinstance(snap_for_symbols, dict) else None,
+        sector_snapshot=sector_snapshot,
+        holdings=holdings,
+        market_review_weekly=market_review_weekly,
+        benchmark_excess_pct=weekly_metrics.get("excess_return_pct"),
+    )
+    prediction_verification = summarize_week_prediction_verification(
+        manifests,
+        week_start=week_start,
+        week_end=week_end,
+    )
+
     return WeeklyReport(
         week_start=week_start,
         week_end=week_end,
@@ -1362,6 +1394,10 @@ def generate_weekly_report(
         trade_reconciliation=trade_reconciliation,
         sector_snapshot=sector_snapshot,
         holdings_as_of=holdings_as_of,
+        key_events=key_events,
+        macro_brief=macro_brief,
+        prediction_verification=prediction_verification,
+        trade_log_display=trade_log_display,
     )
 
 
@@ -1611,17 +1647,24 @@ def _render_pnl_lines(report: WeeklyReport) -> list[str]:
     from agent_reach.daily_run.weekly_card_metrics import (
         render_weekly_return_markdown,
         render_weekly_risk_markdown,
-        render_weekly_trade_log_markdown,
+    )
+    from agent_reach.daily_run.weekly_content_scope import (
+        build_weekly_pnl_brief,
+        render_week_key_events_markdown,
+        render_weekly_trade_log_compact_markdown,
     )
 
     lines: list[str] = []
     lines.extend(render_weekly_return_markdown(report.weekly_metrics))
+    lines.extend(build_weekly_pnl_brief(report.to_dict()))
     lines.extend(render_weekly_risk_markdown(report.risk_metrics))
-    lines.extend(render_weekly_trade_log_markdown(report.trade_log, report.trade_reconciliation))
-
-    if report.realized_pnl and abs(report.realized_pnl) > 0.01:
-        sign = "+" if report.realized_pnl >= 0 else ""
-        lines.append(f"- **本周已实现盈亏（FIFO）：** {sign}¥{report.realized_pnl:,.2f}")
+    lines.extend(
+        render_weekly_trade_log_compact_markdown(
+            report.trade_log_display or report.trade_log,
+            report.trade_reconciliation,
+        )
+    )
+    lines.extend(render_week_key_events_markdown(report.key_events))
     if (
         (report.sell_rules_whatif and not report.sell_rules_whatif.get("skipped"))
         or (report.buy_rules_whatif and not report.buy_rules_whatif.get("skipped"))
@@ -1639,59 +1682,25 @@ def _render_pnl_lines(report: WeeklyReport) -> list[str]:
                 intraday_sell=report.intraday_sell_whatif,
             )
         )
-    lines.extend(build_weekly_pnl_explanation(report))
-    if report.trade_pnl_detail:
-        from agent_reach.daily_run.realized_pnl import render_weekly_trade_pnl_markdown
-
-        trade_md = render_weekly_trade_pnl_markdown(report.trade_pnl_detail)
-        if trade_md:
-            lines.append("")
-            lines.extend(trade_md.splitlines())
     for note in report.notes:
         if not any(note in line for line in lines):
-            lines.append(f"- _{note}_")
+            if "无早盘 manifest" in note or "周初净值" in note or "缺少周初" in note:
+                lines.append(f"- _{note}_")
+                break
     lines.append("")
     return lines
 
 
 def _render_holdings_lines(report: WeeklyReport) -> list[str]:
-    lines = ["## 📊 持股（本周盈亏）"]
-    if report.holdings_as_of:
-        lines.append(f"- **{report.holdings_as_of}**")
-    if report.holdings:
-        rows = sorted(
-            report.holdings,
-            key=lambda h: abs(float(h.get("week_chg") or 0)),
-            reverse=True,
-        )
-        for h in rows:
-            week_s = ""
-            if h.get("week_chg") is not None:
-                wc = float(h["week_chg"])
-                pct = h.get("week_chg_pct")
-                pct_s = f"（{float(pct):+.2f}%）" if pct is not None else ""
-                week_s = f" **本周盈亏 ¥{wc:+,.0f}{pct_s}**"
-            chg = h.get("change_pct")
-            chg_s = f" · 今日 {float(chg):+.2f}%" if chg is not None else ""
-            end_px = float(h.get("week_end_price") or h.get("price") or 0)
-            price_s = f" · 周末收盘 ¥{end_px:.2f}"
-            start_s = ""
-            if h.get("week_start_price") is not None:
-                start_s = f" · 周初 ¥{float(h['week_start_price']):.2f}"
-            cost_s = ""
-            if h.get("unrealized_pnl") is not None:
-                up = float(h["unrealized_pnl"])
-                up_pct = h.get("unrealized_pct")
-                up_pct_s = f"（{float(up_pct):+.2f}%）" if up_pct is not None else ""
-                cost_s = f" · 成本浮盈 ¥{up:+,.0f}{up_pct_s}"
-            lines.append(
-                f"- **{h['name']}** ({h['code']}) {h['shares']}股 "
-                f"市值 ¥{h['market_value']:,.0f}{price_s}{start_s}{week_s}{cost_s}{chg_s}"
-            )
-    else:
-        lines.append("- 当前无持仓")
-    lines.append("")
-    return lines
+    from agent_reach.daily_run.weekly_content_scope import render_holdings_stock_logic_markdown
+
+    bench = (report.weekly_metrics or {}).get("benchmark") or {}
+    bench_pct = bench.get("return_pct") if bench.get("ok") else None
+    return render_holdings_stock_logic_markdown(
+        report.holdings,
+        holdings_as_of=report.holdings_as_of,
+        benchmark_return_pct=bench_pct,
+    )
 
 
 def _render_watchlist_lines(report: WeeklyReport) -> list[str]:
@@ -1709,34 +1718,21 @@ def _render_watchlist_lines(report: WeeklyReport) -> list[str]:
 
 
 def _render_market_lines(report: WeeklyReport) -> list[str]:
-    from agent_reach.daily_run.weekly_card_metrics import render_holdings_sector_markdown
+    from agent_reach.daily_run.weekly_content_scope import render_market_environment_markdown
 
-    lines = render_holdings_sector_markdown(report.sector_snapshot)
+    bench = (report.weekly_metrics or {}).get("benchmark")
+    return render_market_environment_markdown(
+        macro_brief=report.macro_brief,
+        market_review_weekly=report.market_review_weekly,
+        sector_snapshot=report.sector_snapshot,
+        benchmark=bench,
+    )
 
-    if report.sector_research:
-        lines.append("### 板块深度（Exa）")
-        for r in report.sector_research:
-            status = "✅" if r.get("success") else "⚠️"
-            lines.append(f"**{status} {r.get('label', '板块')}**")
-            if r.get("summary"):
-                lines.append(r["summary"])
-            lines.append("")
 
-    if report.market_review_weekly:
-        from agent_reach.daily_run.redfox_weekly import render_market_review_weekly_markdown
+def _render_prediction_verify_lines(report: WeeklyReport) -> list[str]:
+    from agent_reach.daily_run.weekly_content_scope import render_weekly_prediction_verify_markdown
 
-        mr_md = render_market_review_weekly_markdown(report.market_review_weekly)
-        if mr_md:
-            lines.append(mr_md)
-
-    if report.hot_topic_diff:
-        from agent_reach.daily_run.redfox_weekly import render_hot_topic_diff_markdown
-
-        diff_md = render_hot_topic_diff_markdown(report.hot_topic_diff)
-        if diff_md:
-            lines.append(diff_md)
-
-    return lines
+    return render_weekly_prediction_verify_markdown(report.prediction_verification)
 
 
 def _render_mss_lines(report: WeeklyReport) -> list[str]:
@@ -1766,13 +1762,8 @@ def _render_mss_lines(report: WeeklyReport) -> list[str]:
 
 
 def _render_experience_lines(report: WeeklyReport) -> list[str]:
-    if not report.experience_snippets:
-        return []
-    lines = ["## 📚 本周经验"]
-    for s in report.experience_snippets:
-        lines.append(f"- {s}")
-    lines.append("")
-    return lines
+    """Skip MSS/prediction snippets — covered by 预测验证 card."""
+    return []
 
 
 def _render_insights_lines(report: WeeklyReport) -> list[str]:
@@ -1819,14 +1810,11 @@ def render_weekly_sections(report: WeeklyReport) -> list[WeeklySection]:
 
         market_lines.append("")
         market_lines.append(render_weekly_candidates_markdown(wl_update))
-    sections.append(WeeklySection("板块·热点", _join_section_lines(market_lines)))
+    sections.append(WeeklySection("市场环境", _join_section_lines(market_lines)))
 
-    from agent_reach.daily_run.xueqiu_hot_display import render_xueqiu_hot_markdown
-
-    xq_md = render_xueqiu_hot_markdown(report.macro_signals)
-    if xq_md.strip():
-        xq_lines = _period_header_lines(report, continuation=True) + [xq_md]
-        sections.append(WeeklySection("雪球热门", _join_section_lines(xq_lines)))
+    pred_lines = _period_header_lines(report, continuation=True) + _render_prediction_verify_lines(report)
+    if any(line.strip() for line in pred_lines):
+        sections.append(WeeklySection("预测验证", _join_section_lines(pred_lines)))
 
     from agent_reach.daily_run.watchlist_intel import render_watchlist_intel_markdown
 
@@ -1839,18 +1827,7 @@ def render_weekly_sections(report: WeeklyReport) -> list[WeeklySection]:
         intel_lines = _period_header_lines(report, continuation=True) + [intel_md]
         sections.append(WeeklySection("观察池情报", _join_section_lines(intel_lines)))
 
-    from agent_reach.daily_run.xueqiu_hit_outcomes import (
-        render_xueqiu_hit_outcomes_markdown,
-        summarize_xueqiu_hit_outcomes,
-    )
-
-    hit_stats = summarize_xueqiu_hit_outcomes()
-    hit_md = render_xueqiu_hit_outcomes_markdown(hit_stats)
-    if hit_md.strip() and int(hit_stats.get("total") or 0) >= 3:
-        hit_lines = _period_header_lines(report, continuation=True) + [hit_md]
-        sections.append(WeeklySection("雪球命中率", _join_section_lines(hit_lines)))
-
-    track_body = _render_mss_lines(report) + _render_experience_lines(report)
+    track_body = _render_mss_lines(report)
     if track_body:
         track_lines = _period_header_lines(report, continuation=True) + track_body
         sections.append(WeeklySection("MSS·经验", _join_section_lines(track_lines)))

@@ -26,7 +26,8 @@ _CATEGORY_LABELS: dict[str, str] = {
     "verify": "验证·预测",
     "daily_portfolio": "盈亏·持仓",
     "weekly_portfolio": "盈亏·持仓",
-    "weekly_market": "板块·热点",
+    "weekly_market": "市场环境",
+    "weekly_prediction": "预测验证",
     "close_market": "全市场复盘",
     "weekly_track": "MSS·经验",
     "weekly_insights": "学习·改进",
@@ -255,8 +256,8 @@ def render_close_sections(
 _WEEKLY_CATEGORY_MAP = {
     "规则解读": "weekly_narrative",
     "盈亏·持仓": "weekly_portfolio",
-    "板块·热点": "weekly_market",
-    "雪球热门": "xueqiu_hot",
+    "市场环境": "weekly_market",
+    "预测验证": "weekly_prediction",
     "MSS·经验": "weekly_track",
     "学习·改进": "weekly_insights",
 }
