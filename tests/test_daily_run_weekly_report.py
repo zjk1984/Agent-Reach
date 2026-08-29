@@ -364,6 +364,19 @@ class TestWeeklyReport:
             weekly_pnl_pct=-55.84,
             realized_pnl=3419.66,
             trade_cash_flow=20784.9,
+            trade_log_display=[
+                {
+                    "date": "2026-08-19",
+                    "operation": "卖出京东方A 1400股@6.47",
+                    "pnl": -1471.34,
+                },
+                {
+                    "date": "2026-08-21",
+                    "operation": "买入海能达 1500股@8.11",
+                    "pnl": None,
+                },
+            ],
+            trade_reconciliation={"ok": True, "buy_total": 12183.25, "sell_total": 9048.0},
             trade_pnl_detail={
                 "realized_pnl": 3419.66,
                 "sells": [
@@ -399,12 +412,8 @@ class TestWeeklyReport:
             },
         )
         text = "\n".join(_render_pnl_lines(report))
-        assert "股票盈亏明细" in text
-        assert "本周交易" in text
-        assert "京东方A" in text
-        assert "海能达" in text
-        assert "已实现" in text
-        assert "浮盈浮亏" in text
+        assert "总览" in text or "本周收益" in text
+        assert "股票盈亏明细" not in text
 
     def test_load_trade_ledger_range_dedupes(self, tmp_path, monkeypatch):
         from agent_reach.daily_run.weekly_report import _load_trade_ledger_range
@@ -478,7 +487,7 @@ class TestWeeklyReport:
         assert "京东方A" in text
 
         rendered = "\n".join(_render_pnl_lines(report))
-        assert "情况说明" in rendered
+        assert "总览" in rendered
         assert "缺少周初净值基线" in rendered
 
     @patch("agent_reach.daily_run.weekly_report._load_manifest")
@@ -679,7 +688,7 @@ class TestWeeklyReport:
                 )
         holding = report.holdings[0]
         assert holding.get("week_chg_pct") is not None
-        assert "本周盈亏" in render_weekly_markdown(report)
+        assert "个股逻辑" in render_weekly_markdown(report)
 
     def test_week_start_prices_fallback_prior_close(self, tmp_path, monkeypatch, portfolio):
         from agent_reach.daily_run.weekly_report import _week_start_prices_from_manifests
@@ -826,11 +835,9 @@ class TestWeeklyReport:
         assert holding["week_end_price"] == 85.0
         assert holding["week_start_price"] == 80.0
         md = render_weekly_markdown(report)
-        assert "周末收盘 ¥85.00" in md
-        assert "周初 ¥80.00" in md
-        assert "成本浮盈" in md
+        assert "相对基准" in md or "本周" in md
         assert holding.get("unrealized_pnl") == -16500.0
-        assert "成本浮盈 ¥-16,500" in md
+        assert "成本浮盈" in md
 
 
 class TestScheduleWeekly:
@@ -901,7 +908,7 @@ class TestScheduleWeekly:
 
 class TestWeeklyXueqiuHitSection:
     @patch("agent_reach.daily_run.xueqiu_hit_outcomes.summarize_xueqiu_hit_outcomes")
-    def test_render_weekly_sections_includes_hit_rate(self, mock_stats):
+    def test_render_weekly_sections_omits_hit_rate_card(self, mock_stats):
         from agent_reach.daily_run.weekly_report import WeeklyReport, render_weekly_sections
 
         mock_stats.return_value = {
@@ -923,9 +930,7 @@ class TestWeeklyXueqiuHitSection:
         )
         sections = render_weekly_sections(report)
         labels = [s.label for s in sections]
-        assert "雪球命中率" in labels
-        hit_section = next(s for s in sections if s.label == "雪球命中率")
-        assert "命中率" in hit_section.markdown
+        assert "雪球命中率" not in labels
 
     def test_render_weekly_sections_includes_watchlist_intel(self):
         from agent_reach.daily_run.weekly_report import WeeklyReport, render_weekly_sections

@@ -30,6 +30,14 @@ def storage_db_reads_allowed(
     explicit_path: bool = False,
 ) -> bool:
     """Whether read-through should query SQLite before local files."""
+    from agent_reach.daily_run.storage.guard import storage_db_reads_blocked_reason
+
+    if storage_db_reads_blocked_reason(
+        settings,
+        file_path=file_path,
+        explicit_path=explicit_path,
+    ):
+        return False
     if explicit_path:
         return False
     if not storage_read_prefer_db(settings):

@@ -41,7 +41,7 @@ def code_to_eastmoney_secid(code: str) -> str:
     return f"{market}.{text}"
 
 
-_EASTMONEY_FIELDS = "f43,f47,f48,f58,f60,f169,f170,f162,f168,f116"
+_EASTMONEY_FIELDS = "f43,f44,f45,f46,f47,f48,f58,f60,f169,f170,f162,f168,f116"
 _EASTMONEY_UA = "Mozilla/5.0 (compatible; AgentReach/1.0)"
 _EASTMONEY_REFERER = "https://quote.eastmoney.com/"
 
@@ -164,6 +164,17 @@ def _fetch_eastmoney(codes: list[str], *, max_retries: int) -> dict[str, dict[st
             "reference_price": prev_close,
             "source": "eastmoney",
         }
+        open_raw = data.get("f46")
+        if open_raw is not None:
+            open_px = round(float(open_raw) / 100.0, 2)
+            if open_px > 0:
+                row["open"] = open_px
+        high_raw = data.get("f44")
+        low_raw = data.get("f45")
+        if high_raw is not None:
+            row["day_high"] = round(float(high_raw) / 100.0, 2)
+        if low_raw is not None:
+            row["day_low"] = round(float(low_raw) / 100.0, 2)
         volume_lots = _parse_eastmoney_nonneg(data.get("f47"))
         if volume_lots is not None:
             row["volume"] = volume_lots * 100  # 手 -> 股

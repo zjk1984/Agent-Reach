@@ -291,6 +291,24 @@ def main():
     p_dr_kronos_bt.add_argument("--folds", type=int, default=0, help="Walk-back folds (default from settings)")
     p_dr_kronos_bt.add_argument("--json", action="store_true", help="JSON output only")
     p_daily_sub.add_parser("sample", help="Print example snapshot JSON to stdout")
+    p_dr_berk = p_daily_sub.add_parser(
+        "berkshire",
+        help="AI Berkshire layer: thesis, drift, quality-screen, rigor",
+    )
+    p_dr_berk_sub = p_dr_berk.add_subparsers(dest="berkshire_action", required=True)
+    p_dr_thesis = p_dr_berk_sub.add_parser("thesis", help="Show or sync investment thesis")
+    p_dr_thesis.add_argument("code", help="Symbol code e.g. 688008")
+    p_dr_thesis.add_argument("--sync", action="store_true", help="Create/update thesis from snapshot")
+    p_dr_thesis.add_argument("--json", action="store_true", help="JSON output")
+    p_dr_drift = p_dr_berk_sub.add_parser("drift", help="Detect thesis drift vs baseline")
+    p_dr_drift.add_argument("code", help="Symbol code")
+    p_dr_drift.add_argument("--json", action="store_true", help="JSON output")
+    p_dr_qs = p_dr_berk_sub.add_parser("quality-screen", help="7-rule quality screen")
+    p_dr_qs.add_argument("code", help="Symbol code")
+    p_dr_qs.add_argument("--json", action="store_true", help="JSON output")
+    p_dr_rigor = p_dr_berk_sub.add_parser("rigor", help="Financial rigor checks on snapshot")
+    p_dr_rigor.add_argument("code", help="Symbol code")
+    p_dr_rigor.add_argument("--json", action="store_true", help="JSON output")
     p_dr_harness = p_daily_sub.add_parser("harness", help="Continual harness: show memory / rollback refine")
     p_dr_harness_sub = p_dr_harness.add_subparsers(dest="harness_action", required=True)
     p_dr_h_show = p_dr_harness_sub.add_parser("show", help="Show harness entries")
@@ -2204,6 +2222,12 @@ def _cmd_daily_run(args):
             print(_json.dumps(result, ensure_ascii=False, indent=2))
         else:
             print(render_gzh_subscriptions_markdown(result))
+        return
+
+    if args.daily_action == "berkshire":
+        from agent_reach.daily_run.berkshire_cli import cmd_berkshire
+
+        cmd_berkshire(args)
         return
 
     if args.daily_action == "harness":

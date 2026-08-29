@@ -92,7 +92,15 @@ def verify_snapshots(
     max_dev = float(threshold_default(cfg, "max_price_deviation_pct"))
 
     code = current.get("code") or baseline.get("code")
-    name = current.get("name") or baseline.get("name")
+    from agent_reach.daily_run.symbols import resolve_symbol_name
+
+    portfolio = current.get("portfolio") or baseline.get("portfolio") or {}
+    name = resolve_symbol_name(
+        portfolio,
+        str(code or ""),
+        fallback=current.get("name") or baseline.get("name"),
+        snapshot=current,
+    )
 
     pb = _f(baseline.get("price"))
     pc = _f(current.get("price"))
@@ -136,6 +144,13 @@ def verify_snapshots(
 
     if vb != vc:
         deviations.append(f"标签由「{vb}」变为「{vc}」")
+
+    from agent_reach.daily_run.berkshire.config import berkshire_enabled
+
+    if berkshire_enabled(cfg, key="financial_rigor_on_verify"):
+        from agent_reach.daily_run.berkshire.financial_rigor import append_verify_deviations
+
+        deviations.extend(append_verify_deviations({}, current))
 
     recommendations: list[str] = []
     if within is False:
@@ -213,6 +228,54 @@ def render_verify_markdown(result: VerifyResult) -> str:
             lines.append(f"- {r}")
 
     return "\n".join(lines)
+
+
+def _strip_forecast_mss_overlap(forecast_review_md: str) -> str:
+    """Drop MSS hit/miss line from forecast block when verify already covers MSS interval."""
+    lines: list[str] = []
+    for line in forecast_review_md.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("- MSS ") and ("✅" in stripped or "❌" in stripped):
+            if "预测" in stripped and "实际" in stripped:
+                continue
+        lines.append(line)
+    return "\n".join(lines).strip()
+
+
+def merge_verify_forecast_markdown(
+    verify_md: str,
+    forecast_review_md: str = "",
+    *,
+    verify: Optional[VerifyResult] = None,
+) -> str:
+    """Single close card body: baseline verify + week forecast review without MSS duplication."""
+    base = (verify_md or "").strip()
+    extra = (forecast_review_md or "").strip()
+    if not extra:
+        return base
+    has_mss_interval = verify is not None and verify.mss_range_baseline is not None
+    if not has_mss_interval and "MSS 预测区间" in base:
+        has_mss_interval = True
+    if has_mss_interval:
+        extra = _strip_forecast_mss_overlap(extra)
+    if not extra:
+        return base
+    if not base:
+        return extra
+    return base + "\n\n---\n\n" + extra
+
+
+def render_close_verify_markdown(
+    result: VerifyResult,
+    *,
+    forecast_review_md: str = "",
+) -> str:
+    """Verify conclusion card including optional forecast review subsection."""
+    return merge_verify_forecast_markdown(
+        render_verify_markdown(result),
+        forecast_review_md,
+        verify=result,
+    )
 
 
 def _parse_mss_range(snapshot: dict[str, Any]) -> Optional[tuple[float, float]]:

@@ -15,6 +15,14 @@ def render_emotion_mss_parallel_markdown(
     if not emotion:
         return ""
 
+    from agent_reach.daily_run.market_breadth_collector import emotion_conclusion_supported
+
+    if not emotion_conclusion_supported(emotion):
+        return (
+            "### ⚖️ 情绪定级 × MSS\n"
+            "- **市场宽度情绪：** 数据不足 · 暂无仓位建议（未参与 MSS 融合）"
+        )
+
     snap = snapshot or {}
     breakdown = dict(snap.get("mss_breakdown") or {})
     rating = emotion.get("rating") or "—"

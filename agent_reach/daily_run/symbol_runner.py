@@ -95,8 +95,29 @@ def run_morning_for_symbols(
     pf = load_portfolio()
     targets = symbols or resolve_target_symbols(pf, cfg, workflow="morning")
     primary = pf.get("primary_code")
+
+    from agent_reach.daily_run.berkshire.pipeline import maybe_adjust_watchlist_morning
+    from agent_reach.daily_run.snapshot_builder import build_and_save as _build_preview
+
+    if targets:
+        preview_snap, _ = _build_preview(
+            report_type="premarket",
+            config=config,
+            primary_code=targets[0],
+            portfolio=pf,
+        )
+        pf, _wl = maybe_adjust_watchlist_morning(pf, preview_snap, cfg)
+        targets = symbols or resolve_target_symbols(pf, cfg, workflow="morning")
+
     merge_push = _should_merge_push(cfg)
     defer_narrative = _defer_narrative_to_merge(cfg)
+    use_morning_cards = merge_push and push
+    try:
+        from agent_reach.daily_run.morning_cards import morning_card_layout_enabled
+
+        use_morning_cards = use_morning_cards and morning_card_layout_enabled(cfg)
+    except ImportError:
+        use_morning_cards = False
     symbol_results: list[dict[str, Any]] = []
     section_groups: list[tuple[str, list]] = []
     expert_snapshots: list[tuple[str, str, dict[str, Any]]] = []
@@ -135,7 +156,7 @@ def run_morning_for_symbols(
                     (name, morning_sections_from_run(run_result, include_xueqiu_hot=False))
                 )
                 report = (run_result.get("evaluation") or {}).get("report") or {}
-                decision_entries.append((name, code, report))
+                decision_entries.append((name, code, report, run_result["snapshot"]))
                 if expert_card_enabled(cfg, workflow="morning"):
                     expert_snapshots.append((name, code, run_result["snapshot"]))
             symbol_results.append(
@@ -158,50 +179,131 @@ def run_morning_for_symbols(
     if push and merge_push and section_groups:
         from agent_reach.config import Config
 
-        merged = merge_sections_by_category(
-            section_groups,
-            report_kind="morning",
-            expert_snapshots=expert_snapshots or None,
-            decision_entries=decision_entries or None,
-        )
-        if symbol_results:
-            from agent_reach.daily_run.report_push import append_merged_xueqiu_hot_section
-
-            primary_snap = symbol_results[0]["result"]["snapshot"]
-            merged = append_merged_xueqiu_hot_section(
-                merged,
-                primary_snap.get("macro_signals"),
-                report_kind="morning",
-                symbol_count=len(decision_entries),
+        if use_morning_cards and symbol_results:
+            from agent_reach.daily_run.morning_cards import (
+                build_merged_morning_card_context,
+                render_morning_card_sections,
             )
-        if defer_narrative and decision_entries:
-            from agent_reach.daily_run.report_narrative import generate_merged_morning_narrative
-            from agent_reach.daily_run.report_push import append_merged_narrative_section
+            from agent_reach.daily_run.team import expert_card_enabled, render_merged_experts_markdown
 
             primary_snap = symbol_results[0]["result"]["snapshot"]
-            narrative = generate_merged_morning_narrative(
-                decision_entries,
+            narrative: dict[str, Any] = {"skipped": True}
+            if defer_narrative and decision_entries:
+                from agent_reach.daily_run.report_narrative import (
+                    generate_merged_morning_narrative,
+                    persist_morning_narrative,
+                )
+
+                narrative = generate_merged_morning_narrative(
+                    decision_entries,
+                    primary_snapshot=primary_snap,
+                    settings=cfg,
+                )
+                symbol_results[0]["result"]["llm_narrative"] = narrative
+                persist_morning_narrative(narrative)
+
+            team_md = ""
+            if expert_card_enabled(cfg, workflow="morning") and expert_snapshots:
+                if len(expert_snapshots) > 1:
+                    team_md = render_merged_experts_markdown(expert_snapshots)
+                else:
+                    from agent_reach.daily_run.team import render_team_markdown
+
+                    team_md = render_team_markdown(expert_snapshots[0][2])
+
+            harness_md = ""
+            primary_result = symbol_results[0]["result"]
+            for key in ("harness_markdown",):
+                harness_md = str(primary_result.get(key) or "").strip()
+                if harness_md:
+                    break
+            if not harness_md:
+                from agent_reach.daily_run.workflows import _harness_push_summary_enabled
+
+                if _harness_push_summary_enabled(cfg, report_kind="morning"):
+                    from agent_reach.daily_run.harness import format_harness_push_markdown
+
+                    harness_payload = {
+                        "morning": (primary_result.get("harness_morning") or {}),
+                    }
+                    harness_md = format_harness_push_markdown(
+                        harness_payload,
+                        job="morning",
+                        settings=cfg,
+                    )
+
+            morning_ctx = build_merged_morning_card_context(
+                symbol_results=symbol_results,
+                decision_entries=decision_entries,
                 primary_snapshot=primary_snap,
+                team_markdown=team_md,
+                harness_markdown=harness_md,
+                narrative=narrative if not narrative.get("skipped") else None,
                 settings=cfg,
             )
-            merged = append_merged_narrative_section(
-                merged,
-                narrative,
-                report_kind="morning",
-                symbol_count=len(decision_entries),
+            from agent_reach.daily_run.close_morning_handoff import (
+                build_morning_handoff,
+                save_morning_handoff,
             )
-            symbol_results[0]["result"]["llm_narrative"] = narrative
-            from agent_reach.daily_run.report_narrative import persist_morning_narrative
+            from agent_reach.daily_run.morning_signals import build_action_checklist_rows
 
-            persist_morning_narrative(narrative)
-        feishu_result = push_report_sections(
-            merged,
-            settings=cfg,
-            config=config or Config(),
-            report_type="premarket",
-            fallback_title="🌅 早盘 · 全持仓",
-            split=split_push_enabled(cfg, report_kind="morning"),
-        )
+            save_morning_handoff(
+                build_morning_handoff(morning_ctx, build_action_checklist_rows(morning_ctx))
+            )
+            merged = render_morning_card_sections(morning_ctx)
+            feishu_result = push_report_sections(
+                merged,
+                settings=cfg,
+                config=config or Config(),
+                report_type="premarket",
+                fallback_title="🌅 早盘 · 全持仓",
+                split=split_push_enabled(cfg, report_kind="morning"),
+            )
+        else:
+            merged = merge_sections_by_category(
+                section_groups,
+                report_kind="morning",
+                expert_snapshots=expert_snapshots or None,
+                decision_entries=decision_entries or None,
+            )
+            if symbol_results:
+                from agent_reach.daily_run.report_push import append_merged_xueqiu_hot_section
+
+                primary_snap = symbol_results[0]["result"]["snapshot"]
+                merged = append_merged_xueqiu_hot_section(
+                    merged,
+                    primary_snap.get("macro_signals"),
+                    report_kind="morning",
+                    symbol_count=len(decision_entries),
+                )
+            if defer_narrative and decision_entries:
+                from agent_reach.daily_run.report_narrative import generate_merged_morning_narrative
+                from agent_reach.daily_run.report_push import append_merged_narrative_section
+
+                primary_snap = symbol_results[0]["result"]["snapshot"]
+                narrative = generate_merged_morning_narrative(
+                    decision_entries,
+                    primary_snapshot=primary_snap,
+                    settings=cfg,
+                )
+                merged = append_merged_narrative_section(
+                    merged,
+                    narrative,
+                    report_kind="morning",
+                    symbol_count=len(decision_entries),
+                )
+                symbol_results[0]["result"]["llm_narrative"] = narrative
+                from agent_reach.daily_run.report_narrative import persist_morning_narrative
+
+                persist_morning_narrative(narrative)
+            feishu_result = push_report_sections(
+                merged,
+                settings=cfg,
+                config=config or Config(),
+                report_type="premarket",
+                fallback_title="🌅 早盘 · 全持仓",
+                split=split_push_enabled(cfg, report_kind="morning"),
+            )
 
     if not defer_narrative:
         from agent_reach.daily_run.report_narrative import persist_morning_narrative
@@ -566,6 +668,7 @@ def run_close_for_symbols(
                             run_result,
                             verify_name=name,
                             include_xueqiu_hot=False,
+                            include_market_review=idx == 1,
                         ),
                     )
                 )
@@ -589,25 +692,11 @@ def run_close_for_symbols(
     feishu_result = None
     if push and merge_push and section_groups:
         from agent_reach.config import Config
-
-        merged = merge_sections_by_category(
-            section_groups,
-            report_kind="close",
-            expert_snapshots=expert_snapshots or None,
-            decision_entries=None,
+        from agent_reach.daily_run.close_cards import (
+            build_merged_close_card_context,
+            close_card_layout_enabled,
+            render_close_card_sections,
         )
-        sections_retitle_done = False
-        if symbol_results:
-            from agent_reach.daily_run.report_push import append_merged_xueqiu_hot_section
-
-            primary_snap = symbol_results[0]["result"]["snapshot"]
-            merged = append_merged_xueqiu_hot_section(
-                merged,
-                primary_snap.get("macro_signals"),
-                report_kind="close",
-                symbol_count=len(symbol_results),
-            )
-            sections_retitle_done = True
         from agent_reach.daily_run.close_portfolio_summary import (
             apply_portfolio_cash_reconcile,
             build_close_portfolio_summary,
@@ -624,6 +713,28 @@ def run_close_for_symbols(
             collect_intraday_sold_codes,
             is_watchlist_adjust_enabled,
         )
+
+        use_six_cards = close_card_layout_enabled(cfg)
+        merged: list[ReportSection] = []
+        sections_retitle_done = False
+        if not use_six_cards:
+            merged = merge_sections_by_category(
+                section_groups,
+                report_kind="close",
+                expert_snapshots=expert_snapshots or None,
+                decision_entries=None,
+            )
+            if symbol_results:
+                from agent_reach.daily_run.report_push import append_merged_xueqiu_hot_section
+
+                primary_snap = symbol_results[0]["result"]["snapshot"]
+                merged = append_merged_xueqiu_hot_section(
+                    merged,
+                    primary_snap.get("macro_signals"),
+                    report_kind="close",
+                    symbol_count=len(symbol_results),
+                )
+                sections_retitle_done = True
 
         try:
             morning_bl = load_morning_baseline()
@@ -663,6 +774,14 @@ def run_close_for_symbols(
                 pf_work = wl_result.portfolio
                 save_portfolio(pf_work)
                 sync_snapshot_portfolio(primary_snap, pf_work)
+
+        from agent_reach.daily_run.berkshire.pipeline import run_close_berkshire
+
+        berkshire_close = run_close_berkshire(
+            portfolio=pf_work,
+            symbol_results=symbol_results,
+            settings=cfg,
+        )
 
         portfolio_summary_obj = build_close_portfolio_summary(
             primary_snap,
@@ -710,6 +829,33 @@ def run_close_for_symbols(
         portfolio_summary_obj.buy_rules_whatif = buy_rules_whatif
         portfolio_summary_obj.intraday_friction_whatif = intraday_friction_whatif
         portfolio_summary_obj.intraday_sell_whatif = intraday_sell_whatif
+
+        technical_watch_result: dict[str, Any] = {}
+        try:
+            from agent_reach.daily_run.technical_scenario_watch import run_close_technical_watch
+
+            technical_watch_result = run_close_technical_watch(
+                primary_snap,
+                settings=cfg,
+                symbols=targets,
+                register=True,
+                render=True,
+            )
+            technical_watch_md = technical_watch_result.get("markdown") or ""
+            symbol_results[0]["result"]["technical_watch_markdown"] = technical_watch_md
+            symbol_results[0]["result"]["technical_watch"] = technical_watch_result
+            if not use_six_cards and technical_watch_md.strip():
+                merged.append(
+                    ReportSection(
+                        category="technical_watch",
+                        title="",
+                        body=technical_watch_md.strip(),
+                    )
+                )
+                sections_retitle_done = False
+        except Exception:
+            pass
+
         portfolio_md = render_close_portfolio_markdown(
             portfolio_summary_obj,
             sell_rules_whatif=sell_rules_whatif,
@@ -717,10 +863,15 @@ def run_close_for_symbols(
             intraday_friction_whatif=intraday_friction_whatif,
             intraday_sell_whatif=intraday_sell_whatif,
         )
-        if portfolio_md.strip():
+        if not use_six_cards and portfolio_md.strip():
+            bmd = (berkshire_close or {}).get("markdown") or ""
+            if bmd.strip():
+                portfolio_md = portfolio_md.rstrip() + "\n\n---\n\n" + bmd.strip()
             merged.append(
                 ReportSection(category="daily_portfolio", title="", body=portfolio_md.strip())
             )
+
+        narrative: dict[str, Any] = {"skipped": True}
         if defer_harness_layer_b and symbol_results:
             from agent_reach.daily_run.workflows import (
                 _finalize_close_harness,
@@ -735,7 +886,7 @@ def run_close_for_symbols(
                 settings=cfg,
             )
             symbol_results[0]["result"]["harness"] = harness_result
-            if _harness_push_summary_enabled(cfg, report_kind="close"):
+            if not use_six_cards and _harness_push_summary_enabled(cfg, report_kind="close"):
                 from agent_reach.daily_run.report_push import append_merged_harness_section
 
                 harness_md = _finalize_close_harness(
@@ -750,30 +901,17 @@ def run_close_for_symbols(
                     symbol_count=len(symbol_results),
                 )
                 sections_retitle_done = True
-            else:
-                sections_retitle_done = False
-        else:
-            sections_retitle_done = False
+
         if defer_narrative and symbol_results:
             from agent_reach.daily_run.report_narrative import generate_merged_close_narrative
             from agent_reach.daily_run.report_push import append_merged_narrative_section
 
             primary_inner = symbol_results[0]["result"]
-            portfolio_summary_dict = None
-            if portfolio_md.strip():
-                portfolio_summary_dict = build_close_portfolio_summary(
-                    primary_snap,
-                    morning_bl,
-                    trades=ledger_trades,
-                    intraday_trades=merged_intraday_trades,
-                    watchlist_adjust=wl_result.to_dict() if wl_result else None,
-                    settings=cfg,
-                ).to_dict()
+            portfolio_summary_dict = portfolio_summary_obj.to_dict()
             curve_payload = primary_inner.get("curve")
             if curve_payload is not None and hasattr(curve_payload, "to_dict"):
                 curve_payload = curve_payload.to_dict()
             harness_result = (primary_inner.get("harness") or {}) if defer_harness_layer_b else {}
-            primary_snap = symbol_results[0]["result"]["snapshot"]
             narrative = generate_merged_close_narrative(
                 symbol_results,
                 portfolio_summary=portfolio_summary_dict,
@@ -783,15 +921,37 @@ def run_close_for_symbols(
                 macro_signals=primary_snap.get("macro_signals"),
                 settings=cfg,
             )
-            merged = append_merged_narrative_section(
-                merged,
-                narrative,
-                report_kind="close",
-                symbol_count=len(symbol_results),
-            )
             symbol_results[0]["result"]["llm_narrative"] = narrative
+            if not use_six_cards:
+                merged = append_merged_narrative_section(
+                    merged,
+                    narrative,
+                    report_kind="close",
+                    symbol_count=len(symbol_results),
+                )
+                sections_retitle_done = True
+
+        if use_six_cards:
+            primary_inner = symbol_results[0]["result"]
+            close_ctx = build_merged_close_card_context(
+                symbol_results=symbol_results,
+                portfolio_summary=portfolio_summary_obj.to_dict(),
+                primary_snapshot=primary_snap,
+                market_review=primary_inner.get("market_review"),
+                forecast_review=primary_inner.get("forecast_review"),
+                technical_watch=technical_watch_result,
+                research_results=primary_inner.get("research") or [],
+                improvements=primary_inner.get("close_improvements"),
+                narrative=narrative if not narrative.get("skipped") else None,
+                harness_result=harness_result if defer_harness_layer_b else None,
+                settings=cfg,
+            )
+            from agent_reach.daily_run.close_morning_handoff import build_close_handoff, save_close_handoff
+
+            save_close_handoff(build_close_handoff(close_ctx))
+            merged = render_close_card_sections(close_ctx)
             sections_retitle_done = True
-        if not sections_retitle_done and merged:
+        elif not sections_retitle_done and merged:
             total = len(merged)
             for i, sec in enumerate(merged, start=1):
                 sec.title = merged_category_title(

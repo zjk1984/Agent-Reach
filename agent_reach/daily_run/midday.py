@@ -12,9 +12,22 @@ from agent_reach.daily_run.settings import effective_settings, load_settings
 def midday_cfg(settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     cfg = effective_settings(settings or load_settings())
     raw = cfg.get("midday") or {}
+    report = cfg.get("report") or {}
+    card_layout = str(report.get("midday_card_layout", "cards")).lower() not in (
+        "legacy",
+        "old",
+        "false",
+        "0",
+    )
+    macro_default = not card_layout
+    if "macro_refresh" in raw:
+        macro_refresh = raw.get("macro_refresh") is not False
+    else:
+        macro_refresh = macro_default
     return {
         "enabled": raw.get("enabled", True) is not False,
-        "macro_refresh": raw.get("macro_refresh", True) is not False,
+        "card_layout": card_layout,
+        "macro_refresh": macro_refresh,
         "mss_experts": raw.get("mss_experts", False) is True,
         "exclude_from_trend": raw.get("exclude_from_trend", True) is not False,
         "lookback_weight_scale": float(raw.get("lookback_weight_scale", 0.25)),
@@ -346,7 +359,11 @@ def run_midday(
     if is_lunch_break() or mcfg.get("exclude_from_trend"):
         enriched = preserve_session_price_fields(enriched, session_scan)
 
-    if mcfg["macro_refresh"]:
+    from agent_reach.daily_run.midday_cards import midday_card_layout_enabled
+
+    card_layout = bool(mcfg.get("card_layout")) and midday_card_layout_enabled(cfg)
+
+    if mcfg["macro_refresh"] and not card_layout:
         enriched = apply_midday_macro_refresh(enriched, settings=cfg, config=config)
         steps.append("macro_refresh")
 
@@ -396,43 +413,88 @@ def run_midday(
 
         narrative = generate_midday_narrative(scan_result, settings=cfg)
 
-    markdown = render_midday_markdown(scan_result, settings=cfg, narrative=narrative)
-    steps.append("render")
-
-    # Midday never blocks (it's a light-touch check-in, unlike morning's hard
-    # fail / close's push-block), but readers should still see the same audit
-    # warning banner intraday scans already show.
     audit = (evaluation or {}).get("audit") if evaluation else None
     if audit is None and not mcfg["record_scan"]:
         from agent_reach.daily_run.auditor import run_data_audit
 
         audit = run_data_audit(enriched, cfg, doctor_channels=doctor_channels)
-    if audit is not None and (not audit.passed or audit.warnings):
-        warn_lines = ["**⚠️ 数据审计提示**"]
-        if not audit.passed:
-            warn_lines.append("；".join(audit.issues))
-        for w in audit.warnings:
-            warn_lines.append(f"- {w}")
-        markdown = "\n".join(warn_lines) + "\n\n---\n\n" + markdown
+
+    from agent_reach.daily_run.midday_cards import (
+        build_midday_card_context,
+        render_midday_card_sections,
+        render_midday_cards_markdown,
+    )
+
+    ctx = None
+    if card_layout:
+        ctx = build_midday_card_context(scan_result, settings=cfg, audit=audit)
+        from agent_reach.daily_run.midday_handoff import build_midday_handoff, save_midday_handoff
+
+        save_midday_handoff(
+            build_midday_handoff(
+                ctx,
+                morning_handoff=ctx.morning_handoff,
+                portfolio=dict(enriched.get("portfolio") or {}),
+                enriched=enriched,
+            )
+        )
+        steps.append("save_midday_handoff")
+        markdown = render_midday_cards_markdown(ctx)
+        steps.append("render_cards")
+    else:
+        markdown = render_midday_markdown(scan_result, settings=cfg, narrative=narrative)
+        steps.append("render")
+        if audit is not None and (not audit.passed or audit.warnings):
+            warn_lines = ["**⚠️ 数据审计提示**"]
+            if not audit.passed:
+                warn_lines.append("；".join(audit.issues))
+            for w in audit.warnings:
+                warn_lines.append(f"- {w}")
+            markdown = "\n".join(warn_lines) + "\n\n---\n\n" + markdown
 
     feishu_result = None
     push_error: Optional[str] = None
     if push:
         from agent_reach.config import Config
         from agent_reach.integrations.feishu import FeishuError, send_card
+        from agent_reach.daily_run.report_push import push_report_sections, split_push_enabled
 
         cfg_obj = config or Config()
         tpl = cfg.get("report", {}).get("feishu_template_midday", "blue")
         name = scan.get("name") or scan.get("code") or "大盘"
-        if scan.get("record_scan_skipped"):
-            card_title = title or f"☀️ 午盘宏观 refresh · 12:30 · {name}"
+        if card_layout and ctx is not None:
+            sections = render_midday_card_sections(ctx)
+            if split_push_enabled(cfg, report_kind="midday"):
+                try:
+                    feishu_result = push_report_sections(
+                        sections,
+                        settings=cfg,
+                        config=cfg_obj,
+                        report_type="midday",
+                        fallback_title=title or f"☀️ 午盘 · {len(sections)}卡 · {name}",
+                        template=tpl,
+                        split=True,
+                    )
+                    steps.append("push_split")
+                except FeishuError as exc:
+                    push_error = str(exc)
+            else:
+                card_title = title or f"☀️ 午盘 · {len(sections)}卡 · {name}"
+                try:
+                    feishu_result = send_card(cfg_obj, card_title, markdown, template=tpl)
+                    steps.append("push")
+                except FeishuError as exc:
+                    push_error = str(exc)
         else:
-            card_title = title or f"☀️ 午盘分析 · {scan.get('scan_id', '—')} · {name}"
-        try:
-            feishu_result = send_card(cfg_obj, card_title, markdown, template=tpl)
-            steps.append("push")
-        except FeishuError as exc:
-            push_error = str(exc)
+            if scan.get("record_scan_skipped"):
+                card_title = title or f"☀️ 午盘宏观 refresh · 12:30 · {name}"
+            else:
+                card_title = title or f"☀️ 午盘分析 · {scan.get('scan_id', '—')} · {name}"
+            try:
+                feishu_result = send_card(cfg_obj, card_title, markdown, template=tpl)
+                steps.append("push")
+            except FeishuError as exc:
+                push_error = str(exc)
 
     out: dict[str, Any] = {
         "steps": steps,
@@ -443,6 +505,7 @@ def run_midday(
         "lookback_mss": scan_result.get("lookback_mss"),
         "markdown": markdown,
         "llm_narrative": narrative,
+        "midday_card_layout": card_layout,
         "feishu": feishu_result,
     }
     if push_error:

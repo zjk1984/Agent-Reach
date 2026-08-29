@@ -390,7 +390,28 @@ class SqliteDailyRunStore:
                     (dedupe_key,),
                 ).fetchone()
                 if existing:
-                    return int(existing["id"])
+                    row_id = int(existing["id"])
+                    conn.execute(
+                        """
+                        UPDATE l2_scenarios SET
+                            kind=?, scenario_key=?, code=?, at=?, title=?, content=?,
+                            payload_json=?, source_path=?, updated_at=?
+                        WHERE id=?
+                        """,
+                        (
+                            kind,
+                            scenario_key,
+                            code or None,
+                            event_at,
+                            title or None,
+                            content or None,
+                            _json_dumps(payload),
+                            source_path or None,
+                            _now_iso(),
+                            row_id,
+                        ),
+                    )
+                    return row_id
             cur = conn.execute(
                 """
                 INSERT INTO l2_scenarios(

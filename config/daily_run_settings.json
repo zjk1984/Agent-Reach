@@ -60,6 +60,56 @@
       "block_sell_in_recovery_zone": true,
       "persist_macro_warming_intraday": true
     },
+    "profit_lock": {
+      "enabled": true,
+      "min_intraday_gain_pct": 4.0,
+      "min_position_20d": 0.70,
+      "min_unrealized_gain_pct": 3.0,
+      "sell_ratio": 0.30,
+      "pullback_from_high_pct": 1.5,
+      "trigger_mode": "threshold",
+      "once_per_symbol_per_day": true
+    },
+    "technical_watch": {
+      "enabled": true,
+      "min_upper_shadow_ratio": 0.35,
+      "min_spike_pct": 3.0,
+      "eval_days": 5,
+      "reclaim_high_tolerance_pct": 1.5,
+      "gap_up_pct": 1.0,
+      "limit_up_shrink_pullback": {
+        "enabled": true,
+        "max_volume_ratio": 0.85,
+        "min_pullback_pct": -1.0,
+        "support_round_to": 10,
+        "support_tolerance_pct": 2.5,
+        "bearish_volume_ratio": 1.1,
+        "open_near_prior_tolerance_pct": 2.0
+      },
+      "liquidity_shrink": {
+        "enabled": true,
+        "max_turnover_cny": 200000000,
+        "max_volume_ratio": 0.85,
+        "max_turnover_rate_pct": 1.5,
+        "recovery_turnover_multiplier": 1.5,
+        "recovery_volume_ratio": 1.0,
+        "shrink_turnover_multiplier": 0.85
+      },
+      "mss_trend": {
+        "enabled": true,
+        "warning_level": 50.0,
+        "bearish_level": 45.0,
+        "bullish_level": 55.0,
+        "scan_id": "S12",
+        "scope": "holdings"
+      },
+      "min_cash_ratio_cap": {
+        "enabled": true,
+        "register_min_cash_ratio": 0.5,
+        "relax_delta": 0.02,
+        "rebound_mss_level": 55.0
+      }
+    },
     "rebound": {
       "mode": "harness",
       "enabled": true,
@@ -646,6 +696,8 @@
   "market_review": {
     "enabled": true,
     "persist": true,
+    "emotion_mode": "harness",
+    "harness_evolve": true,
     "fetch_timeout_seconds": 15,
     "emotion_mss_fusion_enabled": true,
     "macro_fallback_enabled": true,
@@ -721,6 +773,17 @@
     "add_sold_to_watchlist": true
   },
 
+  "berkshire": {
+    "enabled": true,
+    "thesis_tracker": true,
+    "thesis_drift_on_close": true,
+    "financial_rigor_on_verify": true,
+    "quality_screen_watchlist": true,
+    "info_richness_gate": true,
+    "industry_funnel_on_close": true,
+    "masters_scoring_on_close": true
+  },
+
   "watchlist": {
     "mode": "harness",
     "auto_adjust_enabled": true,
@@ -728,6 +791,7 @@
     "adjust_phases": ["morning", "close"],
     "min_size": 5,
     "max_size": 10,
+    "funnel_target": 5,
     "close_reorder_by_performance": true,
     "hot_topic_adjust_enabled": true,
     "hot_topic_remove_change_pct": -2.0,
@@ -878,6 +942,7 @@
     "enabled": false,
     "backend": "sqlite",
     "sqlite_path": "",
+    "block_synthetic_on_prod": true,
     "dual_write": true,
     "distill": {
       "enabled": true,
@@ -981,6 +1046,11 @@
     "non_deep_loss_sell_ratio_mode": "harness",
     "win_rate_min_mode": "harness",
     "loss_streak_max_mode": "harness",
+    "profit_lock_min_intraday_gain_pct_mode": "harness",
+    "profit_lock_min_position_20d_mode": "harness",
+    "profit_lock_min_unrealized_gain_pct_mode": "harness",
+    "profit_lock_sell_ratio_mode": "harness",
+    "profit_lock_pullback_from_high_pct_mode": "harness",
     "min_mss_delta_mode": "harness",
     "min_latest_mss_mode": "harness",
     "recovery_min_mss_mode": "harness",
@@ -1106,6 +1176,7 @@
       "verify": true,
       "close_improve": true,
       "data_audit": true,
+      "market_emotion": true,
       "skill_closure": true,
       "optimize": true,
       "experience": true,

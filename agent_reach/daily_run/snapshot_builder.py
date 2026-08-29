@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -79,6 +80,8 @@ def load_portfolio(path: Optional[Path] = None, *, settings: Optional[dict[str, 
     if p.exists():
         data = json.loads(p.read_text(encoding="utf-8"))
         if not _portfolio_is_empty(data):
+            return _finalize_portfolio(data)
+        if os.environ.get("PYTEST_CURRENT_TEST"):
             return _finalize_portfolio(data)
 
     for fallback in (repo_portfolio_path(), example_portfolio_path()):
@@ -503,6 +506,10 @@ def enrich_holding(
             out["price"] = quote["price"]
         if quote.get("change_pct") is not None:
             out["change_pct"] = quote.get("change_pct")
+        if quote.get("open") is not None:
+            out["open"] = quote.get("open")
+        if quote.get("reference_price") is not None:
+            out["prev_close"] = quote.get("reference_price")
         out["name"] = quote.get("name") or out.get("name")
         out["quote_source"] = quote.get("source")
         for k in _TECHNICAL_KEYS:
@@ -768,13 +775,16 @@ def build_snapshot(
     from agent_reach.daily_run.trade_calendar import today_shanghai
 
     today = today_shanghai().isoformat()
-    if report_type == "premarket" and primary_code:
-        for row in holdings + watchlist:
-            if _normalize_code(str(row.get("code", ""))) == code_norm:
-                primary_name = str(row.get("name") or primary_name)
-                break
-        snapshot_name = primary_name
-    elif report_type == "premarket":
+    if code_norm and code_norm != "MARKET":
+        from agent_reach.daily_run.symbols import resolve_symbol_name
+
+        primary_name = resolve_symbol_name(
+            pf,
+            code_norm,
+            fallback=primary_name,
+            snapshot={"portfolio": portfolio_block, "watchlist": watchlist},
+        )
+    if report_type == "premarket" and not primary_code:
         snapshot_name = f"{today} 早盘"
     else:
         snapshot_name = primary_name

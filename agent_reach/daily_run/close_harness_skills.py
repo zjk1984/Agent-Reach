@@ -28,6 +28,7 @@ class CloseHarnessSkillsReport:
     finance_ledger_prep: dict[str, Any] = field(default_factory=dict)
     finance_ledger: dict[str, Any] = field(default_factory=dict)
     expert_consensus: dict[str, Any] = field(default_factory=dict)
+    market_emotion: dict[str, Any] = field(default_factory=dict)
     close_layer_a: dict[str, Any] = field(default_factory=dict)
     effective_overlay: dict[str, Any] = field(default_factory=dict)
 
@@ -47,6 +48,7 @@ class CloseHarnessSkillsReport:
             "finance_ledger_prep": self.finance_ledger_prep,
             "finance_ledger": self.finance_ledger,
             "expert_consensus": self.expert_consensus,
+            "market_emotion": self.market_emotion,
             "close_layer_a": self.close_layer_a,
             "effective_overlay": self.effective_overlay,
             "total_changes": sum(
@@ -66,6 +68,7 @@ class CloseHarnessSkillsReport:
                     self.finance_ledger_prep,
                     self.finance_ledger,
                     self.expert_consensus,
+                    self.market_emotion,
                     self.close_layer_a,
                 )
                 if not (block or {}).get("skipped")
@@ -83,6 +86,7 @@ def run_close_harness_refinements(
     portfolio_summary: Optional[dict[str, Any]] = None,
     pnl_target_cycle: Optional[dict[str, Any]] = None,
     snapshot: Optional[dict[str, Any]] = None,
+    market_review: Optional[dict[str, Any]] = None,
     settings: Optional[dict[str, Any]] = None,
 ) -> CloseHarnessSkillsReport:
     """Run verify / close_improve / data_audit harness refinements after close."""
@@ -114,6 +118,15 @@ def run_close_harness_refinements(
         from agent_reach.daily_run.data_audit_harness import apply_data_audit_harness_refinement
 
         report.data_audit = apply_data_audit_harness_refinement(audit, settings=cfg)
+
+    if market_review is not None:
+        from agent_reach.daily_run.market_emotion_harness import apply_market_emotion_harness_refinement
+
+        report.market_emotion = apply_market_emotion_harness_refinement(
+            market_review,
+            portfolio_summary=portfolio_summary,
+            settings=cfg,
+        )
 
     if watchlist_adjust is not None:
         from agent_reach.daily_run.watchlist_adjust_harness import apply_watchlist_adjust_harness_refinement

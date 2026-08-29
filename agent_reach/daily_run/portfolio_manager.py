@@ -776,6 +776,32 @@ def _apply_sell(
     if not sell_analysis["allowed"]:
         return ApplyResult(applied=False, portfolio=pf, message=str(sell_analysis["block_reason"]))
 
+    sell_ratio_override = None
+    sell_kind = None
+    if hasattr(decision, "sell_ratio_override"):
+        sell_ratio_override = getattr(decision, "sell_ratio_override", None)
+        sell_kind = getattr(decision, "sell_kind", None)
+    elif isinstance(decision, dict):
+        sell_ratio_override = decision.get("sell_ratio_override")
+        sell_kind = decision.get("sell_kind")
+    if sell_kind == "profit_lock" and sell_ratio_override is not None:
+        from agent_reach.daily_run.profit_lock import profit_lock_effective_sell_ratio
+
+        effective_ratio = profit_lock_effective_sell_ratio(
+            settings,
+            base_ratio=float(sell_analysis.get("sell_ratio") or 1.0),
+            sell_ratio_override=sell_ratio_override,
+        )
+        code_norm = _normalize_code(str(target.get("code") or ""))
+        sell_shares = resolve_deep_loss_sell_shares(
+            min(int(target.get("shares") or 0), sellable),
+            code_norm,
+            settings,
+            is_deep_loss=bool(sell_analysis.get("is_deep_loss")),
+            sell_ratio_override=effective_ratio,
+        )
+        sell_analysis = {**sell_analysis, "sell_ratio": effective_ratio, "sell_shares": sell_shares}
+
     shares = min(int(sell_analysis["sell_shares"] or 0), sellable)
     # Ceiling for lot rounding is `sellable`, not the raw holding total: T+1-locked
     # shares (today_buy_shares) must never be pulled in when rounding a partial
@@ -819,7 +845,9 @@ def _apply_sell(
 
     sell_note = ""
     sell_ratio = float(sell_analysis.get("sell_ratio") or 1.0)
-    if sell_ratio < 0.999:
+    if sell_kind == "profit_lock" and sell_ratio < 0.999:
+        sell_note = f"（动态止盈 sell_ratio={sell_ratio:.0%}）"
+    elif sell_ratio < 0.999:
         label = "深度套牢分批" if sell_analysis.get("is_deep_loss") else "非深亏分批"
         sell_note = f"（{label} sell_ratio={sell_ratio:.0%}）"
     holding_cost = float(target.get("cost") or 0)
@@ -1318,6 +1346,41 @@ def portfolio_deploy_budget_markdown(
     )
 
 
+def _holdings_market_value(
+    holdings: list[dict[str, Any]],
+    enriched: dict[str, dict[str, Any]],
+) -> float:
+    total_mv = 0.0
+    for h in holdings:
+        code = _normalize_code(str(h.get("code", "")))
+        row = {**h, **enriched.get(code, {})}
+        price = _price_for(row, enriched) or h.get("cost") or 0
+        total_mv += int(h.get("shares") or 0) * float(price)
+    return round(total_mv, 2)
+
+
+def _ledger_expected_cash_today() -> Optional[float]:
+    """Best-effort end-of-day cash from morning baseline + today's ledger."""
+    try:
+        from agent_reach.daily_run.capital_events import net_capital_flow
+        from agent_reach.daily_run.close_portfolio_summary import expected_end_cash_from_ledger
+        from agent_reach.daily_run.trade_calendar import today_shanghai
+        from agent_reach.daily_run.weekly_report import _load_trade_ledger_range
+        from agent_reach.daily_run.workflows import load_morning_baseline
+
+        morning_bl = load_morning_baseline()
+        morning_cash = float((morning_bl.get("portfolio") or {}).get("cash") or 0)
+        day = today_shanghai()
+        ledger = _load_trade_ledger_range(day, day)
+        return expected_end_cash_from_ledger(
+            morning_cash,
+            ledger,
+            capital_flow=net_capital_flow(day),
+        )
+    except Exception:
+        return None
+
+
 def _buy_budget_context(
     pf: dict[str, Any],
     enriched: dict[str, dict[str, Any]],
@@ -1328,26 +1391,38 @@ def _buy_budget_context(
 ) -> tuple[float, float, float, float, float, float] | ApplyResult:
     thresholds = settings.get("thresholds", {})
     min_cash_ratio = float(thresholds.get("min_cash_ratio", min_cash_ratio_default(settings)))
-    total = float(pf.get("total") or 0)
     cash = float(pf.get("cash") or 0)
-    if total <= 0:
-        total = cash + sum(
-            int(h.get("shares") or 0)
-            * float(enriched.get(_normalize_code(str(h.get("code", ""))), {}).get("price") or h.get("cost") or 0)
-            for h in holdings
-        )
+    mv = _holdings_market_value(holdings, enriched)
+    total = float(pf.get("total") or 0)
+    recomputed = round(cash + mv, 2)
+    if total <= 0 or abs(total - recomputed) > 1.0:
+        total = recomputed
+
+    if cash < 0:
+        ledger_cash = _ledger_expected_cash_today()
+        if ledger_cash is not None and ledger_cash > cash:
+            cash = ledger_cash
+            total = round(cash + mv, 2)
 
     if cash_limit_bypass:
         min_cash = 0.0
     else:
-        min_cash = total * min_cash_ratio
-    deployable = cash - min_cash
+        nav_for_reserve = max(0.0, total, mv)
+        min_cash = nav_for_reserve * min_cash_ratio
+    deployable = max(0.0, cash - min_cash)
     min_deploy = min_deploy_cash_default(settings)
+
+    if cash < 0:
+        return ApplyResult(
+            applied=False,
+            portfolio=pf,
+            message=f"账户现金为负（¥{cash:,.0f}），暂不可加仓（请核对 portfolio/ledger）",
+        )
     if deployable < min_deploy:
         return ApplyResult(
             applied=False,
             portfolio=pf,
-            message=f"可部署现金 {deployable:.0f} 不足（最低部署 {min_deploy:.0f}）",
+            message=f"可部署现金 ¥{deployable:,.0f} 不足（最低部署 ¥{min_deploy:,.0f}）",
         )
 
     commission_rate = friction_commission_rate_default(settings)

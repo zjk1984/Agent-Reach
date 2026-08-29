@@ -691,3 +691,26 @@ class TestHoldingLine:
         line = _holding_line({"code": "000001", "name": "测试", "price": 10.5})
         assert "现价 ¥10.50" in line
         assert "成本" not in line
+
+    def test_position_ratio_uses_nav_not_stale_portfolio_cash_ratio(self):
+        """Stale cash_ratio=1.0 must not show 0% stock when holdings exist."""
+        portfolio = {
+            "total": -77586.72,
+            "cash": -121117.72,
+            "cash_ratio": 1.0,
+            "holdings": [
+                {"code": "688008", "name": "澜起科技", "shares": 100, "cost": 255.87, "price": 205.16},
+                {"code": "002583", "name": "海能达", "shares": 2500, "cost": 12.618, "price": 8.51},
+                {"code": "000725", "name": "京东方A", "shares": 300, "cost": 5.7364, "price": 5.8},
+            ],
+        }
+        close = {"portfolio": portfolio}
+        summary = _build_summary(close, {"portfolio": dict(portfolio)})
+        assert summary.holdings_count == 3
+        assert summary.stock_ratio is not None and summary.stock_ratio > 0.15
+        assert summary.cash_ratio is not None and summary.cash_ratio < 0.85
+        assert summary.position_ratio_estimated is True
+        md = render_close_portfolio_markdown(summary)
+        assert "仓位：股票 **0.0%**" not in md
+        assert "仓位：股票 **" in md
+        assert "持仓 100 股" in md or "澜起科技" in md

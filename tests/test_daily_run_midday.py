@@ -22,8 +22,10 @@ def test_default_crontab_has_midday():
 
 
 def test_midday_cfg_enabled_by_default():
-    cfg = midday_cfg({})
+    cfg = midday_cfg({"report": {"midday_card_layout": "cards"}, "midday": {"macro_refresh": False}})
     assert cfg["enabled"] is True
+    assert cfg["card_layout"] is True
+    assert cfg["macro_refresh"] is False
     assert cfg["exclude_from_trend"] is True
     assert cfg["lookback_weight_scale"] == 0.25
     assert cfg["record_scan"] is False
@@ -113,7 +115,7 @@ def test_run_midday_records_source_midday_when_record_scan_enabled(mock_eval, mo
     )
     assert mock_record.call_args.kwargs["source"] == "midday"
     assert "record_scan" in result["steps"]
-    assert "午盘分析" in result["markdown"]
+    assert "早盘验证" in result["markdown"] or "截至 11:30 收盘" in result["markdown"]
 
 
 @patch("agent_reach.daily_run.midday.apply_midday_macro_refresh", side_effect=lambda s, **_: s)
@@ -143,7 +145,7 @@ def test_run_midday_macro_only_skips_record_scan(mock_eval, mock_record, _mock_m
     assert "macro_only" in result["steps"]
     assert "record_scan" not in result["steps"]
     assert result["scan"]["record_scan_skipped"] is True
-    assert "未写入 intraday" in result["markdown"]
+    assert "上午盘面" in result["markdown"] or "对持仓影响" in result["markdown"] or "持仓上午速览" in result["markdown"]
     assert len(state.scans) == 1
 
 

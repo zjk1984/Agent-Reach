@@ -14,7 +14,75 @@ def _decision_buy_budget_blocked(decision: dict[str, Any]) -> bool:
     return trade_buy_budget_blocked(decision)
 
 
-def intraday_to_harness_evidence(payload: dict[str, Any]) -> dict[str, Any]:
+def _profit_lock_context(
+    payload: dict[str, Any],
+    *,
+    scan_block: dict[str, Any],
+    scan: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]], Optional[dict[str, Any]], str]:
+    enriched = scan_block.get("enriched") or payload.get("enriched") or payload.get("snapshot") or {}
+    snapshot = dict(enriched)
+    snapshot.setdefault("code", scan.get("code") or payload.get("code"))
+    snapshot.setdefault("name", scan.get("name") or payload.get("name"))
+
+    state = scan_block.get("state") if isinstance(scan_block, dict) else {}
+    if not isinstance(state, dict):
+        state = payload.get("state") or {}
+    session_scans = list(state.get("scans") or payload.get("scans") or [])
+    prior_trades = list(state.get("trades") or payload.get("trades") or [])
+
+    trade = payload.get("trade")
+    decision = None
+    if isinstance(trade, dict):
+        decision = trade.get("decision") or trade
+
+    scan_id = str(scan.get("scan_id") or payload.get("scan_id") or "S?")
+    return snapshot, session_scans, prior_trades, decision if isinstance(decision, dict) else None, scan_id
+
+
+def _append_profit_lock_harness_evidence(
+    memory: list[str],
+    policy: list[str],
+    playbook: list[str],
+    *,
+    settings: Optional[dict[str, Any]],
+    payload: dict[str, Any],
+    scan_block: dict[str, Any],
+    scan: dict[str, Any],
+) -> None:
+    if not settings:
+        return
+    from agent_reach.daily_run.profit_lock import profit_lock_harness_evidence
+
+    snapshot, session_scans, prior_trades, decision, scan_id = _profit_lock_context(
+        payload,
+        scan_block=scan_block,
+        scan=scan,
+    )
+    code = str(snapshot.get("code") or scan.get("code") or "")
+    name = str(snapshot.get("name") or scan.get("name") or code or "标的")
+    if not code:
+        return
+    lines = profit_lock_harness_evidence(
+        settings,
+        code=code,
+        name=name,
+        scan_id=scan_id,
+        snapshot=snapshot,
+        decision=decision,
+        prior_trades=prior_trades,
+        session_scans=session_scans,
+    )
+    memory.extend(lines.get("memory") or [])
+    policy.extend(lines.get("policy") or [])
+    playbook.extend(lines.get("playbook") or [])
+
+
+def intraday_to_harness_evidence(
+    payload: dict[str, Any],
+    *,
+    settings: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
     memory: list[str] = []
     policy: list[str] = []
     playbook: list[str] = []
@@ -113,11 +181,102 @@ def intraday_to_harness_evidence(payload: dict[str, Any]) -> dict[str, Any]:
             if action == "hold" and "防御性减仓" in reasoning:
                 policy.append("卖晚了：防御信号触发但深度套牢/锁仓阻断")
 
+    _append_profit_lock_harness_evidence(
+        memory,
+        policy,
+        playbook,
+        settings=settings,
+        payload=payload,
+        scan_block=scan_block if isinstance(scan_block, dict) else {},
+        scan=scan,
+    )
+
+    if settings:
+        from agent_reach.daily_run.technical_scenario_watch import (
+            evaluate_active_scenarios,
+            maybe_register_upper_shadow_from_session,
+            technical_scenario_harness_evidence,
+        )
+
+        snapshot, session_scans, _prior, _decision, _scan_id = _profit_lock_context(
+            payload,
+            scan_block=scan_block if isinstance(scan_block, dict) else {},
+            scan=scan,
+        )
+        code = str(snapshot.get("code") or scan.get("code") or "")
+        name = str(snapshot.get("name") or scan.get("name") or code)
+        if code:
+            maybe_register_upper_shadow_from_session(
+                code=code,
+                name=name,
+                snapshot=snapshot,
+                session_scans=session_scans,
+                settings=settings,
+            )
+            evals = evaluate_active_scenarios(snapshot, settings=settings)
+            lines = technical_scenario_harness_evidence(evals)
+            memory.extend(lines.get("memory") or [])
+            policy.extend(lines.get("policy") or [])
+            playbook.extend(lines.get("playbook") or [])
+            plan.extend(lines.get("plan") or [])
+
     if payload.get("skipped"):
         reason = str(payload.get("reason") or "")
         memory.append(f"intraday skipped：{reason}")
         if "上限" in reason or "MAX" in reason.upper():
             plan.append("intraday：扫描达上限，确认 S12 是否落在 15:00")
+
+    for row in payload.get("symbol_results") or []:
+        if row.get("skipped"):
+            continue
+        inner = row.get("result") or {}
+        scan_block = inner.get("scan") or {}
+        scan_inner = scan_block.get("scan") if isinstance(scan_block, dict) else {}
+        if not isinstance(scan_inner, dict):
+            scan_inner = scan_block if isinstance(scan_block, dict) else {}
+        sub_payload = {
+            "code": row.get("code"),
+            "name": row.get("name"),
+            "trade": inner.get("trade"),
+            "scan": scan_block,
+        }
+        _append_profit_lock_harness_evidence(
+            memory,
+            policy,
+            playbook,
+            settings=settings,
+            payload=sub_payload,
+            scan_block=scan_block if isinstance(scan_block, dict) else {},
+            scan=scan_inner,
+        )
+        if settings:
+            from agent_reach.daily_run.technical_scenario_watch import (
+                evaluate_active_scenarios,
+                maybe_register_upper_shadow_from_session,
+                technical_scenario_harness_evidence,
+            )
+
+            snapshot, session_scans, _prior, _decision, _sid = _profit_lock_context(
+                sub_payload,
+                scan_block=scan_block if isinstance(scan_block, dict) else {},
+                scan=scan_inner,
+            )
+            code = str(snapshot.get("code") or row.get("code") or "")
+            name = str(snapshot.get("name") or row.get("name") or code)
+            if code:
+                maybe_register_upper_shadow_from_session(
+                    code=code,
+                    name=name,
+                    snapshot=snapshot,
+                    session_scans=session_scans,
+                    settings=settings,
+                )
+            evals = evaluate_active_scenarios(snapshot, settings=settings)
+            lines = technical_scenario_harness_evidence(evals)
+            memory.extend(lines.get("memory") or [])
+            policy.extend(lines.get("policy") or [])
+            playbook.extend(lines.get("playbook") or [])
+            plan.extend(lines.get("plan") or [])
 
     summary = f"intraday {scan_id} {name} scans={scan_count}"
     return {
@@ -134,7 +293,7 @@ def apply_intraday_harness_refinement(
     *,
     settings: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
-    evidence = intraday_to_harness_evidence(payload)
+    evidence = intraday_to_harness_evidence(payload, settings=settings)
     if not any(evidence.get(k) for k in ("memory", "policy", "playbook", "plan")):
         return {"skipped": True, "reason": "empty evidence", "job": "intraday"}
     result = apply_skill_refinement("intraday", evidence, settings=settings)

@@ -321,9 +321,27 @@ def _narrative_supplement_fields(
     portfolio_summary: Optional[dict[str, Any]] = None,
     macro_signals: Optional[dict[str, Any]] = None,
     include_hit_summary: bool = False,
+    code: Optional[str] = None,
 ) -> dict[str, str]:
-    from agent_reach.daily_run.watchlist_intel import watchlist_intel_narrative_summary
+    from agent_reach.daily_run.watchlist_intel import intel_line_for_code, watchlist_intel_narrative_summary
     from agent_reach.daily_run.xueqiu_stock_search import xueqiu_stock_search_summary
+
+    if code and snapshot:
+        from agent_reach.daily_run.symbol_news import symbol_news_summary, symbol_stock_search_summary
+
+        norm = str(code).strip()
+        intel_by = snapshot.get("watchlist_intel") or {}
+        out = {
+            "watchlist_intel_summary": intel_line_for_code(intel_by, norm),
+            "xueqiu_stock_search_summary": symbol_stock_search_summary(
+                norm,
+                macro_signals or snapshot.get("macro_signals"),
+            ),
+            "symbol_news_summary": symbol_news_summary(norm, snapshot),
+        }
+        if include_hit_summary:
+            out["xueqiu_hit_summary"] = _xueqiu_hit_narrative_summary()
+        return out
 
     out = {
         "watchlist_intel_summary": watchlist_intel_narrative_summary(
@@ -351,6 +369,19 @@ def _xueqiu_hit_narrative_summary(*, min_samples: int = 3) -> str:
 
 def _narrative_intel_focus(ctx: dict[str, Any]) -> list[str]:
     """Extra deterministic focus lines: watchlist intel + search (when not in hot summary)."""
+    if ctx.get("portfolio_scope") == "symbol":
+        extras: list[str] = []
+        news = str(ctx.get("symbol_news_summary") or "").strip()
+        if news:
+            extras.append(news[:100])
+        intel = str(ctx.get("watchlist_intel_summary") or "").strip()
+        if intel and intel not in news:
+            extras.append(intel[:100])
+        search = str(ctx.get("xueqiu_stock_search_summary") or "").strip()
+        if search:
+            extras.append(search[:100])
+        return extras
+
     extras: list[str] = []
     intel = str(ctx.get("watchlist_intel_summary") or "").strip()
     if intel:
@@ -385,6 +416,9 @@ def _generate_narrative(
         limits = dict(limits)
         for key, val in _INTRADAY_RISK_LIMITS.items():
             limits[key] = max(int(limits.get(key, 0)), int(val))
+    if job == "morning" and context.get("decision_memo") and _narrative_intel_focus(context):
+        limits = dict(limits)
+        limits["max_focus_points"] = max(int(limits.get("max_focus_points", 3)), 4)
     from agent_reach.daily_run.storage.retrieval import attach_storage_retrieval
 
     context = attach_storage_retrieval(context, settings=settings, job=job)
@@ -564,6 +598,8 @@ def _attach_context_trace(
 def build_morning_context(
     snapshot: dict[str, Any],
     report: dict[str, Any],
+    *,
+    settings: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     pf = snapshot.get("portfolio") or {}
     holdings = pf.get("holdings") or []
@@ -575,11 +611,17 @@ def build_morning_context(
         xueqiu_hot_context_summary,
     )
 
-    supplements = _narrative_supplement_fields(snapshot=snapshot, macro_signals=macro_signals)
-    return {
+    code = str(report.get("code") or snapshot.get("code") or "")
+    supplements = _narrative_supplement_fields(
+        snapshot=snapshot,
+        macro_signals=macro_signals,
+        code=code or None,
+    )
+    ctx = {
         "job": "morning",
+        "portfolio_scope": "symbol",
         "name": report.get("name") or snapshot.get("name"),
-        "code": report.get("code") or snapshot.get("code"),
+        "code": code,
         "verdict": report.get("verdict"),
         "mss_final": report.get("mss_final"),
         "prior_close_mss": report.get("prior_close_mss"),
@@ -597,6 +639,38 @@ def build_morning_context(
         "mss_breakdown": snapshot.get("mss_breakdown") or {},
         "invalidation": (report.get("invalidation") or "")[:120],
     }
+    _attach_berkshire_context(ctx, snapshot, report, settings=settings)
+    return ctx
+
+
+def _attach_berkshire_context(
+    ctx: dict[str, Any],
+    snapshot: dict[str, Any],
+    report: dict[str, Any],
+    *,
+    settings: dict[str, Any] | None = None,
+) -> None:
+    from agent_reach.daily_run.berkshire.config import berkshire_enabled
+
+    if not berkshire_enabled(settings):
+        return
+    from agent_reach.daily_run.berkshire.decision_memo import build_decision_memo, render_decision_memo_markdown
+    from agent_reach.daily_run.berkshire.info_richness import grade_info_richness, render_richness_line
+    from agent_reach.daily_run.berkshire.masters_scoring import build_masters_scoring, render_masters_markdown
+
+    snap = {**snapshot, **report}
+    richness = grade_info_richness(snap)
+    memo = build_decision_memo(snap, settings=settings, richness=richness)
+    masters = build_masters_scoring(snap, team_review=snapshot.get("team_review"))
+    ctx["info_richness"] = richness
+    ctx["decision_memo"] = memo
+    ctx["masters_scoring"] = masters
+    ctx["berkshire_lines"] = [
+        render_richness_line(richness),
+        render_decision_memo_markdown(memo),
+    ]
+    if berkshire_enabled(settings):
+        ctx["berkshire_lines"].append(render_masters_markdown(masters))
 
 
 def _morning_deterministic(ctx: dict[str, Any]) -> dict[str, Any]:
@@ -608,28 +682,38 @@ def _morning_deterministic(ctx: dict[str, Any]) -> dict[str, Any]:
     delta = ctx.get("prior_close_delta")
     if delta is not None:
         focus.append(f"相对昨收 MSS Δ {float(delta):+.1f}")
+    intel_extras = _narrative_intel_focus(ctx)
     cash = ctx.get("cash_ratio")
-    if cash is not None and float(cash) >= 0.4:
+    if cash is not None and float(cash) >= 0.4 and not intel_extras:
         focus.append(f"现金仓位 {float(cash):.0%}，符合防守配置")
     overlap = (
         ctx.get("portfolio_hot_stock_summary")
         or ctx.get("portfolio_hot_post_summary")
         or ctx.get("xueqiu_hot_summary")
     )
-    if overlap:
+    if overlap and ctx.get("portfolio_scope") != "symbol":
         focus.insert(1, overlap[:100])
-    for idx, extra in enumerate(_narrative_intel_focus(ctx)):
+    for idx, extra in enumerate(intel_extras):
         focus.insert(2 + idx, extra)
     if mss is not None and float(mss) < 40:
         risks.append("MSS 低于 macro_veto 区间，禁止接飞刀、取消买入计划")
     if ctx.get("invalidation"):
         risks.append(f"失效条件：{ctx['invalidation'][:120]}")
+    richness = ctx.get("info_richness") or {}
+    if richness.get("grade") == "C":
+        risks.append("信息 C 级：禁止激进建仓，结论应为灰色")
+    memo = ctx.get("decision_memo") or {}
+    focus_limit = 3
+    if memo.get("decision"):
+        focus.insert(0, f"决策 **{memo['decision']}** — {memo.get('summary', '')[:80]}")
+        if intel_extras:
+            focus_limit = 4
     summary = f"早盘 {ctx.get('name') or ctx.get('code')}：{verdict}"
     if mss is not None:
         summary += f"，MSS {mss}"
     return {
         "summary": summary,
-        "focus_points": focus[:3],
+        "focus_points": focus[:focus_limit],
         "divergence_notes": [],
         "risk_alerts": risks[:2],
         "planner": "deterministic",
@@ -688,7 +772,7 @@ def generate_morning_narrative(
     *,
     settings: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
-    context = build_morning_context(snapshot, report)
+    context = build_morning_context(snapshot, report, settings=settings)
     return _attach_context_trace(
         _generate_narrative(
             "morning",
@@ -776,7 +860,7 @@ def _merged_morning_deterministic(ctx: dict[str, Any]) -> dict[str, Any]:
         or ctx.get("portfolio_hot_post_summary")
         or ctx.get("xueqiu_hot_summary")
     )
-    if overlap:
+    if overlap and ctx.get("portfolio_scope") != "symbol":
         focus.insert(1, overlap[:100])
     for idx, extra in enumerate(_narrative_intel_focus(ctx)):
         focus.insert(2 + idx, extra)
@@ -1359,10 +1443,12 @@ def build_close_context(
     trade_ops = extract_close_trade_operations(portfolio_summary)
     sell_rules_whatif = (portfolio_summary or {}).get("sell_rules_whatif")
     macro_signals = snapshot.get("macro_signals") or {}
+    code = str(snapshot.get("code") or "")
     ctx = {
         "job": "close",
+        "portfolio_scope": "symbol",
         "name": snapshot.get("name"),
-        "code": snapshot.get("code"),
+        "code": code,
         "verify_summary": (verify.get("summary") or "")[:120],
         "verdict_current": verify.get("verdict_current"),
         "mss_delta": verify.get("mss_delta"),
@@ -1390,6 +1476,7 @@ def build_close_context(
             snapshot=snapshot,
             portfolio_summary=portfolio_summary,
             macro_signals=macro_signals,
+            code=code or None,
         ),
     }
     return ctx
@@ -2080,7 +2167,7 @@ def _close_deterministic(ctx: dict[str, Any]) -> dict[str, Any]:
         or ctx.get("portfolio_hot_post_summary")
         or ctx.get("xueqiu_hot_summary")
     )
-    if overlap:
+    if overlap and ctx.get("portfolio_scope") != "symbol":
         focus.insert(1, overlap[:100])
     for idx, extra in enumerate(_narrative_intel_focus(ctx)):
         focus.insert(2 + idx, extra)
@@ -2232,7 +2319,7 @@ def _merged_close_deterministic(ctx: dict[str, Any]) -> dict[str, Any]:
         or ctx.get("portfolio_hot_post_summary")
         or ctx.get("xueqiu_hot_summary")
     )
-    if overlap:
+    if overlap and ctx.get("portfolio_scope") != "symbol":
         focus.insert(1, overlap[:100])
     for idx, extra in enumerate(_narrative_intel_focus(ctx)):
         focus.insert(2 + idx, extra)
@@ -2383,12 +2470,8 @@ def _weekly_deterministic(ctx: dict[str, Any]) -> dict[str, Any]:
         focus.append(
             f"盈亏分解：股票 {float(stock_pnl or 0):+,.0f} · 现金 {float(cash_pnl or 0):+,.0f}"
         )
-    overlap = (
-        ctx.get("portfolio_hot_stock_summary")
-        or ctx.get("portfolio_hot_post_summary")
-        or ctx.get("xueqiu_hot_summary")
-    )
-    if overlap:
+    overlap = ctx.get("portfolio_hot_stock_summary") or ctx.get("portfolio_hot_post_summary")
+    if overlap and ctx.get("portfolio_scope") != "symbol":
         focus.insert(1, overlap[:100])
     for idx, extra in enumerate(_narrative_intel_focus(ctx)):
         focus.insert(2 + idx, extra)
@@ -2406,11 +2489,6 @@ def _weekly_deterministic(ctx: dict[str, Any]) -> dict[str, Any]:
             bits.append(f"换仓及其它 {float(rebalance):+,.0f}")
         if bits:
             focus.append("归因：" + " · ".join(bits))
-    for sec in ctx.get("hot_sectors") or []:
-        name = sec.get("sector") or sec.get("name") or "板块"
-        chg = sec.get("avg_change_pct") or sec.get("change_pct")
-        if chg is not None:
-            focus.append(f"热点 {name} 周均 {float(chg):+.1f}%")
     for imp in ctx.get("process_improvements") or []:
         if imp.get("title"):
             focus.append(f"改进：{imp['title']}")

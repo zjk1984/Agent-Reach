@@ -150,10 +150,74 @@ def resolve_target_symbols(
     return list_target_symbols(portfolio, mode=mode)
 
 
-def symbol_display_name(portfolio: dict[str, Any], code: str) -> str:
-    """Best-effort name lookup from portfolio rows."""
+def is_redundant_symbol_name(name: Any, code: str) -> bool:
+    """True when *name* adds no information beyond the normalized code."""
     norm = _normalize_code(code)
-    for row in list(portfolio.get("holdings") or []) + list(portfolio.get("watchlist") or []):
-        if _normalize_code(str(row.get("code", ""))) == norm:
-            return str(row.get("name") or norm)
+    if not name or not str(name).strip():
+        return True
+    text = str(name).strip()
+    if _normalize_code(text) == norm:
+        return True
+    compact = text.replace(" ", "")
+    return compact in {norm, f"{norm}({norm})", f"{norm}（{norm}）"}
+
+
+def _portfolio_rows(
+    portfolio: dict[str, Any] | None,
+    *,
+    snapshot: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    if portfolio:
+        rows.extend(list(portfolio.get("holdings") or []))
+        rows.extend(list(portfolio.get("watchlist") or []))
+    if snapshot:
+        block = snapshot.get("portfolio") or {}
+        rows.extend(list(block.get("holdings") or []))
+        rows.extend(list(snapshot.get("watchlist") or []))
+    return rows
+
+
+def resolve_symbol_name(
+    portfolio: dict[str, Any] | None,
+    code: str,
+    *,
+    fallback: Any = None,
+    snapshot: dict[str, Any] | None = None,
+) -> str:
+    """Resolve a human-readable symbol name; never return code duplicated as name."""
+    norm = _normalize_code(code)
+    for row in _portfolio_rows(portfolio, snapshot=snapshot):
+        if _normalize_code(str(row.get("code", ""))) != norm:
+            continue
+        row_name = row.get("name")
+        if row_name and not is_redundant_symbol_name(row_name, norm):
+            return str(row_name).strip()
+    if fallback is not None and not is_redundant_symbol_name(fallback, norm):
+        return str(fallback).strip()
     return norm
+
+
+def format_symbol_reference(
+    name: Any,
+    code: str,
+    *,
+    portfolio: dict[str, Any] | None = None,
+    snapshot: dict[str, Any] | None = None,
+) -> str:
+    """Display label like 水晶光电(002273); omit parens when only the code is known."""
+    norm = _normalize_code(code)
+    resolved = resolve_symbol_name(portfolio, norm, fallback=name, snapshot=snapshot)
+    if is_redundant_symbol_name(resolved, norm):
+        return norm
+    return f"{resolved}({norm})"
+
+
+def symbol_display_name(
+    portfolio: dict[str, Any],
+    code: str,
+    *,
+    snapshot: dict[str, Any] | None = None,
+) -> str:
+    """Best-effort name lookup from portfolio rows."""
+    return resolve_symbol_name(portfolio, code, snapshot=snapshot)

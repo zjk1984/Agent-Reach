@@ -3,11 +3,12 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from agent_reach.daily_run.pipeline import evaluate_snapshot, render_markdown
+from agent_reach.daily_run.close_cards import close_card_layout_enabled
+from agent_reach.daily_run.pipeline import evaluate_snapshot, render_symbol_decision_markdown
 from agent_reach.daily_run.report_push import (
     push_report_sections,
     render_close_sections,
@@ -25,7 +26,7 @@ from agent_reach.daily_run.team import (
     render_team_markdown,
     team_first_enabled,
 )
-from agent_reach.daily_run.verify import render_verify_markdown, verify_snapshots
+from agent_reach.daily_run.verify import render_close_verify_markdown, verify_snapshots
 
 try:
     from loguru import logger
@@ -274,7 +275,7 @@ def run_morning(
         _workflow_harness_error(morning_harness_errors, "xueqiu_hit_record", exc)
 
     team_md = render_team_markdown(enriched) if expert_card_enabled(cfg, workflow="morning") else ""
-    report_md = render_markdown(report)
+    report_md = render_symbol_decision_markdown(report, snapshot=enriched)
     morning_narrative: dict[str, Any] = {"skipped": True, "reason": "deferred"}
     if not skip_narrative:
         from agent_reach.daily_run.report_narrative import generate_morning_narrative
@@ -296,14 +297,40 @@ def run_morning(
 
     feishu_result = None
     if push:
-        sections = render_morning_sections(
-            team_markdown=team_md,
-            report_markdown=report_md,
-            report=report,
-            harness_markdown=harness_md,
-            narrative=morning_narrative,
-            macro_signals=enriched.get("macro_signals"),
+        from agent_reach.daily_run.morning_cards import (
+            build_single_morning_card_context,
+            morning_card_layout_enabled,
+            render_morning_card_sections,
         )
+
+        if morning_card_layout_enabled(cfg):
+            run_payload = {
+                "snapshot": enriched,
+                "evaluation": evaluation,
+                "team_markdown": team_md,
+                "harness_markdown": harness_md,
+                "llm_narrative": morning_narrative,
+            }
+            morning_ctx = build_single_morning_card_context(run_payload, settings=cfg)
+            from agent_reach.daily_run.close_morning_handoff import (
+                build_morning_handoff,
+                save_morning_handoff,
+            )
+            from agent_reach.daily_run.morning_signals import build_action_checklist_rows
+
+            save_morning_handoff(
+                build_morning_handoff(morning_ctx, build_action_checklist_rows(morning_ctx))
+            )
+            sections = render_morning_card_sections(morning_ctx)
+        else:
+            sections = render_morning_sections(
+                team_markdown=team_md,
+                report_markdown=report_md,
+                report=report,
+                harness_markdown=harness_md,
+                narrative=morning_narrative,
+                macro_signals=enriched.get("macro_signals"),
+            )
         feishu_result = push_report_sections(
             sections,
             settings=cfg,
@@ -338,6 +365,7 @@ def run_morning(
         "feishu": feishu_result,
         "harness_plan_closeout": plan_close,
         "harness_morning": morning_harness_result,
+        "harness_markdown": harness_md,
         "xueqiu_hit_record": xueqiu_hit_record,
         **({"harness_errors": morning_harness_errors} if morning_harness_errors else {}),
     }
@@ -848,7 +876,7 @@ def run_close(
         )
         improvements_md = render_improvements_markdown(improvements) or ""
 
-    verify_md = render_verify_markdown(verify)
+    verify_md = render_close_verify_markdown(verify, forecast_review_md=forecast_review_md)
 
     market_review_md = ""
     market_review_obj = None
@@ -867,13 +895,15 @@ def run_close(
             emotion = market_review_obj.get("emotion")
             if isinstance(emotion, dict) and emotion:
                 from agent_reach.daily_run.emotion_mss_fusion import apply_emotion_to_mss_breakdown
+                from agent_reach.daily_run.market_breadth_collector import emotion_conclusion_supported
 
-                enriched["mss_breakdown"] = apply_emotion_to_mss_breakdown(
-                    enriched.get("mss_breakdown") or {},
-                    emotion,
-                    settings=cfg,
-                )
                 enriched["market_emotion"] = emotion
+                if emotion_conclusion_supported(emotion):
+                    enriched["mss_breakdown"] = apply_emotion_to_mss_breakdown(
+                        enriched.get("mss_breakdown") or {},
+                        emotion,
+                        settings=cfg,
+                    )
 
     redfox_md = ""
     if redfox_enabled(cfg):
@@ -964,6 +994,27 @@ def run_close(
             source="close",
         )
 
+    technical_watch_md = ""
+    technical_watch_result: dict[str, Any] = {}
+    try:
+        from agent_reach.daily_run.snapshot_builder import _normalize_code
+        from agent_reach.daily_run.technical_scenario_watch import run_close_technical_watch
+
+        technical_watch_result = run_close_technical_watch(
+            enriched,
+            settings=cfg,
+            symbols=(
+                [_normalize_code(str(enriched.get("code")))]
+                if not portfolio_summary and enriched.get("code")
+                else None
+            ),
+            register=True,
+            render=portfolio_summary,
+        )
+        technical_watch_md = technical_watch_result.get("markdown") or ""
+    except Exception as exc:
+        _workflow_harness_error(harness_errors, "technical_watch", exc)
+
     from agent_reach.daily_run.auditor import run_data_audit
 
     audit = run_data_audit(enriched, cfg)
@@ -980,6 +1031,7 @@ def run_close(
             portfolio_summary=portfolio_summary_obj.to_dict() if portfolio_summary_obj else None,
             pnl_target_cycle=pnl_target_cycle,
             snapshot=enriched,
+            market_review=market_review_obj,
             settings=cfg,
         )
         enriched["harness_skills"] = harness_skills_report.to_dict()
@@ -1005,8 +1057,8 @@ def run_close(
             curve_md,
             research_md,
             *extra_parts,
-            forecast_review_md,
             improvements_md,
+            technical_watch_md,
             exp_md,
             verify_md,
             portfolio_md,
@@ -1090,7 +1142,35 @@ def run_close(
         from agent_reach.config import Config
 
         cfg_obj = config or Config()
-        sections = render_close_sections(
+        if close_card_layout_enabled(cfg):
+            from agent_reach.daily_run.close_cards import (
+                build_single_close_card_context,
+                render_close_card_sections,
+            )
+
+            close_ctx = build_single_close_card_context(
+                {
+                    "snapshot": enriched,
+                    "verify": verify_dict,
+                    "portfolio_summary": portfolio_summary_obj.to_dict()
+                    if portfolio_summary_obj
+                    else None,
+                    "market_review": market_review_obj,
+                    "forecast_review": forecast_review.to_dict() if forecast_review else None,
+                    "technical_watch": technical_watch_result,
+                    "research": research_results,
+                    "close_improvements": improvements.to_dict() if improvements else None,
+                    "llm_narrative": close_narrative,
+                    "harness": harness_result,
+                },
+                settings=cfg,
+            )
+            from agent_reach.daily_run.close_morning_handoff import build_close_handoff, save_close_handoff
+
+            save_close_handoff(build_close_handoff(close_ctx))
+            sections = render_close_card_sections(close_ctx)
+        else:
+            sections = render_close_sections(
             verify_name=verify.name or verify.code or "大盘",
             market_markdown=market_review_md,
             team_markdown=team_md,
@@ -1102,8 +1182,9 @@ def run_close(
             harness_markdown=harness_md,
             watchlist_adjust_markdown=wl_md,
             code_review_markdown=cr_md,
-            forecast_review_markdown=forecast_review_md,
+            forecast_review_markdown="",
             close_improvements_markdown=improvements_md,
+            technical_watch_markdown=technical_watch_md,
             narrative=close_narrative,
             macro_signals=enriched.get("macro_signals"),
         )
@@ -1148,6 +1229,9 @@ def run_close(
         "code_review_markdown": cr_md,
         "forecast_review_markdown": forecast_review_md,
         "close_improvements_markdown": improvements_md,
+        "close_improvements": improvements.to_dict() if improvements else None,
+        "technical_watch_markdown": technical_watch_md,
+        "technical_watch": technical_watch_result,
         "llm_narrative": close_narrative,
         "research": research_results,
         "experience_path": str(exp_path),
@@ -1321,7 +1405,13 @@ def load_morning_baseline(path: Optional[Path] = None, *, code: Optional[str] = 
 
             per = morning_baseline_path(norm)
             legacy = _default_baseline_path()
+            if legacy.exists() and not path_under_daily_run_data(legacy):
+                return None
             if path_under_daily_run_data(per.parent) or path_under_daily_run_data(legacy.parent):
+                from agent_reach.daily_run.storage.config import storage_db_reads_allowed
+
+                if not storage_db_reads_allowed(load_settings(), file_path=legacy):
+                    return None
                 hit = read_morning_baseline_from_store(norm, settings=load_settings())
                 if hit:
                     return hit
@@ -1535,6 +1625,25 @@ def run_weekly(
     report = generate_weekly_report(snapshot, cfg, portfolio=portfolio)
     digest_path = save_weekly_digest(report.to_dict())
     steps.append("digest")
+
+    from agent_reach.daily_run.week_forecast import next_trading_week_range
+    from agent_reach.daily_run.weekly_close_loop import save_weekly_outlook_plan
+
+    next_start, next_end = next_trading_week_range(report.week_end + timedelta(days=1))
+    save_weekly_outlook_plan(
+        week_end=report.week_end,
+        week_start=report.week_start,
+        next_week_outlook=report.next_week_outlook,
+        target_week_start=next_start,
+        target_week_end=next_end,
+    )
+    steps.append("outlook_plan_saved")
+
+    from agent_reach.daily_run.weekly_analytics import save_weekly_issues
+
+    if report.pending_issues:
+        save_weekly_issues(report.pending_issues)
+        steps.append("pending_issues_saved")
 
     from agent_reach.daily_run.watchlist_candidates import update_candidates_from_weekly
 

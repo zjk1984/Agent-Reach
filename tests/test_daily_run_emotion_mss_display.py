@@ -7,7 +7,7 @@ from agent_reach.daily_run.market_review import render_market_review_markdown
 
 def test_render_emotion_mss_parallel_markdown():
     md = render_emotion_mss_parallel_markdown(
-        {"emotion": {"rating": "强", "score": 5, "position": "7-8成"}},
+        {"emotion": {"rating": "强", "score": 5, "position": "7-8成", "up_count": 3000, "down_count": 1000}},
         snapshot={
             "mss_final": 56.0,
             "mss_breakdown": {
@@ -40,3 +40,12 @@ def test_market_review_markdown_includes_parallel_section():
         snapshot={"mss_final": 52.0, "mss_breakdown": {"global": 51.0, "sentiment": 50.0}},
     )
     assert "情绪定级 × MSS" in md
+
+
+def test_parallel_markdown_insufficient_emotion():
+    md = render_emotion_mss_parallel_markdown(
+        {"emotion": {"rating": "中", "score": 3, "position": "5成", "insufficient_data": True}},
+        snapshot={"mss_final": 52.0, "mss_breakdown": {"global": 51.0, "sentiment": 50.0}},
+    )
+    assert "暂无仓位建议" in md
+    assert "5成" not in md

@@ -27,6 +27,7 @@ _OVERLAY_KEYS = (
     "min_deploy_overlay",
     "friction_model_overlay",
     "defensive_trim_overlay",
+    "profit_lock_overlay",
 )
 
 
