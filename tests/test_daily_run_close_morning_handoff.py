@@ -225,3 +225,5 @@ class TestCloseMorningHandoff:
         path = save_morning_handoff(payload)
         assert path.exists()
         assert payload["action_checklist"]
+        assert payload["morning_predictions"]
+        assert any(item["code"] == "300308" for item in payload["morning_predictions"])

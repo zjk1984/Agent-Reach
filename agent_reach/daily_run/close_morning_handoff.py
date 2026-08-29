@@ -259,6 +259,56 @@ def load_close_handoff_for_morning(
     return load_close_handoff(settings=settings)
 
 
+def collect_morning_predictions(ctx: Any, action_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Structured morning predictions for midday verify loop."""
+    from agent_reach.daily_run.morning_signals import _prediction_text_from_baseline
+
+    items: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    sym_by_code = {_normalize_code(sym.code): sym for sym in ctx.symbol_rows}
+
+    for sym in ctx.symbol_rows:
+        code = _normalize_code(sym.code)
+        if not code or code in seen:
+            continue
+        report = sym.report or {}
+        prediction = _prediction_text_from_baseline(report)
+        if not prediction or prediction == "震荡观察":
+            continue
+        items.append(
+            {
+                "code": code,
+                "name": sym.name,
+                "prediction": prediction[:48],
+                "source": "report",
+            }
+        )
+        seen.add(code)
+
+    for row in action_rows:
+        name = str(row.get("name") or "").strip()
+        sym = sym_by_code.get(_normalize_code(str(row.get("code") or "")))
+        if sym is None:
+            for candidate in ctx.symbol_rows:
+                if candidate.name == name:
+                    sym = candidate
+                    break
+        code = _normalize_code(getattr(sym, "code", "") if sym else str(row.get("code") or ""))
+        note = str(row.get("reasoning") or row.get("note") or row.get("target_position") or "").strip()
+        if not code or not note or code in seen:
+            continue
+        items.append(
+            {
+                "code": code,
+                "name": name or (sym.name if sym else code),
+                "prediction": note[:48],
+                "source": "action_checklist",
+            }
+        )
+        seen.add(code)
+    return items[:6]
+
+
 def build_morning_handoff(ctx: Any, action_rows: list[dict[str, Any]]) -> dict[str, Any]:
     from agent_reach.daily_run.trade_calendar import today_shanghai
 
@@ -277,6 +327,7 @@ def build_morning_handoff(ctx: Any, action_rows: list[dict[str, Any]]) -> dict[s
         "source_close_date": close_handoff.get("close_date"),
         "action_checklist": checklist,
         "positions_at_morning": dict(close_handoff.get("positions") or {}),
+        "morning_predictions": collect_morning_predictions(ctx, action_rows),
     }
 
 

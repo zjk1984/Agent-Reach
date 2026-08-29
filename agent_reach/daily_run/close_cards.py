@@ -412,6 +412,12 @@ def render_forecast_verify_markdown(ctx: CloseCardContext) -> str:
     trace_md = render_morning_action_trace_markdown(ctx)
     if trace_md.strip():
         lines.extend(["", trace_md])
+
+    from agent_reach.daily_run.midday_handoff import render_midday_close_loop_markdown
+
+    loop_md = render_midday_close_loop_markdown(ctx, settings=ctx.settings)
+    if loop_md.strip():
+        lines.extend(["", loop_md])
     return "\n".join(lines).strip()
 
 

@@ -523,32 +523,68 @@ def build_holdings_am_brief_rows(
     return rows
 
 
-def build_morning_prediction_verify_lines(
+def _format_prediction_verify_line(item: dict[str, Any]) -> str:
+    name = str(item.get("name") or "—")
+    prediction = str(item.get("prediction") or "")[:16]
+    pct = item.get("am_change_pct")
+    hit = bool(item.get("hit"))
+    mark = "✅" if hit else "❌"
+    tail = "符合预期" if hit else "超预期"
+    pct_s = f"{float(pct):+.2f}%" if pct is not None else "—"
+    return f'- 早盘预测"{name}{prediction}" → {mark} 上午实际{pct_s}，{tail}'
+
+
+def build_morning_prediction_verify_items(
     *,
     morning_handoff: Optional[dict[str, Any]],
     close_handoff: Optional[dict[str, Any]],
     portfolio: dict[str, Any],
     enriched: dict[str, Any],
     limit: int = 2,
-) -> list[str]:
+) -> list[dict[str, Any]]:
     from agent_reach.daily_run.morning_signals import _prediction_hit
 
-    lines: list[str] = []
+    items: list[dict[str, Any]] = []
     seen: set[str] = set()
 
-    def _append(name: str, prediction: str, holding: dict[str, Any]) -> None:
+    def _append(
+        *,
+        code: str,
+        name: str,
+        prediction: str,
+        holding: dict[str, Any],
+        source: str,
+    ) -> None:
         if not prediction or name in seen:
             return
         pct = _holding_change_pct(holding)
         if pct is None:
             return
         hit = _prediction_hit(prediction, holding, enriched)
-        mark = "✅" if hit else "❌"
-        tail = "符合预期" if hit else "超预期"
-        lines.append(
-            f'- 早盘预测"{name}{prediction[:16]}" → {mark} 上午实际{pct:+.2f}%，{tail}'
-        )
+        item = {
+            "code": code,
+            "name": name,
+            "prediction": prediction[:48],
+            "am_change_pct": pct,
+            "hit": hit,
+            "source": source,
+        }
+        item["markdown"] = _format_prediction_verify_line(item)
+        items.append(item)
         seen.add(name)
+
+    for pred in (morning_handoff or {}).get("morning_predictions") or []:
+        if not isinstance(pred, dict):
+            continue
+        code = _normalize_code(str(pred.get("code") or ""))
+        name = str(pred.get("name") or code or "").strip()
+        text = str(pred.get("prediction") or "").strip()
+        if not name or not text:
+            continue
+        holding = _find_holding(portfolio, code, name)
+        _append(code=code, name=name, prediction=text, holding=holding, source="morning_predictions")
+        if len(items) >= limit:
+            return items[:limit]
 
     for item in (close_handoff or {}).get("tomorrow_focus") or []:
         if not isinstance(item, dict):
@@ -559,9 +595,9 @@ def build_morning_prediction_verify_lines(
         if not name or not text:
             continue
         holding = _find_holding(portfolio, code, name)
-        _append(name, text, holding)
-        if len(lines) >= limit:
-            return lines[:limit]
+        _append(code=code, name=name, prediction=text, holding=holding, source="close_focus")
+        if len(items) >= limit:
+            return items[:limit]
 
     for action in (morning_handoff or {}).get("action_checklist") or []:
         if not isinstance(action, dict):
@@ -572,20 +608,71 @@ def build_morning_prediction_verify_lines(
         if not name or not note:
             continue
         holding = _find_holding(portfolio, code, name)
-        _append(name, note, holding)
-        if len(lines) >= limit:
+        _append(code=code, name=name, prediction=note, holding=holding, source="action_checklist")
+        if len(items) >= limit:
             break
-    return lines[:limit]
+    return items[:limit]
 
 
-def build_am_anomaly_signals(
+def build_morning_prediction_verify_lines(
+    *,
+    morning_handoff: Optional[dict[str, Any]],
+    close_handoff: Optional[dict[str, Any]],
+    portfolio: dict[str, Any],
+    enriched: dict[str, Any],
+    limit: int = 2,
+) -> list[str]:
+    return [
+        str(item.get("markdown") or _format_prediction_verify_line(item))
+        for item in build_morning_prediction_verify_items(
+            morning_handoff=morning_handoff,
+            close_handoff=close_handoff,
+            portfolio=portfolio,
+            enriched=enriched,
+            limit=limit,
+        )
+    ]
+
+
+def _format_anomaly_signal_line(item: dict[str, Any]) -> str:
+    severity = str(item.get("severity") or "yellow")
+    icon = "🔴" if severity == "red" else "🟡"
+    name = str(item.get("name") or "—")
+    text = str(item.get("text") or "").strip()
+    if name and name not in {"市场", "—"} and not text.startswith(name):
+        return f"- {icon} **{name}**{text}"
+    return f"- {icon} {text}"
+
+
+def build_am_anomaly_signal_items(
     *,
     enriched: dict[str, Any],
     portfolio: dict[str, Any],
     plan_rows: list[dict[str, Any]],
     market_key_points: list[str],
-) -> list[str]:
-    lines: list[str] = []
+) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+
+    def _add(
+        *,
+        code: str = "",
+        name: str = "",
+        severity: str,
+        text: str,
+        change_pct: Optional[float] = None,
+        volume_ratio: Optional[float] = None,
+    ) -> None:
+        item = {
+            "code": code,
+            "name": name or "市场",
+            "severity": severity,
+            "text": text,
+            "change_pct": change_pct,
+            "volume_ratio": volume_ratio,
+        }
+        item["markdown"] = _format_anomaly_signal_line(item)
+        items.append(item)
+
     for row in plan_rows:
         name = str(row.get("name") or "")
         pct = _optional_float(row.get("change_pct"))
@@ -598,9 +685,10 @@ def build_am_anomaly_signals(
             detail = f"上午放量下跌 {pct:.2f}%，量比 {vol:.1f}x"
             if ma20 is not None and price is not None and price < ma20:
                 detail += "，跌破 20 日均线，下午关注是否继续下探"
-            lines.append(f"- 🔴 **{name}**{detail}")
+            _add(code=code, name=name, severity="red", text=detail, change_pct=pct, volume_ratio=vol)
         elif pct is not None and pct >= 3.0 and vol is not None and vol >= 1.3:
-            lines.append(f"- 🟡 **{name}** 上午放量上涨 {pct:+.2f}%，量比 {vol:.1f}x，注意冲高回落")
+            detail = f"上午放量上涨 {pct:+.2f}%，量比 {vol:.1f}x，注意冲高回落"
+            _add(code=code, name=name, severity="yellow", text=detail, change_pct=pct, volume_ratio=vol)
 
     sector_pcts: dict[str, list[float]] = {}
     for holding in portfolio.get("holdings") or []:
@@ -615,16 +703,35 @@ def build_am_anomaly_signals(
         best = max(avgs, key=avgs.get)
         worst = min(avgs, key=avgs.get)
         if avgs[best] - avgs[worst] >= 1.5:
-            lines.append(
-                f"- 🟡 **{worst}** 板块上午整体{'走弱' if avgs[worst] < 0 else '震荡'}，"
+            text = (
+                f"板块上午整体{'走弱' if avgs[worst] < 0 else '震荡'}，"
                 f"但 **{best}** 细分{'逆势上涨' if avgs[best] > 0 else '相对抗跌'}，板块内部分化加剧"
             )
+            _add(name=worst, severity="yellow", text=text)
 
     volume_line = next((p for p in market_key_points if p.startswith("成交额")), "")
     if volume_line:
-        lines.append(f"- 🟡 大盘{volume_line}，下午关注量能是否恢复")
+        _add(severity="yellow", text=f"大盘{volume_line}，下午关注量能是否恢复")
 
-    return lines[:5]
+    return items[:5]
+
+
+def build_am_anomaly_signals(
+    *,
+    enriched: dict[str, Any],
+    portfolio: dict[str, Any],
+    plan_rows: list[dict[str, Any]],
+    market_key_points: list[str],
+) -> list[str]:
+    return [
+        str(item.get("markdown") or _format_anomaly_signal_line(item))
+        for item in build_am_anomaly_signal_items(
+            enriched=enriched,
+            portfolio=portfolio,
+            plan_rows=plan_rows,
+            market_key_points=market_key_points,
+        )
+    ]
 
 
 def build_afternoon_timeline_nodes(

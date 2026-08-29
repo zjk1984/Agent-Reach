@@ -61,7 +61,10 @@ class MiddayCardContext:
     holdings_am_rows: list[dict[str, Any]] = field(default_factory=list)
     timeline_nodes: list[dict[str, str]] = field(default_factory=list)
     prediction_verify_lines: list[str] = field(default_factory=list)
+    prediction_verify_items: list[dict[str, Any]] = field(default_factory=list)
     anomaly_signals: list[str] = field(default_factory=list)
+    anomaly_signal_items: list[dict[str, Any]] = field(default_factory=list)
+    morning_handoff: Optional[dict[str, Any]] = None
     settings: Optional[dict[str, Any]] = None
 
 
@@ -690,11 +693,13 @@ def build_midday_card_context(
     from agent_reach.daily_run.close_morning_handoff import load_close_handoff_for_morning, load_morning_handoff
     from agent_reach.daily_run.midday_content_scope import (
         build_afternoon_timeline_nodes,
+        build_am_anomaly_signal_items,
         build_am_anomaly_signals,
         build_am_market_key_points,
         build_holding_risk_lines,
         build_holdings_am_brief_rows,
         build_macro_holdings_impact_line,
+        build_morning_prediction_verify_items,
         build_morning_prediction_verify_lines,
         build_morning_reference_line,
     )
@@ -747,11 +752,23 @@ def build_midday_card_context(
         portfolio=portfolio,
         settings=settings,
     )
+    prediction_verify_items = build_morning_prediction_verify_items(
+        morning_handoff=morning_handoff,
+        close_handoff=close_handoff,
+        portfolio=portfolio,
+        enriched=enriched,
+    )
     prediction_verify_lines = build_morning_prediction_verify_lines(
         morning_handoff=morning_handoff,
         close_handoff=close_handoff,
         portfolio=portfolio,
         enriched=enriched,
+    )
+    anomaly_signal_items = build_am_anomaly_signal_items(
+        enriched=enriched,
+        portfolio=portfolio,
+        plan_rows=plan_rows,
+        market_key_points=market_key_points,
     )
     anomaly_signals = build_am_anomaly_signals(
         enriched=enriched,
@@ -804,7 +821,10 @@ def build_midday_card_context(
         holdings_am_rows=holdings_am_rows,
         timeline_nodes=timeline_nodes,
         prediction_verify_lines=prediction_verify_lines,
+        prediction_verify_items=prediction_verify_items,
         anomaly_signals=anomaly_signals,
+        anomaly_signal_items=anomaly_signal_items,
+        morning_handoff=morning_handoff,
         settings=settings,
     )
 
