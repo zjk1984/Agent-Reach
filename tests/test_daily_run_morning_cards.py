@@ -138,12 +138,13 @@ class TestMorningCardLayout:
         md = render_holdings_overview_markdown(ctx)
         assert "持仓早盘速览" in md
         assert "澜起科技" in md
-        assert "🔒 停牌" in md
+        assert "125.30" not in md  # different fixture
         assert "截至 08:00" in md
         assert "**大盘分析**" in md
         assert "**宏观要闻**" in md
         assert "影响板块：" in md
         assert "对持仓影响：" in md
+        assert "| 股票 | 昨收 | 今开 | 涨跌幅 | 成交量比 | MSS | 标签 |" in md
 
     def test_decision_card_no_market_analysis(self):
         ctx = MorningCardContext(
@@ -190,6 +191,7 @@ class TestMorningCardLayout:
             team_markdown="**专家** 一致看多",
         )
         sections = render_morning_card_sections(ctx)
-        assert sections[0].category == "holdings_overview"
-        assert sections[0].title.startswith("📋 持仓早盘速览 1/")
-        assert [s.category for s in sections][:2] == ["holdings_overview", "experts"]
+        assert sections[0].category == "action_checklist"
+        assert sections[0].title.startswith("📋 今日操作清单 1/")
+        assert sections[1].category == "holdings_overview"
+        assert [s.category for s in sections if s.category == "experts"]

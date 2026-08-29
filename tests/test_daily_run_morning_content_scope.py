@@ -7,7 +7,6 @@ from agent_reach.daily_run.morning_cards import (
     render_decision_markdown,
     render_holdings_overview_markdown,
     render_morning_card_sections,
-    render_xueqiu_hot_markdown,
 )
 from agent_reach.daily_run.morning_content_scope import (
     collect_macro_headline_candidates,
@@ -248,7 +247,7 @@ class TestMorningCardsIntegration:
                 "indices": [],
             },
         )
-        assert render_xueqiu_hot_markdown(ctx) == ""
         categories = [s.category for s in render_morning_card_sections(ctx)]
         assert "xueqiu_hot" not in categories
         assert "eastmoney" not in categories
+        assert "action_checklist" in categories

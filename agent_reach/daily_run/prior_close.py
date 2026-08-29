@@ -78,6 +78,17 @@ def save_close_baseline(
         "report_type": "close",
         "_baseline_source": "close_baseline",
     }
+    for key in (
+        "reasoning",
+        "invalidation",
+        "entry_price",
+        "stop_loss_price",
+        "price",
+        "change_pct",
+    ):
+        val = snapshot.get(key)
+        if val is not None:
+            payload[key] = val
 
     out = close_baseline_path(norm)
     out.parent.mkdir(parents=True, exist_ok=True)

@@ -11,21 +11,21 @@ from agent_reach.daily_run.report_push import ReportSection
 from agent_reach.daily_run.snapshot_builder import _normalize_code
 
 MORNING_CARD_ORDER: tuple[str, ...] = (
+    "action_checklist",
     "holdings_overview",
+    "today_risk",
     "experts",
     "decision",
-    "xueqiu_hot",
-    "eastmoney",
     "harness",
     "ai_narrative",
 )
 
 MORNING_CARD_LABELS: dict[str, str] = {
+    "action_checklist": "📋 今日操作清单",
     "holdings_overview": "📋 持仓早盘速览",
+    "today_risk": "⚠️ 今日风险",
     "experts": "👥 专家共识",
     "decision": "📊 MSS 决策",
-    "xueqiu_hot": "🔥 雪球热门",
-    "eastmoney": "📰 东财路由",
     "harness": "🧬 Harness 进化",
     "ai_narrative": "📋 规则解读",
 }
@@ -421,70 +421,22 @@ def build_single_morning_card_context(
     )
 
 
+def render_action_checklist_markdown(ctx: MorningCardContext) -> str:
+    from agent_reach.daily_run.morning_signals import render_action_checklist_markdown as _render
+
+    return _render(ctx)
+
+
 def render_holdings_overview_markdown(ctx: MorningCardContext) -> str:
-    from agent_reach.daily_run.global_markets_collector import render_global_markets_markdown
-    from agent_reach.daily_run.morning_content_scope import (
-        render_domestic_market_brief,
-        render_macro_headlines_markdown,
-        render_prior_close_recap_markdown,
-        select_macro_headlines,
-    )
-    from agent_reach.daily_run.tradability import is_suspended
+    from agent_reach.daily_run.morning_signals import render_holdings_overview_markdown as _render
 
-    lines: list[str] = []
-    snap = ctx.primary_snapshot or {}
+    return _render(ctx)
 
-    recap_md = render_prior_close_recap_markdown(ctx.portfolio, settings=ctx.settings)
-    if recap_md.strip():
-        lines.append(recap_md)
-        lines.append("")
 
-    global_md = render_global_markets_markdown(ctx.global_markets)
-    if global_md.strip():
-        lines.append(global_md)
-        lines.append("")
+def render_today_risk_markdown(ctx: MorningCardContext) -> str:
+    from agent_reach.daily_run.morning_signals import render_today_risk_markdown as _render
 
-    market_md = render_domestic_market_brief(snapshot=snap, macro_signals=ctx.macro_signals)
-    if market_md.strip():
-        lines.append(market_md)
-        lines.append("")
-
-    featured, extra = select_macro_headlines(
-        macro_signals=ctx.macro_signals,
-        sources=snap.get("sources"),
-        portfolio=ctx.portfolio,
-        limit=3,
-    )
-    macro_md = render_macro_headlines_markdown(featured, extra)
-    if macro_md.strip():
-        lines.append(macro_md)
-        lines.append("")
-
-    lines.extend(
-        [
-            "**持仓早盘速览**",
-            "",
-            "| 标的 | 开盘 | 现价 | 较昨收 | MSS | 结论 | 触发位 | 仓位建议 |",
-            "|------|------|------|--------|-----|------|--------|----------|",
-        ]
-    )
-    for row in ctx.symbol_rows:
-        holding = row.holding
-        snap = row.snapshot
-        report = row.report
-        merged = {**snap, **holding}
-        suspended = is_suspended(merged)
-        mss = report.get("mss_final")
-        mss_s = f"{float(mss):.1f}" if mss is not None else "—"
-        lines.append(
-            f"| {row.name} | {_format_open_cell(holding, snap, suspended=suspended)} "
-            f"| {_format_price_cell(holding, snap, suspended=suspended)} "
-            f"| {_change_vs_prev_close(holding, snap, suspended=suspended)} "
-            f"| {mss_s} | {report.get('verdict') or '—'} "
-            f"| {_trigger_lines(report, holding, snap, suspended=suspended)} "
-            f"| {_position_advice_line(holding, ctx.portfolio, report, snap, settings=ctx.settings)} |"
-        )
-    return "\n".join(lines).strip()
+    return _render(ctx)
 
 
 def render_decision_markdown(ctx: MorningCardContext) -> str:
@@ -529,11 +481,11 @@ def render_ai_narrative_markdown(ctx: MorningCardContext) -> str:
 
 
 _CARD_RENDERERS = {
+    "action_checklist": render_action_checklist_markdown,
     "holdings_overview": render_holdings_overview_markdown,
+    "today_risk": render_today_risk_markdown,
     "experts": render_experts_markdown,
     "decision": render_decision_markdown,
-    "xueqiu_hot": render_xueqiu_hot_markdown,
-    "eastmoney": render_eastmoney_markdown,
     "harness": render_harness_markdown,
     "ai_narrative": render_ai_narrative_markdown,
 }
