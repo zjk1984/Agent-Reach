@@ -1639,6 +1639,12 @@ def run_weekly(
     )
     steps.append("outlook_plan_saved")
 
+    from agent_reach.daily_run.weekly_analytics import save_weekly_issues
+
+    if report.pending_issues:
+        save_weekly_issues(report.pending_issues)
+        steps.append("pending_issues_saved")
+
     from agent_reach.daily_run.watchlist_candidates import update_candidates_from_weekly
 
     wl_candidates = update_candidates_from_weekly(report, cfg)

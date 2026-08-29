@@ -260,6 +260,8 @@ _WEEKLY_CATEGORY_MAP = {
     "规则解读": "weekly_narrative",
     "总览": "weekly_portfolio",
     "计划回溯": "weekly_backtrack",
+    "归因分析": "weekly_attribution",
+    "待办事项": "weekly_issues",
     "持仓复盘": "weekly_portfolio",
     "策略验证": "weekly_strategy",
     "市场环境": "weekly_market",
