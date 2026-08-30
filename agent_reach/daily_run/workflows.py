@@ -1992,6 +1992,10 @@ def run_forecast(
     forecast.operation_plans = enriched.get("operation_plans") or []
     forecast.prior_week_verification = enriched.get("prior_week_verification") or {}
     forecast.risk_calendar = enriched.get("risk_calendar") or []
+    forecast.operation_matrix = enriched.get("operation_matrix") or {}
+    forecast.portfolio_snapshot = pf
+    forecast.harness_result = harness_result
+    forecast.outlook = outlook
     steps.append("structured_forecast")
 
     path = persist_week_forecast(forecast)
@@ -2054,15 +2058,6 @@ def run_forecast(
         from agent_reach.config import Config
 
         cfg_obj = config or Config()
-        summary_enabled = _harness_push_summary_enabled(cfg, report_kind="forecast")
-        if summary_enabled and _push_harness_summary_card(
-            harness_result,
-            settings=cfg,
-            config=cfg_obj,
-            report_kind="forecast",
-            harness_errors=harness_errors,
-        ):
-            steps.append("push_harness_summary")
         steps.extend(
             push_harness_followups(
                 settings=cfg,
@@ -2071,7 +2066,7 @@ def run_forecast(
                 harness_result=harness_result,
                 harness_errors=harness_errors,
                 push=True,
-                summary_in_main_push=summary_enabled,
+                summary_in_main_push=True,
             )
         )
 

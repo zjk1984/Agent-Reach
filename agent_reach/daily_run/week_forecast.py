@@ -466,6 +466,10 @@ class WeekForecast:
     operation_plans: list[dict[str, Any]] = field(default_factory=list)
     prior_week_verification: dict[str, Any] = field(default_factory=dict)
     risk_calendar: list[dict[str, Any]] = field(default_factory=list)
+    operation_matrix: dict[str, Any] = field(default_factory=dict)
+    portfolio_snapshot: dict[str, Any] = field(default_factory=dict)
+    harness_result: dict[str, Any] = field(default_factory=dict)
+    outlook: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -490,6 +494,10 @@ class WeekForecast:
             "operation_plans": self.operation_plans,
             "prior_week_verification": self.prior_week_verification,
             "risk_calendar": self.risk_calendar,
+            "operation_matrix": self.operation_matrix,
+            "portfolio_snapshot": self.portfolio_snapshot,
+            "harness_result": self.harness_result,
+            "outlook": self.outlook,
         }
 
 
@@ -817,7 +825,7 @@ def render_forecast_sections(forecast: WeekForecast | dict[str, Any]) -> list[Fo
         render_structured_forecast_sections,
     )
 
-    pf = data.get("_portfolio")
+    pf = data.get("portfolio_snapshot") or data.get("_portfolio")
     if not data.get("structured_predictions"):
         data = ensure_structured_forecast_payload(
             data,

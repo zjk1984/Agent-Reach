@@ -98,7 +98,7 @@ def test_render_forecast_sections_puts_limitations_last():
             "notes": [],
         }
     )
-    assert sections[-1].label == "局限性"
+    assert sections[-1].label == "关键事件"
     assert isinstance(sections[-1], ForecastSection)
 
 

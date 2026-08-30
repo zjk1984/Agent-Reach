@@ -21,6 +21,26 @@ def _optional_float(value: Any) -> Optional[float]:
         return None
 
 
+def _holding_market_value(holding: dict[str, Any]) -> float:
+    mv = _optional_float(holding.get("market_value"))
+    if mv is not None and mv > 0:
+        return mv
+    shares = _optional_float(holding.get("shares")) or 0.0
+    price = _optional_float(holding.get("price")) or 0.0
+    return round(shares * price, 2)
+
+
+def _portfolio_total(portfolio: Optional[dict[str, Any]]) -> float:
+    pf = portfolio or {}
+    total = _optional_float(pf.get("total_value") or pf.get("portfolio_total") or pf.get("total"))
+    if total is not None and total > 0:
+        return float(total)
+    cash = _optional_float(pf.get("cash")) or 0.0
+    stock = sum(_holding_market_value(h) for h in pf.get("holdings") or [])
+    combined = cash + stock
+    return combined if combined > 0 else 0.0
+
+
 def _fmt_pct(value: float, *, signed: bool = True) -> str:
     if signed:
         return f"{value:+.1f}%"
@@ -28,10 +48,13 @@ def _fmt_pct(value: float, *, signed: bool = True) -> str:
 
 
 def _weight_pct(holding: dict[str, Any], total: Optional[float]) -> float:
-    mv = _optional_float(holding.get("market_value"))
-    if mv is None or not total:
+    pf_total = float(total) if total else 0.0
+    if pf_total <= 0:
+        pf_total = _holding_market_value(holding)
+    if pf_total <= 0:
         return 0.0
-    return round(mv / float(total) * 100.0, 1)
+    mv = _holding_market_value(holding)
+    return round(mv / pf_total * 100.0, 1)
 
 
 def _load_stop_loss(code: str, *, settings: Optional[dict[str, Any]] = None) -> Optional[float]:
@@ -141,7 +164,7 @@ def build_master_operation_rows(
     settings: Optional[dict[str, Any]] = None,
 ) -> list[dict[str, Any]]:
     pf = portfolio or {}
-    total = _optional_float(pf.get("total_value") or pf.get("portfolio_total"))
+    total = _portfolio_total(pf) or None
     sym_preds = {
         _normalize_code(str(s.get("code") or "")): s
         for s in (structured or {}).get("symbols") or []
@@ -209,7 +232,11 @@ def build_master_operation_rows(
         )
 
     stock_w = sum(float(r.get("current_weight_pct") or 0) for r in rows)
-    cash = max(0.0, round(100.0 - stock_w, 1))
+    cash_amount = _optional_float(pf.get("cash"))
+    if cash_amount is not None and total and total > 0:
+        cash = round(cash_amount / float(total) * 100.0, 1)
+    else:
+        cash = max(0.0, round(100.0 - stock_w, 1))
     rows.append(
         {
             "code": "CASH",
@@ -232,7 +259,7 @@ def build_position_guidance(
     settings: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     pf = portfolio or {}
-    total = _optional_float(pf.get("total_value") or pf.get("portfolio_total"))
+    total = _portfolio_total(pf) or None
     current_stock = sum(_weight_pct(h, total) for h in pf.get("holdings") or [])
     current_cash = max(0.0, round(100.0 - current_stock, 1))
     market = (structured or {}).get("market") or {}
@@ -347,22 +374,55 @@ def build_key_timeline(
     watchlist_intel: Optional[dict[str, Any]] = None,
     portfolio: Optional[dict[str, Any]] = None,
     week_start: Optional[str] = None,
+    trading_days: Optional[list[str]] = None,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    held_names = {
-        str(h.get("name") or "") for h in (portfolio or {}).get("holdings") or []
+    seen: set[str] = set()
+    day_pool = [str(d)[:10] for d in (trading_days or []) if d]
+    if not day_pool and week_start:
+        day_pool = [str(week_start)[:10]]
+    date_use_count: dict[str, int] = {}
+    day_rr = 0
+
+    def _assign_date(raw: str, *, salt: str) -> str:
+        nonlocal day_rr
+        text = str(raw or "").strip()[:10]
+        has_valid = len(text) >= 10 and text[4] == "-"
+        if has_valid and date_use_count.get(text, 0) == 0:
+            date_use_count[text] = 1
+            return text
+        if day_pool:
+            ds = day_pool[day_rr % len(day_pool)]
+            day_rr += 1
+            date_use_count[ds] = date_use_count.get(ds, 0) + 1
+            return ds
+        if has_valid:
+            date_use_count[text] = date_use_count.get(text, 0) + 1
+            return text
+        return str(week_start or "")
+
+    held_codes = {
+        _normalize_code(str(h.get("code") or "")) for h in (portfolio or {}).get("holdings") or []
     }
+    held_names = {str(h.get("name") or "") for h in (portfolio or {}).get("holdings") or []}
 
     for item in risk_calendar or []:
-        event = str(item.get("event") or "")
+        event = str(item.get("event") or "").strip()
+        if not event:
+            continue
         scope = str(item.get("scope") or "—")
-        if scope not in ("大盘波动", "组合", "持仓", "个股") and scope != "—":
-            if not any(n in event for n in held_names if n):
+        if scope not in ("大盘波动", "组合", "持仓", "个股", "—"):
+            if not any(n and n in event for n in held_names):
                 continue
+        ds = _assign_date(str(item.get("date") or ""), salt=event)
+        dedupe_key = event[:48]
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
         sev = str(item.get("severity") or "中")
         rows.append(
             {
-                "date": str(item.get("date") or "")[:10],
+                "date": ds,
                 "event": event,
                 "scope": scope,
                 "severity": sev,
@@ -374,20 +434,27 @@ def build_key_timeline(
     for code, block in (watchlist_intel or {}).items():
         if not isinstance(block, dict):
             continue
+        norm = _normalize_code(str(code))
         name = str(block.get("name") or code)
-        if name not in held_names and code not in {
-            _normalize_code(str(h.get("code") or "")) for h in (portfolio or {}).get("holdings") or []
-        }:
+        if name not in held_names and norm not in held_codes:
             continue
         for ann in (block.get("announcements") or [])[:1]:
-            title = str(ann.get("title") or "")[:30]
-            pub = str(ann.get("date") or ann.get("pub_date") or "")[:10]
+            title = str(ann.get("title") or "").strip()
             if not title:
                 continue
+            event = f"{name} {title[:30]}"
+            ds = _assign_date(
+                str(ann.get("date") or ann.get("pub_date") or ""),
+                salt=f"{norm}:{title[:12]}",
+            )
+            dedupe_key = event[:48]
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
             rows.append(
                 {
-                    "date": pub or week_start or "",
-                    "event": f"{name} {title}",
+                    "date": ds,
+                    "event": event,
                     "scope": "个股",
                     "severity": "中",
                     "severity_emoji": "🟡",
@@ -442,6 +509,7 @@ def build_forecast_operation_matrix(
         watchlist_intel=intel,
         portfolio=portfolio,
         week_start=str(fc.get("week_start") or ""),
+        trading_days=list(fc.get("trading_days") or []),
     )
     guidance = build_position_guidance(
         portfolio=portfolio,

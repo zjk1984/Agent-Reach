@@ -16,12 +16,12 @@ from agent_reach.daily_run.forecast_structured import (
 from agent_reach.daily_run.week_forecast import ForecastSection, render_forecast_sections
 
 
-def test_forecast_section_labels_are_seven():
+def test_forecast_section_labels_are_six():
     labels = forecast_section_labels()
     assert labels[0] == "上周验证"
     assert labels[1] == "操作总表"
-    assert labels[-1] == "局限性"
-    assert len(labels) == 7
+    assert labels[-1] == "关键事件"
+    assert len(labels) == 6
 
 
 def test_aggregate_symbol_week_prediction_numeric_text():
@@ -233,7 +233,7 @@ def test_render_forecast_sections_first_is_prior_verify():
         }
     )
     assert sections[0].label == "上周验证"
-    assert sections[-1].label == "局限性"
+    assert sections[-1].label == "关键事件"
     assert all(isinstance(s, ForecastSection) for s in sections)
 
 
@@ -267,3 +267,27 @@ def test_attach_structured_forecast_populates_fields():
     assert enriched.get("structured_predictions", {}).get("market")
     assert enriched.get("operation_plans")
     assert enriched.get("operation_matrix", {}).get("master_rows")
+
+
+def test_build_master_operation_rows_uses_total_and_shares_price():
+    portfolio = {
+        "total": 104531,
+        "cash": 61000,
+        "holdings": [
+            {"code": "688008", "name": "澜起科技", "shares": 100, "price": 80.0},
+            {"code": "300308", "name": "中际旭创", "shares": 50, "price": 120.0},
+        ],
+    }
+    structured = {
+        "symbols": [
+            {"code": "688008", "name": "澜起科技", "confidence_pct": 70},
+            {"code": "300308", "name": "中际旭创", "confidence_pct": 65},
+        ]
+    }
+    rows = build_master_operation_rows(portfolio=portfolio, structured=structured)
+    codes = {r["code"] for r in rows}
+    assert "688008" in codes
+    assert "300308" in codes
+    cash_row = next(r for r in rows if r["code"] == "CASH")
+    assert float(cash_row["current_weight_pct"]) < 100.0
+    assert float(cash_row["current_weight_pct"]) > 50.0

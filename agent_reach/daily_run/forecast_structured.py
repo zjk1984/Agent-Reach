@@ -16,7 +16,6 @@ from agent_reach.daily_run.forecast_content_scope import (
 )
 from agent_reach.daily_run.forecast_operation_matrix import (
     build_forecast_operation_matrix,
-    render_limitations_markdown,
     render_master_operation_markdown,
     render_scenario_markdown,
     render_timeline_markdown,
@@ -41,7 +40,6 @@ _FORECAST_SECTION_LABELS = (
     "大盘板块",
     "持仓预案",
     "关键事件",
-    "局限性",
 )
 
 
@@ -278,10 +276,15 @@ def build_structured_predictions(
 
 
 def _weight_pct(holding: dict[str, Any], portfolio_total: Optional[float]) -> Optional[float]:
-    mv = _optional_float(holding.get("market_value"))
-    if mv is None or not portfolio_total:
+    from agent_reach.daily_run.forecast_operation_matrix import _holding_market_value, _portfolio_total
+
+    total = portfolio_total
+    if not total:
+        total = _portfolio_total({"holdings": [holding]})
+    if not total:
         return None
-    return round(mv / float(portfolio_total) * 100.0, 1)
+    mv = _holding_market_value(holding)
+    return round(mv / float(total) * 100.0, 1)
 
 
 def build_tied_operation_plans(
@@ -293,7 +296,13 @@ def build_tied_operation_plans(
 ) -> list[dict[str, Any]]:
     """Bind numeric predictions to master-table operation rows for holdings card."""
     pf = portfolio or {}
-    total = _optional_float(pf.get("total_value") or pf.get("portfolio_total"))
+    total = _optional_float(
+        pf.get("total_value") or pf.get("portfolio_total") or pf.get("total")
+    )
+    if not total:
+        from agent_reach.daily_run.forecast_operation_matrix import _portfolio_total
+
+        total = _portfolio_total(pf) or None
     sym_preds = {str(s.get("code")): s for s in structured.get("symbols") or [] if s.get("code")}
     master_map = {
         _normalize_code(str(r.get("code") or "")): r
@@ -607,7 +616,7 @@ def ensure_structured_forecast_payload(
     """Build structured sections on demand (render path / tests without full workflow)."""
     if forecast.get("structured_predictions"):
         return forecast
-    pf = portfolio or forecast.get("_portfolio")
+    pf = portfolio or forecast.get("portfolio_snapshot") or forecast.get("_portfolio")
     if pf is None:
         holdings = [
             {"code": code, "name": sym.get("name") or code}
@@ -718,13 +727,99 @@ def attach_structured_forecast(
 
     risk_calendar = list((outlook or {}).get("risk_calendar") or [])
     data["risk_calendar"] = risk_calendar
+    data["portfolio_snapshot"] = portfolio
+    data["operation_matrix"] = matrix
     return data
+
+
+def render_forecast_harness_evolution_markdown(
+    harness_result: Optional[dict[str, Any]],
+    *,
+    settings: Optional[dict[str, Any]] = None,
+) -> str:
+    if not harness_result or harness_result.get("skipped"):
+        return ""
+    from agent_reach.daily_run.report_narrative import (
+        _collect_harness_overlay_evolution_lines,
+        _compact_harness_execution_summary,
+    )
+
+    skills = harness_result.get("forecast_skills") or {}
+    overlay = skills.get("effective_overlay")
+    overlay_lines = _collect_harness_overlay_evolution_lines(
+        settings,
+        effective_overlay=overlay,
+        max_lines=16,
+    )
+    key_markers = (
+        "宏观否决",
+        "进攻阈值",
+        "deploy_ratio",
+        "max_position",
+        "最低现金",
+        "vol_scale",
+        "bias",
+        "calibration",
+    )
+    key_lines: list[str] = []
+    secondary_lines: list[str] = []
+    for line in overlay_lines:
+        if any(marker in line for marker in key_markers):
+            key_lines.append(line)
+        else:
+            secondary_lines.append(line)
+
+    reason_lines: list[str] = []
+    for block_key in ("forecast_calibrate", "layer_a", "layer_b"):
+        block = harness_result.get(block_key) or skills.get(block_key) or {}
+        if not isinstance(block, dict):
+            continue
+        summary = str(block.get("proposal_summary") or block.get("reason") or "").strip()
+        if summary and summary not in reason_lines:
+            reason_lines.append(summary[:120])
+        for note in block.get("optimization_notes") or []:
+            text = str(note).strip()
+            if text and text not in reason_lines:
+                reason_lines.append(text[:120])
+            if len(reason_lines) >= 3:
+                break
+        changes = block.get("changes")
+        if isinstance(changes, list):
+            for note in changes:
+                text = str(note).strip()
+                if text and text not in reason_lines:
+                    reason_lines.append(text[:120])
+                if len(reason_lines) >= 3:
+                    break
+
+    lines = ["**Harness 进化（预测校准）**", ""]
+    if key_lines:
+        lines.append("**关键参数变化：**")
+        lines.extend(f"- {item}" for item in key_lines[:6])
+    if secondary_lines:
+        lines.append("")
+        lines.append("**次要参数变化：**")
+        lines.extend(f"- {item}" for item in secondary_lines[:6])
+    if reason_lines:
+        lines.append("")
+        lines.append("**调整原因：**")
+        lines.extend(f"- {item}" for item in reason_lines[:3])
+    execution = _compact_harness_execution_summary(harness_result)
+    if execution:
+        lines.append("")
+        lines.append("**本次执行：**")
+        lines.extend(f"- {item}" for item in execution[:3])
+    if len(lines) <= 2:
+        return ""
+    return "\n".join(lines).strip()
 
 
 def render_prior_week_verify_markdown(
     verification: dict[str, Any],
     *,
     advanced: Optional[dict[str, Any]] = None,
+    harness_result: Optional[dict[str, Any]] = None,
+    settings: Optional[dict[str, Any]] = None,
 ) -> str:
     rows = verification.get("rows") or []
     if not rows:
@@ -785,7 +880,13 @@ def render_prior_week_verify_markdown(
     except Exception:
         pass
     if extras:
-        return base + "\n\n" + "\n\n".join(extras)
+        base = base + "\n\n" + "\n\n".join(extras)
+    harness_md = render_forecast_harness_evolution_markdown(
+        harness_result,
+        settings=settings,
+    )
+    if harness_md:
+        base = base + "\n\n" + harness_md
     return base
 
 
@@ -966,13 +1067,20 @@ def render_structured_forecast_sections(
 
     sections: list[tuple[str, str]] = []
     advanced = forecast.get("advanced_insights") or {}
-    verify_md = render_prior_week_verify_markdown(verification, advanced=advanced)
+    harness_result = forecast.get("harness_result") or {}
+    portfolio = forecast.get("portfolio_snapshot") or forecast.get("_portfolio")
+    verify_md = render_prior_week_verify_markdown(
+        verification,
+        advanced=advanced,
+        harness_result=harness_result,
+        settings=settings,
+    )
     if verify_md.strip():
         sections.append((_FORECAST_SECTION_LABELS[0], verify_md))
 
     if not matrix and structured:
         matrix = build_forecast_operation_matrix(
-            portfolio=forecast.get("_portfolio"),
+            portfolio=portfolio,
             structured=structured,
             outlook=forecast.get("outlook"),
             forecast=forecast,
@@ -1021,9 +1129,5 @@ def render_structured_forecast_sections(
     timeline_md = render_timeline_markdown(matrix) if matrix else ""
     if timeline_md.strip():
         sections.append((_FORECAST_SECTION_LABELS[5], timeline_md))
-
-    limit_md = render_limitations_markdown(matrix) if matrix else ""
-    if limit_md.strip():
-        sections.append((_FORECAST_SECTION_LABELS[6], limit_md))
 
     return sections
