@@ -2,6 +2,8 @@
 """Tests for Sunday forecast operation matrix (master table, scenarios, timeline)."""
 
 from agent_reach.daily_run.forecast_operation_matrix import (
+    _resolve_operation_type,
+    _target_weight_display,
     build_forecast_operation_matrix,
     build_master_operation_rows,
     build_scenario_plans,
@@ -131,6 +133,60 @@ def test_scenario_plans_three_rows():
     assert "情景预案" in md
     assert "基准" in md
     assert "风险" in md
+
+
+def test_reduce_position_never_raises_target_weight():
+    """Small holding (2%) marked 减仓 must not show 2%→5%."""
+    target = _target_weight_display(2.0, "减仓", confidence_pct=52)
+    assert target == "2%→0%"
+    rows = build_master_operation_rows(
+        portfolio={
+            "total_value": 100000,
+            "holdings": [{"code": "000725", "name": "京东方A", "market_value": 2000}],
+        },
+        structured={
+            "symbols": [
+                {
+                    "code": "000725",
+                    "name": "京东方A",
+                    "price_low": 3.8,
+                    "price_mid": 4.0,
+                    "price_high": 4.2,
+                    "confidence_pct": 52,
+                    "position_hint": "观望或极小仓位",
+                }
+            ]
+        },
+        outlook={"operation_plan": []},
+    )
+    row = next(r for r in rows if r.get("code") == "000725")
+    assert row["operation"] == "持有"
+    assert "→5%" not in row["target_weight"]
+
+
+def test_low_confidence_defaults_to_hold_not_reduce():
+    op = _resolve_operation_type(
+        outlook_action="",
+        confidence_pct=52,
+        position_hint="观望或极小仓位",
+    )
+    assert op == "持有"
+
+
+def test_low_confidence_note_in_master_table():
+    matrix = build_forecast_operation_matrix(
+        portfolio=_sample_portfolio(),
+        structured={
+            "symbols": [
+                {"code": "000725", "name": "京东方A", "confidence_pct": 51},
+                {"code": "688008", "name": "澜起科技", "confidence_pct": 52},
+            ]
+        },
+        outlook={},
+        forecast={"week_start": "2026-08-24"},
+    )
+    md = render_master_operation_markdown(matrix)
+    assert "置信度整体偏低" in md
 
 
 def test_timeline_and_limitations_render():

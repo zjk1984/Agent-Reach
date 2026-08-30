@@ -249,6 +249,12 @@ def build_structured_predictions(
         settings=settings,
     )
     cross_ref = load_cross_reference_data(portfolio=pf, settings=settings)
+    ref_holdings = cross_ref.get("holdings") or {}
+    for sym in symbols:
+        code = _normalize_code(str(sym.get("code") or ""))
+        ref_px = _optional_float((ref_holdings.get(code) or {}).get("close_price"))
+        if ref_px is not None:
+            sym["base_price"] = ref_px
     audit = audit_forecast_cross_check(
         {"market": market, "symbols": symbols, "sectors": sectors},
         cross_ref,
@@ -505,6 +511,8 @@ def _verify_sector_row(
 def _symbol_week_actuals(
     pred: dict[str, Any],
     prior_forecast: dict[str, Any],
+    *,
+    settings: Optional[dict[str, Any]] = None,
 ) -> tuple[Optional[float], Optional[float], Optional[float]]:
     """Return week close price, week low price, week change % from stored actuals."""
     code = str(pred.get("code") or "")
@@ -515,17 +523,45 @@ def _symbol_week_actuals(
     cum = 0.0
     for ds in trading_days:
         sym_actual = (actuals.get(ds) or {}).get("symbols", {}).get(code) or {}
+        close_px = _optional_float(sym_actual.get("close_price"))
+        if close_px is not None:
+            prices.append(close_px)
+            if base > 0:
+                cum = (close_px / base - 1) * 100
+            continue
         chg = _optional_float(sym_actual.get("change_pct"))
         if chg is None:
             continue
         cum += chg
         if base > 0:
             prices.append(base * (1 + cum / 100))
-    if not prices and base > 0:
-        return None, None, None
-    week_close = prices[-1] if prices else None
-    week_low = min(prices) if prices else None
-    week_chg = round(cum, 2) if prices else None
+
+    week_close: Optional[float] = None
+    week_low: Optional[float] = None
+    week_chg: Optional[float] = None
+
+    if trading_days:
+        try:
+            from agent_reach.daily_run.prior_close import load_close_baseline
+
+            last_day = date.fromisoformat(str(trading_days[-1]))
+            baseline = load_close_baseline(code, target_day=last_day, settings=settings) or {}
+            week_close = _optional_float(baseline.get("price"))
+        except Exception:
+            week_close = None
+
+    if week_close is None and prices:
+        week_close = prices[-1]
+    if prices:
+        week_low = min(prices)
+    elif week_close is not None:
+        week_low = week_close
+
+    if week_close is not None and base > 0:
+        week_chg = round((week_close / base - 1) * 100, 2)
+    elif prices:
+        week_chg = round(cum, 2)
+
     return week_close, week_low, week_chg
 
 
@@ -551,7 +587,7 @@ def verify_prior_week_predictions(
     rows.append(market_row)
 
     for sym_pred in structured.get("symbols") or []:
-        close_p, low_p, chg = _symbol_week_actuals(sym_pred, prior_forecast)
+        close_p, low_p, chg = _symbol_week_actuals(sym_pred, prior_forecast, settings=settings)
         rows.append(
             _verify_symbol_row(
                 sym_pred,

@@ -67,6 +67,14 @@ def _load_stop_loss(code: str, *, settings: Optional[dict[str, Any]] = None) -> 
         return None
 
 
+def _weight_delta(confidence_pct: float) -> float:
+    if confidence_pct >= 80:
+        return 10.0
+    if confidence_pct >= 60:
+        return 5.0
+    return 3.0
+
+
 def _resolve_operation_type(
     *,
     outlook_action: str,
@@ -80,7 +88,9 @@ def _resolve_operation_type(
         return "新建仓" if confidence_pct >= 65 else "持有"
     if "清仓" in action or "止损" in action and confidence_pct < 50:
         return "清仓"
-    if "减仓" in action or confidence_pct < 55 or "观望" in position_hint:
+    if "减仓" in action:
+        return "减仓"
+    if confidence_pct < 50 and "观望" in position_hint:
         return "减仓"
     if "新建" in action:
         return "新建仓"
@@ -99,11 +109,14 @@ def _target_weight_display(
     fc = (settings or {}).get("finance_close") or {}
     max_pos = float(fc.get("max_position_pct") or 20)
     if operation == "加仓":
-        delta = 10 if confidence_pct >= 80 else 5 if confidence_pct >= 60 else 3
+        delta = _weight_delta(confidence_pct)
         target = min(current + delta, max_pos)
         return f"{current:.0f}%→{target:.0f}%"
     if operation == "减仓":
-        target = max(current * 0.6, 5.0)
+        delta = _weight_delta(confidence_pct)
+        target = max(current - delta, 0.0)
+        if current > 0 and target >= current:
+            target = max(round(current * 0.5, 1), 0.0)
         return f"{current:.0f}%→{target:.0f}%"
     if operation == "清仓":
         return f"{current:.0f}%→0%"
@@ -564,12 +577,27 @@ def build_forecast_operation_matrix(
     )
     scenarios = build_scenario_plans(structured=structured, master_rows=master_rows)
     limitations = build_limitations_statement(structured=structured)
+    confs = [
+        float(s.get("confidence_pct"))
+        for s in (structured or {}).get("symbols") or []
+        if s.get("confidence_pct") is not None
+    ]
+    confidence_note = ""
+    if confs:
+        avg_conf = sum(confs) / len(confs)
+        low_n = sum(1 for c in confs if c < 55)
+        if avg_conf < 55 or low_n >= max(1, len(confs) // 2):
+            confidence_note = (
+                f"预测置信度整体偏低（均值 {avg_conf:.0f}%，{low_n}/{len(confs)} 只 <55%），"
+                "建议轻仓/观望，操作以触发条件为准"
+            )
     return {
         "master_rows": master_rows,
         "position_guidance": guidance,
         "scenarios": scenarios,
         "timeline": timeline,
         "limitations": limitations,
+        "confidence_note": confidence_note,
     }
 
 
@@ -604,6 +632,10 @@ def render_master_operation_markdown(matrix: dict[str, Any]) -> str:
             f"{row.get('target_weight')} | {row.get('stop_loss')} |"
         )
     lines.append("")
+    note = str(matrix.get("confidence_note") or "").strip()
+    if note:
+        lines.append(f"_{note}_")
+        lines.append("")
     lines.append("_无止损位的加仓/新建仓建议暂不执行；预测错误时见「情景预案」卡。_")
     return "\n".join(lines).strip()
 

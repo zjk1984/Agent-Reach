@@ -277,11 +277,17 @@ def load_cross_reference_data(
         baseline = load_close_baseline(code, target_day=last_trade, settings=settings) or {}
         price = _optional_float(baseline.get("price") or h.get("price"))
         chg = _optional_float(baseline.get("change_pct") or h.get("change_pct"))
+        source = baseline.get("_baseline_source") or "close_baseline"
+        port_px = _optional_float(h.get("price"))
+        if port_px is not None:
+            if price is None or abs(port_px - price) / max(port_px, 0.01) > 0.005:
+                price = port_px
+                source = "portfolio_snapshot"
         holdings[code] = {
             "name": h.get("name") or baseline.get("name") or code,
             "close_price": price,
             "change_pct": chg,
-            "source": baseline.get("_baseline_source") or "close_baseline",
+            "source": source,
             "as_of": str(baseline.get("close_date") or last_trade.isoformat()),
             "adjusted": bool(baseline.get("ex_rights") or baseline.get("adjusted")),
         }

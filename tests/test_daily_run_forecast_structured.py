@@ -1,8 +1,11 @@
 # -*- coding: utf-8
 """Tests for structured weekly forecast cards."""
 
+from unittest.mock import patch
+
 from agent_reach.daily_run.forecast_operation_matrix import build_master_operation_rows
 from agent_reach.daily_run.forecast_structured import (
+    _symbol_week_actuals,
     aggregate_symbol_week_prediction,
     attach_structured_forecast,
     build_market_prediction,
@@ -343,3 +346,22 @@ def test_build_master_operation_rows_uses_total_and_shares_price():
     cash_row = next(r for r in rows if r["code"] == "CASH")
     assert float(cash_row["current_weight_pct"]) < 100.0
     assert float(cash_row["current_weight_pct"]) > 50.0
+
+
+def test_symbol_week_actuals_uses_close_baseline_not_stale_derived():
+    """Week close should come from Friday close baseline (213), not stale derived 205.16."""
+    prior = {
+        "week_start": "2026-08-25",
+        "week_end": "2026-08-29",
+        "trading_days": ["2026-08-25", "2026-08-26", "2026-08-27", "2026-08-28", "2026-08-29"],
+        "actuals": {},
+    }
+    pred = {"code": "688008", "name": "澜起科技", "base_price": 213.0}
+    with patch(
+        "agent_reach.daily_run.prior_close.load_close_baseline",
+        return_value={"price": 213.0, "close_date": "2026-08-29"},
+    ):
+        close_p, low_p, chg = _symbol_week_actuals(pred, prior)
+    assert close_p == 213.0
+    assert low_p == 213.0
+    assert chg == 0.0

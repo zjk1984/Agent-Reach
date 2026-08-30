@@ -1,6 +1,8 @@
 # -*- coding: utf-8
 """Tests for Sunday forecast quality (evidence, width, confidence, cross-check)."""
 
+from unittest.mock import patch
+
 from agent_reach.daily_run.forecast_quality import (
     audit_forecast_cross_check,
     clamp_pct_band,
@@ -9,6 +11,7 @@ from agent_reach.daily_run.forecast_quality import (
     enrich_symbol_prediction,
     format_evidence_suffix,
     interval_width_pct,
+    load_cross_reference_data,
     position_hint_for_confidence,
 )
 
@@ -102,3 +105,33 @@ def test_confidence_tier():
     assert confidence_tier(85) == "高"
     assert confidence_tier(70) == "中"
     assert confidence_tier(50) == "低"
+
+
+def test_load_cross_reference_prefers_portfolio_when_baseline_stale():
+    """Portfolio snapshot wins when close baseline differs by >0.5%."""
+    stale_baseline = {"price": 205.16, "change_pct": -1.2, "close_date": "2026-08-29"}
+    with patch(
+        "agent_reach.daily_run.prior_close.load_close_baseline",
+        return_value=stale_baseline,
+    ):
+        ref = load_cross_reference_data(
+            portfolio={
+                "holdings": [
+                    {
+                        "code": "688008",
+                        "name": "澜起科技",
+                        "price": 213.0,
+                        "change_pct": 2.1,
+                    }
+                ]
+            }
+        )
+    holding = ref["holdings"]["688008"]
+    assert holding["close_price"] == 213.0
+    assert holding["source"] == "portfolio_snapshot"
+    audit = audit_forecast_cross_check(
+        {"symbols": [{"code": "688008", "name": "澜起科技", "base_price": 213.0}]},
+        ref,
+        tolerance_pct=0.5,
+    )
+    assert audit["ok"] is True
