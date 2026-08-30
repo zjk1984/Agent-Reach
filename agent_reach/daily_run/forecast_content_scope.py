@@ -362,6 +362,7 @@ def build_forecast_content_scope(
     kronos_paths = forecast.get("kronos_paths") or {}
 
     compact_lines: list[str] = []
+    watchlist_lines: list[str] = []
     for sym in symbols:
         code = _normalize_code(str(sym.get("code") or ""))
         factors = build_symbol_core_factors(
@@ -371,8 +372,13 @@ def build_forecast_content_scope(
             risk_calendar=risks,
             kronos=kronos_paths.get(code),
         )
-        compact_lines.append(format_compact_symbol_line(sym, core_factors=factors))
+        line = format_compact_symbol_line(sym, core_factors=factors)
+        if sym.get("role") == "watchlist":
+            watchlist_lines.append(line)
+        else:
+            compact_lines.append(line)
     compact_lines = apply_holdings_char_budget(compact_lines)
+    watchlist_lines = apply_holdings_char_budget(watchlist_lines, budget=_HOLDINGS_BUDGET_CHARS)
 
     buy_candidates = extract_buy_candidates(outlook, held_codes=held_codes)
     week_start = forecast.get("week_start")
@@ -398,6 +404,7 @@ def build_forecast_content_scope(
         ),
         "sectors_scoped": sectors,
         "symbols_compact": compact_lines,
+        "watchlist_compact": watchlist_lines,
         "buy_candidates": buy_candidates,
         "extra_reading": extra_reading[:3],
         "weekly_report_link": _WEEKLY_REPORT_LINK,

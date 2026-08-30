@@ -209,18 +209,19 @@ def build_structured_predictions(
     kronos_paths = forecast.get("kronos_paths") or {}
     enriched_map = enriched or {}
     for code, sym in (forecast.get("symbols") or {}).items():
-        if sym.get("role") != "holding":
+        role = str(sym.get("role") or "")
+        if role not in ("holding", "watchlist"):
             continue
         row = aggregate_symbol_week_prediction({**sym, "code": code})
         if row:
-            symbols.append(
-                enrich_symbol_prediction(
-                    row,
-                    sym=sym,
-                    enriched=enriched_map.get(_normalize_code(code)) or enriched_map.get(code),
-                    kronos=kronos_paths.get(code) or sym.get("kronos"),
-                )
+            enriched_row = enrich_symbol_prediction(
+                row,
+                sym=sym,
+                enriched=enriched_map.get(_normalize_code(code)) or enriched_map.get(code),
+                kronos=kronos_paths.get(code) or sym.get("kronos"),
             )
+            enriched_row["role"] = role
+            symbols.append(enriched_row)
     pf = portfolio or {}
     if not symbols:
         for h in pf.get("holdings") or []:
@@ -229,14 +230,14 @@ def build_structured_predictions(
             if sym:
                 row = aggregate_symbol_week_prediction({**sym, "code": code})
                 if row:
-                    symbols.append(
-                        enrich_symbol_prediction(
-                            row,
-                            sym=sym,
-                            enriched=enriched_map.get(code),
-                            kronos=kronos_paths.get(code) or sym.get("kronos"),
-                        )
+                    enriched_row = enrich_symbol_prediction(
+                        row,
+                        sym=sym,
+                        enriched=enriched_map.get(code),
+                        kronos=kronos_paths.get(code) or sym.get("kronos"),
                     )
+                    enriched_row["role"] = sym.get("role") or "holding"
+                    symbols.append(enriched_row)
     sectors_all = build_sector_predictions(
         digest=digest,
         snapshot=snap,
@@ -338,9 +339,48 @@ def build_tied_operation_plans(
                 "current_weight_pct": cur,
                 "confidence_pct": conf,
                 "position_hint": pos_hint,
+                "role": "holding",
             }
         )
-    return plans[:10]
+
+    held_codes = {
+        _normalize_code(str(h.get("code") or ""))
+        for h in pf.get("holdings") or []
+        if h.get("code")
+    }
+    for w in pf.get("watchlist") or []:
+        code = _normalize_code(str(w.get("code") or ""))
+        if not code or code in held_codes:
+            continue
+        pred = sym_preds.get(code) or {}
+        if not pred:
+            continue
+        conf = _optional_float(pred.get("confidence_pct")) or 55.0
+        pos_hint = str(pred.get("position_hint") or position_hint_for_confidence(conf))
+        name = str(w.get("name") or pred.get("name") or code)
+        pred_text = pred.get("text") or "—"
+        master = master_map.get(code) or {}
+        if master:
+            op = master.get("operation") or "新建仓"
+            trigger = master.get("trigger") or "—"
+            target = master.get("target_weight") or "0%→10%"
+            stop = master.get("stop_loss") or "—"
+            action = f"{op}：{trigger} → 目标 {target}；止损 {stop}"
+        else:
+            action = f"观察：触发条件见 outlook；置信度偏低时暂不新建仓"
+        plans.append(
+            {
+                "code": code,
+                "name": name,
+                "prediction_text": pred_text,
+                "operation_plan": sanitize_prediction_text(action),
+                "current_weight_pct": 0.0,
+                "confidence_pct": conf,
+                "position_hint": pos_hint,
+                "role": "watchlist",
+            }
+        )
+    return plans[:16]
 
 
 def _in_range(value: float, lo: float, hi: float) -> bool:
@@ -947,20 +987,35 @@ def render_holdings_plans_markdown(
     advanced: Optional[dict[str, Any]] = None,
 ) -> str:
     scope = structured.get("content_scope") or {}
-    lines = ["## 📊 持仓股下周预测与操作预案", ""]
-    lines.append("_具体操作触发/目标/止损见「操作总表」；此处仅列预测与因子。_")
+    lines = ["## 📊 持仓与观察池下周预测与操作预案", ""]
+    lines.append("_持仓操作见「操作总表」；观察池列预测与因子，新建仓触发同表或 outlook。_")
     lines.append("")
     compact = scope.get("symbols_compact") or []
+    watchlist_compact = scope.get("watchlist_compact") or []
     symbols = structured.get("symbols") or []
 
     if compact:
+        lines.append("**持仓：**")
         for text in compact:
             lines.append(f"- {text}")
     elif operation_plans:
         for row in operation_plans:
+            if row.get("role") == "watchlist":
+                continue
             lines.append(f"- **{row.get('name')}** {row.get('prediction_text')}")
     else:
         lines.append("- 暂无持仓预测")
+
+    if watchlist_compact:
+        lines.extend(["", "**观察池：**"])
+        for text in watchlist_compact:
+            lines.append(f"- {text}")
+    elif operation_plans:
+        wl_plans = [r for r in operation_plans if r.get("role") == "watchlist"]
+        if wl_plans:
+            lines.extend(["", "**观察池：**"])
+            for row in wl_plans:
+                lines.append(f"- **{row.get('name')}** {row.get('prediction_text')}")
 
     buy_rows = scope.get("buy_candidates") or []
     if buy_rows:

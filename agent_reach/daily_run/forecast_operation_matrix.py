@@ -231,6 +231,44 @@ def build_master_operation_rows(
             }
         )
 
+    row_codes = {_normalize_code(str(r.get("code") or "")) for r in rows if r.get("code") != "CASH"}
+    for w in pf.get("watchlist") or []:
+        code = _normalize_code(str(w.get("code") or ""))
+        if not code or code in held_codes or code in row_codes:
+            continue
+        pred = sym_preds.get(code) or {}
+        if not pred:
+            continue
+        conf = _optional_float(pred.get("confidence_pct")) or 55.0
+        op = "新建仓" if conf >= 65 else "持有"
+        outlook_row: dict[str, Any] = {"action": op, "trigger": "", "stop_loss": ""}
+        rows.append(
+            {
+                "code": code,
+                "name": w.get("name") or pred.get("name") or code,
+                "current_weight_pct": 0.0,
+                "operation": op if op == "新建仓" else "—",
+                "trigger": _trigger_for_operation(
+                    "新建仓" if op == "新建仓" else "持有",
+                    pred=pred,
+                    outlook_row=outlook_row,
+                ),
+                "target_weight": (
+                    _target_weight_display(0.0, "新建仓", confidence_pct=conf, settings=settings)
+                    if op == "新建仓"
+                    else "0%（观察）"
+                ),
+                "stop_loss": _stop_display(
+                    code,
+                    "新建仓" if op == "新建仓" else "持有",
+                    pred=pred,
+                    outlook_row=outlook_row,
+                    settings=settings,
+                ),
+            }
+        )
+        row_codes.add(code)
+
     stock_w = sum(float(r.get("current_weight_pct") or 0) for r in rows)
     cash_amount = _optional_float(pf.get("cash"))
     if cash_amount is not None and total and total > 0:

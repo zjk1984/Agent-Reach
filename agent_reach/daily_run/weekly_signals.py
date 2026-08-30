@@ -655,6 +655,24 @@ def build_next_week_outlook(
         )
         seen_codes.add(code)
 
+    for w in watchlist or []:
+        code = _normalize_code(str(w.get("code") or ""))
+        if not code or code in seen_codes:
+            continue
+        baseline = load_close_baseline(code, target_day=week_end, settings=settings)
+        stop = _optional_float((baseline or {}).get("stop_loss_price"))
+        plan_rows.append(
+            {
+                "name": w.get("name") or code,
+                "code": code,
+                "action": "观望",
+                "trigger": "见观察池预测区间下沿",
+                "target_weight": "0%（观察池）",
+                "stop_loss": f"{stop:.2f} 元" if stop else "—",
+            }
+        )
+        seen_codes.add(code)
+
     next_start, next_end = next_trading_week_range(week_end + timedelta(days=1))
     risk_rows: list[dict[str, Any]] = []
     intel = watchlist_intel or {}

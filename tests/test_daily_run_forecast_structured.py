@@ -124,6 +124,57 @@ def test_build_tied_operation_plans_uses_master_rows():
     assert "止损" in plans[0]["operation_plan"]
 
 
+def test_build_structured_predictions_includes_watchlist():
+    from agent_reach.daily_run.forecast_structured import build_structured_predictions
+
+    forecast = {
+        "week_start": "2026-08-31",
+        "week_end": "2026-09-04",
+        "trading_days": ["2026-08-31"],
+        "mss_daily": {"2026-08-31": {"median": 52.0, "range": [50, 54]}},
+        "calibration_used": {"bias_pct": 0.0, "vol_scale": 1.0},
+        "symbols": {
+            "688008": {
+                "code": "688008",
+                "name": "澜起科技",
+                "role": "holding",
+                "base_price": 100.0,
+                "days": {
+                    "2026-08-31": {
+                        "change_pct_range": [-1.0, 2.0],
+                        "expected_change_pct": 0.5,
+                    }
+                },
+            },
+            "603986": {
+                "code": "603986",
+                "name": "兆易创新",
+                "role": "watchlist",
+                "base_price": 200.0,
+                "days": {
+                    "2026-08-31": {
+                        "change_pct_range": [0.0, 3.0],
+                        "expected_change_pct": 1.0,
+                    }
+                },
+            },
+        },
+    }
+    portfolio = {
+        "holdings": [{"code": "688008", "name": "澜起科技", "market_value": 20000}],
+        "watchlist": [{"code": "603986", "name": "兆易创新"}],
+        "total_value": 100000,
+    }
+    structured = build_structured_predictions(forecast, portfolio=portfolio, settings={})
+    roles = {s.get("code"): s.get("role") for s in structured.get("symbols") or []}
+    assert roles.get("688008") == "holding"
+    assert roles.get("603986") == "watchlist"
+    scope = structured.get("content_scope") or {}
+    assert scope.get("symbols_compact")
+    assert scope.get("watchlist_compact")
+    assert "兆易创新" in scope["watchlist_compact"][0]
+
+
 def test_render_structured_forecast_sections_order():
     forecast = {
         "week_start": "2026-08-24",
