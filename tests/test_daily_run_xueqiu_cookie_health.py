@@ -142,8 +142,10 @@ def test_forecast_sections_include_cookie_alert():
         {
             "week_start": "2026-07-13",
             "week_end": "2026-07-17",
-            "mss_daily": {},
+            "mss_daily": {"2026-07-13": {"median": 52.0, "range": [50, 54]}},
             "symbols": {},
+            "calibration_used": {"hit_rate": 0.5},
+            "notes": [],
             "xueqiu_cookie_health": {
                 "status": "expired",
                 "message": "雪球 Cookie 可能已过期",
@@ -151,10 +153,8 @@ def test_forecast_sections_include_cookie_alert():
             },
         }
     )
-    labels = [s.label for s in sections]
-    assert "Cookie预警" in labels
-    cookie_sec = next(s for s in sections if s.label == "Cookie预警")
-    assert "Cookie-Editor" in cookie_sec.markdown
+    assert sections[0].label == "上周验证"
+    assert "Cookie-Editor" in sections[0].markdown
 
 
 def test_refresh_skipped_when_disabled():

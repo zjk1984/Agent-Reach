@@ -74,7 +74,7 @@ def test_llm_narrative(mock_chat, mock_provider):
     assert "下周偏防守" in md
 
 
-def test_render_forecast_sections_puts_ai_last():
+def test_render_forecast_sections_puts_confidence_last():
     sections = render_forecast_sections(
         {
             "week_start": "2026-08-17",
@@ -84,16 +84,25 @@ def test_render_forecast_sections_puts_ai_last():
                 "focus_points": ["A"],
                 "planner": "llm",
             },
-            "mss_daily": {},
+            "mss_daily": {"2026-08-18": {"median": 52.0, "range": [50, 54]}},
             "symbols": {},
-            "news_events": [],
+            "structured_predictions": {
+                "market": {"text": "下周大盘（沪深300）预测：+0.1% ~ +1.1%，中枢 +0.6%"},
+                "sectors": [],
+                "symbols": [],
+            },
+            "prior_week_verification": {"rows": [], "accuracy_trend": []},
+            "operation_plans": [],
+            "risk_calendar": [],
+            "calibration_used": {"hit_rate": 0.5},
+            "notes": [],
         }
     )
-    assert sections[-1].label == "规则解读"
+    assert sections[-1].label == "置信度说明"
     assert isinstance(sections[-1], ForecastSection)
 
 
-def test_render_forecast_sections_includes_xueqiu_hot():
+def test_render_forecast_sections_prior_verify_first():
     sections = render_forecast_sections(
         {
             "week_start": "2026-08-17",
@@ -102,12 +111,30 @@ def test_render_forecast_sections_includes_xueqiu_hot():
             "mss_daily": {},
             "symbols": {},
             "news_events": [],
-            "macro_signals": {
-                "sentiment_posts": [{"title": "下周存储逻辑", "author": "作者"}],
+            "structured_predictions": {
+                "market": {"text": "下周大盘（沪深300）预测：+0.0% ~ +1.0%，中枢 +0.5%"},
+                "sectors": [],
+                "symbols": [],
             },
+            "prior_week_verification": {
+                "rows": [
+                    {
+                        "prediction": "沪深300 +0.5%~+1.5%",
+                        "actual": "+0.8%",
+                        "verify": "✅ 命中区间",
+                        "deviation": "0%",
+                    }
+                ],
+                "hits": 1,
+                "total": 1,
+                "accuracy_pct": 100.0,
+                "accuracy_trend": [],
+            },
+            "operation_plans": [],
+            "risk_calendar": [],
+            "calibration_used": {},
+            "notes": [],
         }
     )
-    labels = [s.label for s in sections]
-    assert "雪球热门" in labels
-    xq = next(s for s in sections if s.label == "雪球热门")
-    assert "下周存储逻辑" in xq.markdown
+    assert sections[0].label == "上周验证"
+    assert "✅ 命中区间" in sections[0].markdown

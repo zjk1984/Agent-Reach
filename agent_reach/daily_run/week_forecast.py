@@ -462,6 +462,10 @@ class WeekForecast:
     macro_signals: dict[str, Any] = field(default_factory=dict)
     watchlist_intel: dict[str, Any] = field(default_factory=dict)
     xueqiu_cookie_health: dict[str, Any] = field(default_factory=dict)
+    structured_predictions: dict[str, Any] = field(default_factory=dict)
+    operation_plans: list[dict[str, Any]] = field(default_factory=list)
+    prior_week_verification: dict[str, Any] = field(default_factory=dict)
+    risk_calendar: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -482,6 +486,10 @@ class WeekForecast:
             "macro_signals": self.macro_signals,
             "watchlist_intel": self.watchlist_intel,
             "xueqiu_cookie_health": self.xueqiu_cookie_health,
+            "structured_predictions": self.structured_predictions,
+            "operation_plans": self.operation_plans,
+            "prior_week_verification": self.prior_week_verification,
+            "risk_calendar": self.risk_calendar,
         }
 
 
@@ -784,54 +792,46 @@ def _render_news_section(data: dict[str, Any]) -> str:
 
 
 def render_forecast_sections(forecast: WeekForecast | dict[str, Any]) -> list[ForecastSection]:
-    data = forecast.to_dict() if isinstance(forecast, WeekForecast) else forecast
+    data = forecast.to_dict() if isinstance(forecast, WeekForecast) else dict(forecast)
     sections: list[ForecastSection] = []
     wf_cfg = {}
+    settings: dict[str, Any] = {}
     try:
         from agent_reach.daily_run.settings import load_settings
 
-        wf_cfg = load_settings().get("week_forecast") or {}
+        settings = load_settings()
+        wf_cfg = settings.get("week_forecast") or {}
     except Exception:
         pass
+
+    cookie_prefix = ""
     if wf_cfg.get("xueqiu_cookie_alert_enabled", True) is not False:
         from agent_reach.daily_run.xueqiu_cookie_health import render_xueqiu_cookie_alert_markdown
 
         cookie_md = render_xueqiu_cookie_alert_markdown(data.get("xueqiu_cookie_health"))
         if cookie_md.strip():
-            sections.append(ForecastSection(label="Cookie预警", markdown=cookie_md))
-    mss_md = _render_mss_section(data)
-    if mss_md.strip():
-        sections.append(ForecastSection(label="MSS预测", markdown=mss_md))
-    sym_md = _render_symbols_section(data)
-    if sym_md.strip():
-        sections.append(ForecastSection(label="个股路径", markdown=sym_md))
-    news_md = _render_news_section(data)
-    if news_md.strip():
-        sections.append(ForecastSection(label="新闻热点", markdown=news_md))
-    from agent_reach.daily_run.xueqiu_hot_display import render_xueqiu_hot_markdown
+            cookie_prefix = cookie_md.strip() + "\n\n"
 
-    xq_md = render_xueqiu_hot_markdown(data.get("macro_signals"))
-    if xq_md.strip():
-        sections.append(ForecastSection(label="雪球热门", markdown=xq_md))
-    from agent_reach.daily_run.watchlist_intel import render_watchlist_intel_markdown
-
-    watchlist = [
-        {"code": code, "name": sym.get("name") or code}
-        for code, sym in (data.get("symbols") or {}).items()
-        if sym.get("role") == "watchlist"
-    ]
-    intel_md = render_watchlist_intel_markdown(
-        data.get("watchlist_intel") or {},
-        watchlist=watchlist,
-        limit=5,
+    from agent_reach.daily_run.forecast_structured import (
+        ensure_structured_forecast_payload,
+        render_structured_forecast_sections,
     )
-    if intel_md.strip():
-        sections.append(ForecastSection(label="观察池情报", markdown=intel_md))
-    from agent_reach.daily_run.report_narrative import render_narrative_markdown
 
-    narrative_md = render_narrative_markdown(data.get("llm_narrative") or {}, job="forecast")
-    if narrative_md.strip():
-        sections.append(ForecastSection(label="规则解读", markdown=narrative_md))
+    pf = data.get("_portfolio")
+    if not data.get("structured_predictions"):
+        data = ensure_structured_forecast_payload(
+            data,
+            portfolio=pf,
+            settings=settings,
+            persist_prior=False,
+        )
+
+    structured_sections = render_structured_forecast_sections(data, settings=settings)
+    for idx, (label, markdown) in enumerate(structured_sections):
+        body = markdown
+        if idx == 0 and cookie_prefix:
+            body = cookie_prefix + body
+        sections.append(ForecastSection(label=label, markdown=body))
     return sections
 
 

@@ -1,0 +1,784 @@
+# -*- coding: utf-8
+"""Structured weekly forecast — numeric predictions, verification, operation plans."""
+
+from __future__ import annotations
+
+import re
+from datetime import date, timedelta
+from typing import Any, Optional
+
+from agent_reach.daily_run.snapshot_builder import _normalize_code
+from agent_reach.daily_run.trade_calendar import today_shanghai
+from agent_reach.daily_run.week_forecast import load_forecast, next_trading_week_range
+
+_VAGUE_PATTERN = re.compile(
+    r"(有望|可能|关注|谨慎|或许|大概|或|视情况|待定|择机|适度|灵活|偏|略|待观察)"
+)
+
+_FORECAST_SECTION_LABELS = (
+    "上周验证",
+    "大盘板块",
+    "持仓预案",
+    "风险应对",
+    "置信度说明",
+)
+
+
+def forecast_section_labels() -> tuple[str, ...]:
+    return _FORECAST_SECTION_LABELS
+
+
+def contains_vague_language(text: str) -> bool:
+    return bool(_VAGUE_PATTERN.search(str(text or "")))
+
+
+def sanitize_prediction_text(text: str) -> str:
+    """Strip vague wording; caller should prefer numeric templates instead."""
+    cleaned = _VAGUE_PATTERN.sub("", str(text or ""))
+    return re.sub(r"\s{2,}", " ", cleaned).strip(" ，,;；")
+
+
+def _fmt_pct(value: float, *, signed: bool = True) -> str:
+    if signed:
+        return f"{value:+.1f}%"
+    return f"{value:.1f}%"
+
+
+def _optional_float(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _prior_trading_week_start(week_start: date) -> date:
+    return week_start - timedelta(days=7)
+
+
+def aggregate_symbol_week_prediction(sym: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """Turn daily symbol paths into one verifiable week-level numeric prediction."""
+    days = sym.get("days") or {}
+    if not days:
+        return None
+    cum_lo = 0.0
+    cum_hi = 0.0
+    cum_mid = 0.0
+    for ds in sorted(days.keys()):
+        row = days[ds]
+        lo, hi = row.get("change_pct_range") or [0, 0]
+        cum_lo += float(lo)
+        cum_hi += float(hi)
+        cum_mid += float(row.get("expected_change_pct") or (float(lo) + float(hi)) / 2)
+    base = _optional_float(sym.get("base_price")) or 0.0
+    price_lo = round(base * (1 + cum_lo / 100), 2) if base > 0 else None
+    price_hi = round(base * (1 + cum_hi / 100), 2) if base > 0 else None
+    price_mid = round(base * (1 + cum_mid / 100), 2) if base > 0 else None
+    name = str(sym.get("name") or sym.get("code") or "—")
+    code = str(sym.get("code") or "")
+    text = (
+        f"{name}下周预测：区间 {price_lo:.0f}-{price_hi:.0f} 元，"
+        f"中枢 {price_mid:.0f} 元，周涨跌幅 {_fmt_pct(cum_lo)} ~ {_fmt_pct(cum_hi)}"
+        if price_lo is not None and price_hi is not None and price_mid is not None
+        else f"{name}下周预测：周涨跌幅 {_fmt_pct(cum_lo)} ~ {_fmt_pct(cum_hi)}，中枢 {_fmt_pct(cum_mid)}"
+    )
+    return {
+        "code": code,
+        "name": name,
+        "role": sym.get("role") or "",
+        "base_price": base,
+        "change_pct_low": round(cum_lo, 2),
+        "change_pct_high": round(cum_hi, 2),
+        "change_pct_mid": round(cum_mid, 2),
+        "price_low": price_lo,
+        "price_high": price_hi,
+        "price_mid": price_mid,
+        "text": sanitize_prediction_text(text),
+    }
+
+
+def build_market_prediction(
+    *,
+    mss_daily: dict[str, Any],
+    calibration: dict[str, Any],
+    settings: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    """Numeric HS300-style weekly return band derived from MSS drift + calibration."""
+    cfg = (settings or {}).get("weekly_report") or {}
+    index_name = str(cfg.get("benchmark_index_name") or "沪深300")
+    medians = [float(r.get("median")) for r in mss_daily.values() if r.get("median") is not None]
+    mss_delta = (medians[-1] - medians[0]) if len(medians) >= 2 else 0.0
+    bias = float(calibration.get("bias_pct") or 0)
+    vol = max(0.8, float(calibration.get("vol_scale") or 1.0))
+    mid = round(mss_delta * 0.12 - bias * 0.25, 2)
+    lo = round(mid - vol, 2)
+    hi = round(mid + vol, 2)
+    text = (
+        f"下周大盘（{index_name}）预测：{_fmt_pct(lo)} ~ {_fmt_pct(hi)}，中枢 {_fmt_pct(mid)}"
+    )
+    return {
+        "label": f"下周大盘（{index_name}）",
+        "index_name": index_name,
+        "change_pct_low": lo,
+        "change_pct_high": hi,
+        "change_pct_mid": mid,
+        "text": sanitize_prediction_text(text),
+    }
+
+
+def build_sector_predictions(
+    *,
+    digest: Optional[dict[str, Any]] = None,
+    snapshot: Optional[dict[str, Any]] = None,
+    market_mid: float = 0.0,
+    limit: int = 4,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    hot = list((digest or {}).get("hot_sectors") or [])
+    if not hot and snapshot:
+        sector = snapshot.get("industry") or snapshot.get("sector")
+        if sector:
+            hot = [{"sector": sector, "avg_change_pct": snapshot.get("change_pct") or 0}]
+    for item in hot[:limit]:
+        name = str(item.get("sector") or item.get("name") or "热点板块")
+        chg = _optional_float(item.get("avg_change_pct") or item.get("change_pct")) or 0.0
+        excess_mid = round(chg * 0.35 - market_mid * 0.15, 2)
+        band = max(1.0, abs(chg) * 0.25 + 0.8)
+        lo = round(excess_mid - band, 2)
+        hi = round(excess_mid + band, 2)
+        text = f"{name}下周预测：相对沪深300超额收益 {_fmt_pct(lo)} ~ {_fmt_pct(hi)}"
+        rows.append(
+            {
+                "name": name,
+                "excess_low": lo,
+                "excess_high": hi,
+                "excess_mid": excess_mid,
+                "text": sanitize_prediction_text(text),
+            }
+        )
+    return rows
+
+
+def build_structured_predictions(
+    forecast: dict[str, Any],
+    *,
+    portfolio: Optional[dict[str, Any]] = None,
+    settings: Optional[dict[str, Any]] = None,
+    digest: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    calibration = forecast.get("calibration_used") or {}
+    market = build_market_prediction(
+        mss_daily=forecast.get("mss_daily") or {},
+        calibration=calibration,
+        settings=settings,
+    )
+    symbols: list[dict[str, Any]] = []
+    for code, sym in (forecast.get("symbols") or {}).items():
+        if sym.get("role") != "holding":
+            continue
+        row = aggregate_symbol_week_prediction({**sym, "code": code})
+        if row:
+            symbols.append(row)
+    pf = portfolio or {}
+    if not symbols:
+        for h in pf.get("holdings") or []:
+            code = _normalize_code(str(h.get("code") or ""))
+            sym = (forecast.get("symbols") or {}).get(code)
+            if sym:
+                row = aggregate_symbol_week_prediction({**sym, "code": code})
+                if row:
+                    symbols.append(row)
+    sectors = build_sector_predictions(
+        digest=digest,
+        snapshot=forecast.get("_snapshot"),
+        market_mid=float(market.get("change_pct_mid") or 0),
+    )
+    return {
+        "market": market,
+        "sectors": sectors,
+        "symbols": symbols,
+        "generated_for_week": forecast.get("week_start"),
+    }
+
+
+def _weight_pct(holding: dict[str, Any], portfolio_total: Optional[float]) -> Optional[float]:
+    mv = _optional_float(holding.get("market_value"))
+    if mv is None or not portfolio_total:
+        return None
+    return round(mv / float(portfolio_total) * 100.0, 1)
+
+
+def build_tied_operation_plans(
+    structured: dict[str, Any],
+    *,
+    portfolio: Optional[dict[str, Any]] = None,
+    outlook: Optional[dict[str, Any]] = None,
+) -> list[dict[str, Any]]:
+    """Bind numeric predictions to explicit trigger / target / stop actions."""
+    pf = portfolio or {}
+    total = _optional_float(pf.get("total_value") or pf.get("portfolio_total"))
+    sym_preds = {str(s.get("code")): s for s in structured.get("symbols") or [] if s.get("code")}
+    outlook_rows = {
+        str(r.get("code")): r for r in (outlook or {}).get("operation_plan") or [] if r.get("code")
+    }
+    plans: list[dict[str, Any]] = []
+    for h in pf.get("holdings") or []:
+        code = _normalize_code(str(h.get("code") or ""))
+        if not code:
+            continue
+        pred = sym_preds.get(code) or {}
+        cur = _weight_pct(h, total) or 0.0
+        low = _optional_float(pred.get("price_low"))
+        mid = _optional_float(pred.get("price_mid"))
+        high = _optional_float(pred.get("price_high"))
+        name = str(h.get("name") or pred.get("name") or code)
+        if mid and low and high:
+            add_px = round(mid * 0.95, 0)
+            stop_px = round(low * 0.98, 0)
+            add_w = min(cur + 10, 25)
+            stop_w = max(int(cur * 0.5), 10)
+            action = (
+                f"回调至{add_px:.0f}元加仓至{add_w:.0f}%；"
+                f"突破{high:.0f}元持有；"
+                f"跌破{stop_px:.0f}元止损至{stop_w:.0f}%"
+            )
+            pred_text = pred.get("text") or f"区间 {low:.0f}-{high:.0f} 元，中枢 {mid:.0f}"
+        else:
+            outlook_row = outlook_rows.get(code) or {}
+            action = str(outlook_row.get("trigger") or "—")
+            if action == "—":
+                action = f"维持 {cur:.0f}% 仓位；MSS<45 减至 {max(cur - 5, 5):.0f}%"
+            pred_text = pred.get("text") or "—"
+        plans.append(
+            {
+                "code": code,
+                "name": name,
+                "prediction_text": pred_text,
+                "operation_plan": sanitize_prediction_text(action),
+                "current_weight_pct": cur,
+            }
+        )
+    return plans[:10]
+
+
+def _in_range(value: float, lo: float, hi: float) -> bool:
+    return float(lo) <= float(value) <= float(hi)
+
+
+def _verify_market_row(
+    pred: dict[str, Any],
+    actual_pct: Optional[float],
+) -> dict[str, Any]:
+    lo = float(pred.get("change_pct_low") or 0)
+    hi = float(pred.get("change_pct_high") or 0)
+    mid = float(pred.get("change_pct_mid") or (lo + hi) / 2)
+    label = str(pred.get("label") or pred.get("text") or "大盘")
+    if actual_pct is None:
+        return {
+            "prediction": f"{label} {_fmt_pct(lo)}~{_fmt_pct(hi)}",
+            "actual": "—",
+            "verify": "—",
+            "deviation": "—",
+            "hit": None,
+            "reason": "",
+        }
+    hit = _in_range(actual_pct, lo, hi)
+    dev = round(actual_pct - mid, 2)
+    verify = f"✅ 命中区间" if hit else f"❌ 偏离区间"
+    reason = "" if hit else f"实际 {_fmt_pct(actual_pct)} 超出预测 {_fmt_pct(lo)}~{_fmt_pct(hi)}"
+    return {
+        "prediction": f"{label} {_fmt_pct(lo)}~{_fmt_pct(hi)}",
+        "actual": _fmt_pct(actual_pct),
+        "verify": verify,
+        "deviation": _fmt_pct(dev),
+        "hit": hit,
+        "reason": reason,
+    }
+
+
+def _verify_symbol_row(
+    pred: dict[str, Any],
+    *,
+    week_close: Optional[float],
+    week_low: Optional[float],
+    week_change_pct: Optional[float],
+) -> dict[str, Any]:
+    name = str(pred.get("name") or pred.get("code") or "—")
+    lo_p = _optional_float(pred.get("price_low"))
+    hi_p = _optional_float(pred.get("price_high"))
+    pred_s = (
+        f"{name} {lo_p:.0f}-{hi_p:.0f}元"
+        if lo_p is not None and hi_p is not None
+        else f"{name} {_fmt_pct(float(pred.get('change_pct_low') or 0))}~{_fmt_pct(float(pred.get('change_pct_high') or 0))}"
+    )
+    if week_close is None and week_change_pct is None:
+        return {
+            "prediction": pred_s,
+            "actual": "—",
+            "verify": "—",
+            "deviation": "—",
+            "hit": None,
+            "reason": "",
+        }
+    hit = False
+    reason = ""
+    if lo_p is not None and hi_p is not None and week_close is not None:
+        hit = _in_range(week_close, lo_p, hi_p)
+        if not hit and week_low is not None and week_low < lo_p:
+            reason = f"{name} 跌破区间下沿（最低 {week_low:.0f} 元），原因：周内跌幅超预期"
+        elif not hit and week_close > hi_p:
+            reason = f"{name} 突破区间上沿（收盘 {week_close:.0f} 元），原因：动能强于预测"
+        actual_s = f"{week_close:.0f}元" + (f"（最低{week_low:.0f}）" if week_low else "")
+        mid_p = _optional_float(pred.get("price_mid")) or week_close
+        dev = round((week_close - mid_p) / mid_p * 100, 2) if mid_p else 0.0
+    else:
+        lo_c = float(pred.get("change_pct_low") or 0)
+        hi_c = float(pred.get("change_pct_high") or 0)
+        act = float(week_change_pct or 0)
+        hit = _in_range(act, lo_c, hi_c)
+        actual_s = _fmt_pct(act)
+        mid_c = float(pred.get("change_pct_mid") or (lo_c + hi_c) / 2)
+        dev = round(act - mid_c, 2)
+        if not hit:
+            reason = f"{name} 涨跌幅 {actual_s} 超出预测区间"
+    return {
+        "prediction": pred_s,
+        "actual": actual_s,
+        "verify": "✅ 命中区间" if hit else "❌ 未命中",
+        "deviation": _fmt_pct(dev),
+        "hit": hit,
+        "reason": reason,
+    }
+
+
+def _verify_sector_row(
+    pred: dict[str, Any],
+    actual_excess: Optional[float],
+) -> dict[str, Any]:
+    name = str(pred.get("name") or "板块")
+    lo = float(pred.get("excess_low") or 0)
+    hi = float(pred.get("excess_high") or 0)
+    pred_s = f"{name} 超额 {_fmt_pct(lo)}~{_fmt_pct(hi)}"
+    if actual_excess is None:
+        return {
+            "prediction": pred_s,
+            "actual": "—",
+            "verify": "—",
+            "deviation": "—",
+            "hit": None,
+            "reason": "",
+        }
+    hit = _in_range(actual_excess, lo, hi)
+    mid = float(pred.get("excess_mid") or (lo + hi) / 2)
+    return {
+        "prediction": pred_s,
+        "actual": _fmt_pct(actual_excess),
+        "verify": "✅ 命中区间" if hit else "❌ 未命中",
+        "deviation": _fmt_pct(round(actual_excess - mid, 2)),
+        "hit": hit,
+        "reason": "" if hit else f"{name} 超额 {_fmt_pct(actual_excess)} 超出预测区间",
+    }
+
+
+def _symbol_week_actuals(
+    pred: dict[str, Any],
+    prior_forecast: dict[str, Any],
+) -> tuple[Optional[float], Optional[float], Optional[float]]:
+    """Return week close price, week low price, week change % from stored actuals."""
+    code = str(pred.get("code") or "")
+    base = _optional_float(pred.get("base_price")) or 0.0
+    trading_days = list(prior_forecast.get("trading_days") or [])
+    actuals = prior_forecast.get("actuals") or {}
+    prices: list[float] = []
+    cum = 0.0
+    for ds in trading_days:
+        sym_actual = (actuals.get(ds) or {}).get("symbols", {}).get(code) or {}
+        chg = _optional_float(sym_actual.get("change_pct"))
+        if chg is None:
+            continue
+        cum += chg
+        if base > 0:
+            prices.append(base * (1 + cum / 100))
+    if not prices and base > 0:
+        return None, None, None
+    week_close = prices[-1] if prices else None
+    week_low = min(prices) if prices else None
+    week_chg = round(cum, 2) if prices else None
+    return week_close, week_low, week_chg
+
+
+def verify_prior_week_predictions(
+    prior_forecast: dict[str, Any],
+    *,
+    settings: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    """Score last week's structured predictions against realized outcomes."""
+    structured = prior_forecast.get("structured_predictions") or {}
+    if not structured:
+        structured = build_structured_predictions(prior_forecast, settings=settings)
+
+    ws = date.fromisoformat(str(prior_forecast.get("week_start")))
+    we = date.fromisoformat(str(prior_forecast.get("week_end")))
+    from agent_reach.daily_run.weekly_card_metrics import fetch_benchmark_weekly_return
+
+    bench = fetch_benchmark_weekly_return(ws, we, settings=settings)
+    bench_pct = _optional_float(bench.get("return_pct"))
+
+    rows: list[dict[str, Any]] = []
+    market_row = _verify_market_row(structured.get("market") or {}, bench_pct)
+    rows.append(market_row)
+
+    for sym_pred in structured.get("symbols") or []:
+        close_p, low_p, chg = _symbol_week_actuals(sym_pred, prior_forecast)
+        rows.append(
+            _verify_symbol_row(
+                sym_pred,
+                week_close=close_p,
+                week_low=low_p,
+                week_change_pct=chg,
+            )
+        )
+
+    for sec_pred in structured.get("sectors") or []:
+        excess = None
+        if bench_pct is not None:
+            chg = _optional_float(
+                (prior_forecast.get("sector_actuals") or {}).get(sec_pred.get("name"))
+            )
+            if chg is not None:
+                excess = round(chg - bench_pct, 2)
+        rows.append(_verify_sector_row(sec_pred, excess))
+
+    scored = [r for r in rows if r.get("hit") is not None]
+    hits = sum(1 for r in scored if r.get("hit"))
+    total = len(scored)
+    accuracy_pct = round(hits / total * 100.0, 1) if total else None
+    deviations = []
+    for r in scored:
+        dev_s = str(r.get("deviation") or "")
+        if dev_s.endswith("%"):
+            try:
+                deviations.append(abs(float(dev_s.rstrip("%").replace("+", ""))))
+            except ValueError:
+                pass
+    avg_dev = round(sum(deviations) / len(deviations), 2) if deviations else None
+
+    return {
+        "week_start": prior_forecast.get("week_start"),
+        "week_end": prior_forecast.get("week_end"),
+        "rows": rows,
+        "hits": hits,
+        "total": total,
+        "accuracy_pct": accuracy_pct,
+        "avg_deviation_pct": avg_dev,
+        "miss_reasons": [r["reason"] for r in rows if r.get("reason")],
+    }
+
+
+def four_week_accuracy_trend(
+    *,
+    as_of: Optional[date] = None,
+    settings: Optional[dict[str, Any]] = None,
+) -> list[dict[str, Any]]:
+    """Load up to 4 prior forecast files and return weekly accuracy series."""
+    d = as_of or today_shanghai()
+    week_start, _ = next_trading_week_range(d)
+    trend: list[dict[str, Any]] = []
+    cursor = week_start
+    for _ in range(4):
+        prior_start = _prior_trading_week_start(cursor)
+        prior = load_forecast(prior_start)
+        if not prior:
+            cursor = prior_start
+            continue
+        stored = prior.get("week_verification")
+        if isinstance(stored, dict) and stored.get("accuracy_pct") is not None:
+            acc = float(stored["accuracy_pct"])
+        else:
+            verified = verify_prior_week_predictions(prior, settings=settings)
+            acc = verified.get("accuracy_pct")
+            if acc is not None:
+                prior["week_verification"] = verified
+                try:
+                    from agent_reach.daily_run.week_forecast import save_forecast
+
+                    save_forecast(prior)
+                except Exception:
+                    pass
+        if acc is not None:
+            trend.append(
+                {
+                    "week_start": prior.get("week_start"),
+                    "week_end": prior.get("week_end"),
+                    "accuracy_pct": acc,
+                }
+            )
+        cursor = prior_start
+    trend.reverse()
+    return trend
+
+
+def ensure_structured_forecast_payload(
+    forecast: dict[str, Any],
+    *,
+    portfolio: Optional[dict[str, Any]] = None,
+    settings: Optional[dict[str, Any]] = None,
+    persist_prior: bool = False,
+) -> dict[str, Any]:
+    """Build structured sections on demand (render path / tests without full workflow)."""
+    if forecast.get("structured_predictions"):
+        return forecast
+    pf = portfolio or forecast.get("_portfolio")
+    if pf is None:
+        holdings = [
+            {"code": code, "name": sym.get("name") or code}
+            for code, sym in (forecast.get("symbols") or {}).items()
+            if sym.get("role") == "holding"
+        ]
+        if holdings:
+            pf = {"holdings": holdings, "total_value": 100000.0}
+    return attach_structured_forecast(
+        forecast,
+        portfolio=pf,
+        settings=settings,
+        persist_prior=persist_prior,
+    )
+
+
+def attach_structured_forecast(
+    forecast: dict[str, Any],
+    *,
+    portfolio: Optional[dict[str, Any]] = None,
+    settings: Optional[dict[str, Any]] = None,
+    digest: Optional[dict[str, Any]] = None,
+    outlook: Optional[dict[str, Any]] = None,
+    persist_prior: bool = True,
+) -> dict[str, Any]:
+    """Populate structured_predictions, operation_plans, prior_week_verification on forecast dict."""
+    data = dict(forecast)
+    structured = build_structured_predictions(
+        data,
+        portfolio=portfolio,
+        settings=settings,
+        digest=digest,
+    )
+    data["structured_predictions"] = structured
+    data["operation_plans"] = build_tied_operation_plans(
+        structured,
+        portfolio=portfolio,
+        outlook=outlook,
+    )
+
+    week_start = date.fromisoformat(str(data.get("week_start")))
+    prior = load_forecast(_prior_trading_week_start(week_start))
+    if prior:
+        verification = verify_prior_week_predictions(prior, settings=settings)
+        verification["accuracy_trend"] = four_week_accuracy_trend(as_of=week_start, settings=settings)
+        data["prior_week_verification"] = verification
+        if persist_prior:
+            prior["week_verification"] = verification
+            try:
+                from agent_reach.daily_run.week_forecast import save_forecast
+
+                save_forecast(prior)
+            except Exception:
+                pass
+    else:
+        data["prior_week_verification"] = {
+            "rows": [],
+            "hits": 0,
+            "total": 0,
+            "accuracy_pct": None,
+            "accuracy_trend": four_week_accuracy_trend(as_of=week_start, settings=settings),
+        }
+
+    risk_calendar = list((outlook or {}).get("risk_calendar") or [])
+    data["risk_calendar"] = risk_calendar
+    return data
+
+
+def render_prior_week_verify_markdown(verification: dict[str, Any]) -> str:
+    rows = verification.get("rows") or []
+    if not rows:
+        return (
+            "## 📋 上周预测验证\n\n"
+            "- 暂无可验证的上周结构化预测（首次运行或缺少历史 forecast 文件）"
+        )
+    lines = ["## 📋 上周预测验证", ""]
+    ws, we = verification.get("week_start"), verification.get("week_end")
+    if ws and we:
+        lines.append(f"**验证周期：** {ws} ~ {we}")
+        lines.append("")
+    lines.extend(
+        [
+            "| 上周预测 | 实际结果 | 验证 | 偏差 |",
+            "|----------|----------|------|------|",
+        ]
+    )
+    for row in rows:
+        lines.append(
+            f"| {row.get('prediction')} | {row.get('actual')} | {row.get('verify')} | {row.get('deviation')} |"
+        )
+    hits = verification.get("hits")
+    total = verification.get("total")
+    acc = verification.get("accuracy_pct")
+    avg_dev = verification.get("avg_deviation_pct")
+    if total:
+        acc_s = f"{float(acc):.0f}%" if acc is not None else "—"
+        dev_s = f"{float(avg_dev):.1f}%" if avg_dev is not None else "—"
+        lines.append("")
+        lines.append(f"→ **上周预测准确率：{hits}/{total} = {acc_s}**，平均偏差 {dev_s}")
+    trend = verification.get("accuracy_trend") or []
+    if trend:
+        parts = [f"{float(t['accuracy_pct']):.0f}%" for t in trend if t.get("accuracy_pct") is not None]
+        if parts:
+            lines.append(f"→ **近{len(parts)}周准确率：** {' → '.join(parts)}")
+    reasons = [r for r in verification.get("miss_reasons") or [] if r]
+    if reasons:
+        lines.append("")
+        lines.append("**偏差原因：**")
+        for reason in reasons[:4]:
+            lines.append(f"- {reason}")
+    return "\n".join(lines).strip()
+
+
+def render_market_sector_markdown(structured: dict[str, Any]) -> str:
+    lines = ["## 🌐 下周大盘与板块预测", ""]
+    market = structured.get("market") or {}
+    if market.get("text"):
+        lines.append(f"- {market['text']}")
+    sectors = structured.get("sectors") or []
+    if sectors:
+        lines.append("")
+        lines.append("**板块相对收益预测：**")
+        for sec in sectors:
+            lines.append(f"- {sec.get('text')}")
+    if len(lines) <= 2:
+        lines.append("- 暂无大盘/板块结构化预测")
+    return "\n".join(lines).strip()
+
+
+def render_holdings_plans_markdown(
+    structured: dict[str, Any],
+    operation_plans: list[dict[str, Any]],
+) -> str:
+    lines = ["## 📊 持仓股下周预测与操作预案", ""]
+    if not operation_plans:
+        sym_rows = structured.get("symbols") or []
+        if not sym_rows:
+            lines.append("- 暂无持仓预测")
+            return "\n".join(lines).strip()
+        for sym in sym_rows:
+            lines.append(f"- {sym.get('text')}")
+        return "\n".join(lines).strip()
+    lines.extend(
+        [
+            "| 股票 | 下周预测区间 | 操作预案 |",
+            "|------|-------------|----------|",
+        ]
+    )
+    for row in operation_plans:
+        pred = str(row.get("prediction_text") or "—")
+        if len(pred) > 42:
+            pred = pred[:39] + "…"
+        lines.append(
+            f"| {row.get('name')} | {pred} | {row.get('operation_plan')} |"
+        )
+    return "\n".join(lines).strip()
+
+
+def render_risk_response_markdown(
+    risk_calendar: list[dict[str, Any]],
+    *,
+    settings: Optional[dict[str, Any]] = None,
+) -> str:
+    lines = ["## ⚠️ 下周风险事件与应对", ""]
+    if not risk_calendar:
+        lines.append("- 暂无已登记风险事件；默认应对：MSS<45 降仓至 50%，单票止损 -8%")
+        return "\n".join(lines).strip()
+    lines.extend(
+        [
+            "| 日期 | 事件 | 影响范围 | 应对预案 |",
+            "|------|------|----------|----------|",
+        ]
+    )
+    for row in risk_calendar[:8]:
+        ds = str(row.get("date") or "")[5:]
+        severity = str(row.get("severity") or "中")
+        scope = str(row.get("scope") or "—")
+        event = str(row.get("event") or "—")
+        if severity in ("高", "HIGH", "high"):
+            response = "事件前降仓 10-15%；波动放大时暂停新建仓"
+        elif scope == "大盘波动":
+            response = "提高现金至 50%+；指数跌破5日线减至 40%"
+        else:
+            response = "相关持仓减半；止损收紧至 -5%"
+        lines.append(f"| {ds} | {event} | {scope} | {response} |")
+    return "\n".join(lines).strip()
+
+
+def render_confidence_limitations_markdown(
+    forecast: dict[str, Any],
+    structured: dict[str, Any],
+) -> str:
+    cal = forecast.get("calibration_used") or {}
+    hit_rate = cal.get("hit_rate")
+    sym_count = len(structured.get("symbols") or [])
+    sector_count = len(structured.get("sectors") or [])
+    lines = ["## 🎯 预测置信度与局限性说明", ""]
+    if hit_rate is not None:
+        lines.append(f"- **历史校准命中率：** {float(hit_rate):.0%}（滚动更新）")
+    lines.append(
+        f"- **本周覆盖：** 大盘 1 项 · 板块 {sector_count} 项 · 持仓 {sym_count} 项（均为数值区间）"
+    )
+    notes = forecast.get("notes") or []
+    if notes:
+        lines.append(f"- **数据说明：** {'；'.join(str(n) for n in notes[:2])}")
+    narrative = forecast.get("llm_narrative") or {}
+    summary = str(narrative.get("summary") or "").strip()
+    if summary and not contains_vague_language(summary):
+        lines.append(f"- **规则解读摘要：** {summary[:120]}")
+    lines.append(
+        "- **局限性：** 预测基于 MSS/Kronos/历史波动外推，不含未披露信息与黑天鹅；"
+        "区间外结果按操作预案执行，不以单次偏差否定框架"
+    )
+    prob_note = structured.get("probability_note")
+    if prob_note:
+        lines.append(f"- **概率分布：** {prob_note}")
+    return "\n".join(lines).strip()
+
+
+def render_structured_forecast_sections(
+    forecast: dict[str, Any],
+    *,
+    settings: Optional[dict[str, Any]] = None,
+) -> list[tuple[str, str]]:
+    """Return five (label, markdown) sections for Sunday forecast push."""
+    structured = forecast.get("structured_predictions") or {}
+    verification = forecast.get("prior_week_verification") or {}
+    operation_plans = forecast.get("operation_plans") or []
+    risk_calendar = forecast.get("risk_calendar") or []
+
+    sections: list[tuple[str, str]] = []
+    verify_md = render_prior_week_verify_markdown(verification)
+    if verify_md.strip():
+        sections.append((_FORECAST_SECTION_LABELS[0], verify_md))
+
+    market_md = render_market_sector_markdown(structured)
+    if market_md.strip():
+        sections.append((_FORECAST_SECTION_LABELS[1], market_md))
+
+    holdings_md = render_holdings_plans_markdown(structured, operation_plans)
+    if holdings_md.strip():
+        sections.append((_FORECAST_SECTION_LABELS[2], holdings_md))
+
+    risk_md = render_risk_response_markdown(risk_calendar, settings=settings)
+    if risk_md.strip():
+        sections.append((_FORECAST_SECTION_LABELS[3], risk_md))
+
+    conf_md = render_confidence_limitations_markdown(forecast, structured)
+    if conf_md.strip():
+        sections.append((_FORECAST_SECTION_LABELS[4], conf_md))
+
+    return sections

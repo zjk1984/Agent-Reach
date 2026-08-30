@@ -295,6 +295,11 @@ def render_weekly_push_sections(report) -> list[ReportSection]:
 
 
 _FORECAST_CATEGORY_MAP = {
+    "上周验证": "forecast_verify_prior",
+    "大盘板块": "forecast_market_sector",
+    "持仓预案": "forecast_holdings_plan",
+    "风险应对": "forecast_risk_response",
+    "置信度说明": "forecast_confidence",
     "Cookie预警": "xueqiu_cookie",
     "规则解读": "forecast_narrative",
     "MSS预测": "forecast_mss",

@@ -88,8 +88,7 @@ class TestWeekForecast:
         assert forecast.watchlist_intel["603986"]["name"] == "兆易创新"
         assert forecast.to_dict()["watchlist_intel"]["603986"]["name"] == "兆易创新"
         md = render_forecast_markdown(forecast)
-        assert "下周预测" in md or "预测周期" in md
-        assert "澜起科技" in md
+        assert "澜起科技" in md or "持仓股下周预测" in md
 
     @patch("agent_reach.daily_run.week_forecast.run_news_research", return_value=[])
     @patch("agent_reach.daily_run.week_forecast.list_trading_days")
@@ -157,7 +156,8 @@ class TestWeekForecast:
         assert forecast.watchlist_intel["603986"]["name"] == "兆易创新"
         sections = render_forecast_sections(forecast)
         labels = [s.label for s in sections]
-        assert "观察池情报" in labels
+        assert labels[0] == "上周验证"
+        assert "持仓预案" in labels
 
     @patch("agent_reach.daily_run.week_forecast.run_news_research", return_value=[])
     @patch("agent_reach.daily_run.week_forecast.list_trading_days")

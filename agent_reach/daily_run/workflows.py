@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -1959,6 +1959,40 @@ def run_forecast(
 
     attach_forecast_narrative(forecast, settings=cfg, harness_result=harness_result)
     steps.append("llm_narrative")
+
+    from datetime import timedelta
+
+    from agent_reach.daily_run.forecast_structured import attach_structured_forecast
+    from agent_reach.daily_run.weekly_digest import load_weekly_digest
+    from agent_reach.daily_run.weekly_signals import build_next_week_outlook
+
+    pf = portfolio or snapshot.get("portfolio") or {}
+    week_start = (
+        forecast.week_start
+        if hasattr(forecast, "week_start") and isinstance(getattr(forecast, "week_start"), date)
+        else date.fromisoformat(str(forecast.to_dict()["week_start"]))
+    )
+    prior_friday = week_start - timedelta(days=3)
+    digest = load_weekly_digest()
+    outlook = build_next_week_outlook(
+        week_end=prior_friday,
+        holdings=list(pf.get("holdings") or []),
+        watchlist=list(pf.get("watchlist") or []),
+        settings=cfg,
+        watchlist_intel=getattr(forecast, "watchlist_intel", None) or snapshot.get("watchlist_intel"),
+    )
+    enriched = attach_structured_forecast(
+        {**forecast.to_dict(), "_snapshot": snapshot},
+        portfolio=pf,
+        settings=cfg,
+        digest=digest,
+        outlook=outlook,
+    )
+    forecast.structured_predictions = enriched.get("structured_predictions") or {}
+    forecast.operation_plans = enriched.get("operation_plans") or []
+    forecast.prior_week_verification = enriched.get("prior_week_verification") or {}
+    forecast.risk_calendar = enriched.get("risk_calendar") or []
+    steps.append("structured_forecast")
 
     path = persist_week_forecast(forecast)
     steps.append("persist")
