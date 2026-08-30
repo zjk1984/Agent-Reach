@@ -463,6 +463,7 @@
     "xueqiu_cookie_max_age_days": 6,
     "xueqiu_cookie_auto_refresh_from_browser": true,
     "xueqiu_cookie_use_browser_use": true,
+    "xueqiu_cookie_browser_use_repo": "https://github.com/zjk1984/browser-use",
     "xueqiu_cookie_browser_use_profile": "Default",
     "xueqiu_cookie_refresh_every_forecast": true,
     "xueqiu_cookie_refresh_browser": "chrome",

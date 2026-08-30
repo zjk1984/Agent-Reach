@@ -156,8 +156,9 @@ def test_forecast_sections_include_cookie_alert():
             "notes": [],
             "xueqiu_cookie_refresh": {
                 "success": True,
-                "engine": "browser-use",
-                "message": "18 cookies (含 xq_a_token，browser-use/CDP)",
+                "engine": "zjk1984/browser-use",
+                "repo": "https://github.com/zjk1984/browser-use",
+                "message": "18 cookies (含 xq_a_token，zjk1984/browser-use/CDP)",
                 "browser_login": {"url": "https://xueqiu.com", "profile": "Default", "waited_sec": 8},
             },
             "xueqiu_cookie_health": {
@@ -169,7 +170,7 @@ def test_forecast_sections_include_cookie_alert():
     )
     assert sections[0].label == "上周验证"
     assert "雪球 Cookie 更新" in sections[0].markdown
-    assert "browser-use" in sections[0].markdown
+    assert "zjk1984/browser-use" in sections[0].markdown
     assert "Cookie-Editor" in sections[0].markdown
 
 

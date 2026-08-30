@@ -484,13 +484,18 @@ def render_xueqiu_cookie_refresh_markdown(
     if not data or (data.get("skipped") and data.get("reason") == "disabled"):
         return ""
 
+    from agent_reach.daily_run.xueqiu_cookie_browser_use import BROWSER_USE_ENGINE
+
     lines = ["## 🍪 雪球 Cookie 更新", ""]
-    engine = str(data.get("engine") or "chrome")
+    engine = str(data.get("engine") or BROWSER_USE_ENGINE)
+    repo = str(data.get("repo") or "")
     if data.get("skipped"):
         lines.append(f"**状态：** ⏭ 跳过 — {data.get('message') or data.get('reason') or '未执行'}")
     elif data.get("success"):
         lines.append(f"**状态：** ✅ 成功")
         lines.append(f"**方式：** {engine}")
+        if repo:
+            lines.append(f"**仓库：** {repo}")
         if data.get("message"):
             lines.append(f"**详情：** {data['message']}")
         login = data.get("browser_login") or {}
@@ -502,6 +507,8 @@ def render_xueqiu_cookie_refresh_markdown(
     else:
         lines.append(f"**状态：** ❌ 失败")
         lines.append(f"**方式：** {engine}")
+        if repo:
+            lines.append(f"**仓库：** {repo}")
         lines.append(f"**详情：** {data.get('message') or '未知错误'}")
 
     health_data = health or {}
