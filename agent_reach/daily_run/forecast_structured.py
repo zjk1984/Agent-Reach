@@ -536,7 +536,7 @@ def verify_prior_week_predictions(
                 pass
     avg_dev = round(sum(deviations) / len(deviations), 2) if deviations else None
 
-    return {
+    result = {
         "week_start": prior_forecast.get("week_start"),
         "week_end": prior_forecast.get("week_end"),
         "rows": rows,
@@ -546,6 +546,12 @@ def verify_prior_week_predictions(
         "avg_deviation_pct": avg_dev,
         "miss_reasons": [r["reason"] for r in rows if r.get("reason")],
     }
+    try:
+        from agent_reach.daily_run.forecast_tracking import enrich_week_verification_metrics
+
+        return enrich_week_verification_metrics(result, prior_forecast, settings=settings)
+    except Exception:
+        return result
 
 
 def four_week_accuracy_trend(
@@ -672,6 +678,12 @@ def attach_structured_forecast(
         verification = verify_prior_week_predictions(prior, settings=settings)
         verification["accuracy_trend"] = four_week_accuracy_trend(as_of=week_start, settings=settings)
         data["prior_week_verification"] = verification
+        try:
+            from agent_reach.daily_run.forecast_tracking import record_week_verification_to_tracking
+
+            record_week_verification_to_tracking(verification, prior, settings=settings)
+        except Exception:
+            pass
         if persist_prior:
             prior["week_verification"] = verification
             try:

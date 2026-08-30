@@ -8,6 +8,7 @@ from typing import Any, Optional
 
 from agent_reach.daily_run.report_push import ReportSection
 from agent_reach.daily_run.snapshot_builder import _normalize_code
+from agent_reach.daily_run.trade_calendar import today_shanghai
 
 CLOSE_CARD_ORDER: tuple[str, ...] = (
     "close_summary",
@@ -339,6 +340,30 @@ def render_forecast_verify_markdown(ctx: CloseCardContext) -> str:
     forecast = ctx.forecast_review or {}
     evals = {str(e.get("code") or ""): e for e in (forecast.get("symbol_evals") or []) if isinstance(e, dict)}
     lines: list[str] = []
+
+    structured_md = ""
+    try:
+        from datetime import date as date_cls
+
+        from agent_reach.daily_run.forecast_tracking import (
+            build_daily_structured_checks,
+            render_daily_structured_checks_markdown,
+        )
+        from agent_reach.daily_run.week_forecast import load_active_forecast
+
+        trading_date = today_shanghai()
+        snap = ctx.primary_snapshot or {}
+        if snap.get("_run_date"):
+            trading_date = date_cls.fromisoformat(str(snap["_run_date"])[:10])
+        active = load_active_forecast(trading_date)
+        checks = build_daily_structured_checks(active, snap, trading_date=trading_date)
+        structured_md = render_daily_structured_checks_markdown(checks)
+    except Exception:
+        structured_md = ""
+
+    if structured_md:
+        lines.append(structured_md)
+        lines.append("")
 
     if forecast:
         total = int(forecast.get("symbol_total") or 0)

@@ -1384,6 +1384,7 @@ def generate_weekly_report(
         manifests,
         week_start=week_start,
         week_end=week_end,
+        settings=settings,
     )
 
     from agent_reach.daily_run.weekly_signals import (

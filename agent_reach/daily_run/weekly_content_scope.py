@@ -459,9 +459,21 @@ def summarize_week_prediction_verification(
 
 
 def render_weekly_prediction_verify_markdown(data: dict[str, Any]) -> list[str]:
+    lines: list[str] = []
+    structured = data.get("structured_review") or {}
+    if structured.get("rows"):
+        from agent_reach.daily_run.forecast_tracking import render_structured_week_verify_markdown
+
+        lines.extend(render_structured_week_verify_markdown(structured))
+
     if not data or not data.get("summary_rows"):
+        if lines:
+            return lines
         return []
-    lines = ["## 🔮 本周预测验证", ""]
+    if not lines:
+        lines = ["## 🔮 本周预测验证", ""]
+    else:
+        lines.extend(["", "## 🔮 每日路径预测验证", ""])
     lines.extend(
         [
             "| 预测类型 | 总次数 | 命中次数 | 准确率 |",
@@ -505,6 +517,11 @@ def render_weekly_prediction_verify_markdown(data: dict[str, Any]) -> list[str]:
         lines.extend(["", "**预测改进方向：**"])
         for note in improvements:
             lines.append(f"- {note}")
+    monthly = data.get("monthly_optimization") or {}
+    if monthly.get("rows") or monthly.get("recent_error_cases"):
+        from agent_reach.daily_run.forecast_tracking import render_monthly_optimization_markdown
+
+        lines.extend(render_monthly_optimization_markdown(monthly))
     lines.append("")
     return lines
 

@@ -159,6 +159,7 @@ def summarize_close_card_predictions(
     *,
     week_start: date,
     week_end: date,
+    settings: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Aggregate daily close-card forecast_verify into weekly stats."""
     from agent_reach.daily_run.weekly_content_scope import summarize_week_prediction_verification
@@ -196,6 +197,25 @@ def summarize_close_card_predictions(
     base["daily_rows"] = daily_rows
     base["source"] = "close_card"
     base["close_card_days"] = len(daily_rows)
+
+    try:
+        from agent_reach.daily_run.forecast_tracking import (
+            build_monthly_accuracy_summary,
+            build_structured_week_review,
+            record_week_verification_to_tracking,
+        )
+        from agent_reach.daily_run.week_forecast import load_forecast
+
+        week_fc = load_forecast(week_start)
+        structured_review = build_structured_week_review(week_fc, settings=settings)
+        if structured_review.get("rows"):
+            base["structured_review"] = structured_review
+            if week_fc:
+                record_week_verification_to_tracking(structured_review, week_fc, settings=settings)
+        base["monthly_optimization"] = build_monthly_accuracy_summary(as_of=week_end, settings=settings)
+    except Exception:
+        pass
+
     return base
 
 
