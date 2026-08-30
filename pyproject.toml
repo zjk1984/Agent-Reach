@@ -40,7 +40,7 @@ dependencies = [
 [project.optional-dependencies]
 browser = ["playwright>=1.40"]
 cookies = ["browser-cookie3>=0.19"]
-daily-run = ["akshare>=1.12"]
+daily-run = ["akshare>=1.12", "browser-use>=0.13"]
 daily-run-kronos = [
     "akshare>=1.12",
     "pandas>=2.0",

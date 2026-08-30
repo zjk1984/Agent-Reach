@@ -469,6 +469,56 @@ def ensure_xueqiu_browser_session(
     }
 
 
+def _use_browser_use(settings: Optional[dict[str, Any]] = None) -> bool:
+    wf = _week_forecast_settings(settings)
+    return wf.get("xueqiu_cookie_use_browser_use", True) is not False
+
+
+def render_xueqiu_cookie_refresh_markdown(
+    refresh: Optional[dict[str, Any]] = None,
+    *,
+    health: Optional[dict[str, Any]] = None,
+) -> str:
+    """Feishu markdown summarizing Sunday forecast cookie refresh (always when attempted)."""
+    data = dict(refresh or {})
+    if not data or (data.get("skipped") and data.get("reason") == "disabled"):
+        return ""
+
+    lines = ["## 🍪 雪球 Cookie 更新", ""]
+    engine = str(data.get("engine") or "chrome")
+    if data.get("skipped"):
+        lines.append(f"**状态：** ⏭ 跳过 — {data.get('message') or data.get('reason') or '未执行'}")
+    elif data.get("success"):
+        lines.append(f"**状态：** ✅ 成功")
+        lines.append(f"**方式：** {engine}")
+        if data.get("message"):
+            lines.append(f"**详情：** {data['message']}")
+        login = data.get("browser_login") or {}
+        if login.get("url"):
+            waited = login.get("waited_sec")
+            profile = login.get("profile") or login.get("browser")
+            extra = f"，等待 {waited}s" if waited is not None else ""
+            lines.append(f"**会话：** {login['url']}（profile={profile}{extra}）")
+    else:
+        lines.append(f"**状态：** ❌ 失败")
+        lines.append(f"**方式：** {engine}")
+        lines.append(f"**详情：** {data.get('message') or '未知错误'}")
+
+    health_data = health or {}
+    post_status = str(health_data.get("status") or "")
+    if post_status:
+        status_label = {
+            "ok": "✅ 有效",
+            "missing": "⚠️ 未配置",
+            "expired": "❌ 已过期",
+            "expiring": "🟡 即将到期",
+            "degraded": "🟠 异常",
+        }.get(post_status, post_status)
+        lines.extend(["", f"**刷新后探针：** {status_label} — {health_data.get('message', '')}"])
+
+    return "\n".join(lines).strip()
+
+
 def refresh_xueqiu_cookie_from_browser(
     *,
     settings: Optional[dict[str, Any]] = None,
@@ -479,14 +529,21 @@ def refresh_xueqiu_cookie_from_browser(
     Sync Xueqiu cookie from a logged-in local browser into agent-reach config.
 
     Used before Sunday forecast when ``week_forecast.xueqiu_cookie_auto_refresh_from_browser``
-    is enabled. When ``xueqiu_cookie_browser_login_enabled`` is true and a desktop display
-    is available, opens Chrome on xueqiu.com first so an existing profile can refresh its
-    session or the operator can sign in manually, then extracts cookies via rookiepy /
-    browser_cookie3 (Chrome should be closed for a reliable extract).
+    is enabled. Prefers browser-use (Chrome CDP) when ``xueqiu_cookie_use_browser_use`` is
+    true; otherwise opens Chrome via subprocess and extracts via rookiepy / browser_cookie3.
     """
     wf = _week_forecast_settings(settings)
     if wf.get("xueqiu_cookie_auto_refresh_from_browser", True) is False:
         return {"skipped": True, "reason": "disabled", "job": "xueqiu_cookie_refresh"}
+
+    if _use_browser_use(settings):
+        from agent_reach.daily_run.xueqiu_cookie_browser_use import (
+            browser_use_available,
+            refresh_xueqiu_cookie_via_browser_use,
+        )
+
+        if browser_use_available():
+            return refresh_xueqiu_cookie_via_browser_use(settings=settings, config=config)
 
     browser_name = str(browser or wf.get("xueqiu_cookie_refresh_browser") or "chrome").strip().lower()
     browser_login = ensure_xueqiu_browser_session(
@@ -524,6 +581,7 @@ def refresh_xueqiu_cookie_from_browser(
         return {
             "skipped": False,
             "success": True,
+            "engine": "chrome-extract",
             "browser": browser_name,
             "browser_login": browser_login,
             "message": message,

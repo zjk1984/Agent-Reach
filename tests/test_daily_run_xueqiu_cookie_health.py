@@ -11,6 +11,8 @@ from agent_reach.daily_run.xueqiu_cookie_health import (
     render_xueqiu_cookie_alert_markdown,
 )
 
+_LEGACY_WF = {"week_forecast": {"xueqiu_cookie_use_browser_use": False}}
+
 
 def test_check_missing_cookie():
     with patch(
@@ -152,6 +154,12 @@ def test_forecast_sections_include_cookie_alert():
             },
             "prior_week_verification": {"rows": [], "accuracy_trend": []},
             "notes": [],
+            "xueqiu_cookie_refresh": {
+                "success": True,
+                "engine": "browser-use",
+                "message": "18 cookies (含 xq_a_token，browser-use/CDP)",
+                "browser_login": {"url": "https://xueqiu.com", "profile": "Default", "waited_sec": 8},
+            },
             "xueqiu_cookie_health": {
                 "status": "expired",
                 "message": "雪球 Cookie 可能已过期",
@@ -160,6 +168,8 @@ def test_forecast_sections_include_cookie_alert():
         }
     )
     assert sections[0].label == "上周验证"
+    assert "雪球 Cookie 更新" in sections[0].markdown
+    assert "browser-use" in sections[0].markdown
     assert "Cookie-Editor" in sections[0].markdown
 
 
@@ -178,7 +188,7 @@ def test_refresh_success_resets_channel_cache():
         "agent_reach.daily_run.xueqiu_cookie_health._reset_xueqiu_channel_cookies"
     ) as mock_reset, patch("agent_reach.config.Config"):
         mock_cfg.return_value = [("Xueqiu", True, "18 cookies (含 xq_a_token)")]
-        result = refresh_xueqiu_cookie_from_browser(settings={"week_forecast": {}})
+        result = refresh_xueqiu_cookie_from_browser(settings=_LEGACY_WF)
     assert result["success"] is True
     assert result["browser"] == "chrome"
     mock_reset.assert_called_once()
@@ -287,7 +297,7 @@ def test_refresh_still_extracts_when_chrome_running_with_token():
         "agent_reach.daily_run.xueqiu_cookie_health._reset_xueqiu_channel_cookies"
     ), patch("agent_reach.config.Config"):
         mock_cfg.return_value = [("Xueqiu", True, "17 cookies (含 xq_a_token)")]
-        result = refresh_xueqiu_cookie_from_browser(settings={"week_forecast": {}})
+        result = refresh_xueqiu_cookie_from_browser(settings=_LEGACY_WF)
     assert result["success"] is True
     mock_cfg.assert_called_once()
 
@@ -300,7 +310,7 @@ def test_refresh_calls_browser_login_before_extract():
         "agent_reach.daily_run.xueqiu_cookie_health._reset_xueqiu_channel_cookies"
     ), patch("agent_reach.config.Config"):
         mock_cfg.return_value = [("Xueqiu", True, "ok")]
-        refresh_xueqiu_cookie_from_browser(settings={"week_forecast": {}})
+        refresh_xueqiu_cookie_from_browser(settings=_LEGACY_WF)
     mock_ensure.assert_called_once()
 
 

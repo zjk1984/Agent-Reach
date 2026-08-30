@@ -1930,6 +1930,7 @@ def run_forecast(
 
     steps.append("generate")
     forecast = generate_week_forecast(snapshot, cfg, portfolio=portfolio)
+    forecast.xueqiu_cookie_refresh = cookie_refresh
 
     # Harness refinements run before narrative/push (mirrors run_weekly) so the
     # 规则解读 card and harness-summary followup reflect the same-day forecast_calibrate

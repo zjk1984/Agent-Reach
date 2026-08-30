@@ -462,6 +462,7 @@ class WeekForecast:
     macro_signals: dict[str, Any] = field(default_factory=dict)
     watchlist_intel: dict[str, Any] = field(default_factory=dict)
     xueqiu_cookie_health: dict[str, Any] = field(default_factory=dict)
+    xueqiu_cookie_refresh: dict[str, Any] = field(default_factory=dict)
     structured_predictions: dict[str, Any] = field(default_factory=dict)
     operation_plans: list[dict[str, Any]] = field(default_factory=list)
     prior_week_verification: dict[str, Any] = field(default_factory=dict)
@@ -490,6 +491,7 @@ class WeekForecast:
             "macro_signals": self.macro_signals,
             "watchlist_intel": self.watchlist_intel,
             "xueqiu_cookie_health": self.xueqiu_cookie_health,
+            "xueqiu_cookie_refresh": self.xueqiu_cookie_refresh,
             "structured_predictions": self.structured_predictions,
             "operation_plans": self.operation_plans,
             "prior_week_verification": self.prior_week_verification,
@@ -813,12 +815,22 @@ def render_forecast_sections(forecast: WeekForecast | dict[str, Any]) -> list[Fo
         pass
 
     cookie_prefix = ""
-    if wf_cfg.get("xueqiu_cookie_alert_enabled", True) is not False:
-        from agent_reach.daily_run.xueqiu_cookie_health import render_xueqiu_cookie_alert_markdown
+    from agent_reach.daily_run.xueqiu_cookie_health import (
+        render_xueqiu_cookie_alert_markdown,
+        render_xueqiu_cookie_refresh_markdown,
+    )
 
+    refresh_md = render_xueqiu_cookie_refresh_markdown(
+        data.get("xueqiu_cookie_refresh"),
+        health=data.get("xueqiu_cookie_health"),
+    )
+    if refresh_md.strip():
+        cookie_prefix = refresh_md.strip() + "\n\n"
+
+    if wf_cfg.get("xueqiu_cookie_alert_enabled", True) is not False:
         cookie_md = render_xueqiu_cookie_alert_markdown(data.get("xueqiu_cookie_health"))
         if cookie_md.strip():
-            cookie_prefix = cookie_md.strip() + "\n\n"
+            cookie_prefix = (cookie_prefix + cookie_md.strip() + "\n\n").strip() + "\n\n"
 
     from agent_reach.daily_run.forecast_structured import (
         ensure_structured_forecast_payload,
