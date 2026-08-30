@@ -960,10 +960,25 @@ def render_midday_card_sections(ctx: MiddayCardContext) -> list[ReportSection]:
         if not (body or "").strip():
             continue
         sections.append(ReportSection(category=category, title="", body=body.strip()))
-    total = len(sections)
-    for i, sec in enumerate(sections, start=1):
-        label = MIDDAY_CARD_LABELS.get(sec.category, sec.category)
-        sec.title = f"{label} {i}/{total}"
+    from agent_reach.daily_run.deepseek_landing_cards import append_deepseek_landing_report_section
+
+    def _renumber(cards: list[ReportSection]) -> None:
+        total = len(cards)
+        for i, sec in enumerate(cards, start=1):
+            label = MIDDAY_CARD_LABELS.get(sec.category, sec.category)
+            if sec.category == "deepseek_landing":
+                from agent_reach.daily_run.deepseek_landing_cards import _CARD_LABEL
+
+                label = _CARD_LABEL
+            sec.title = f"{label} {i}/{total}"
+
+    sections = append_deepseek_landing_report_section(
+        sections,
+        report_kind="midday",
+        settings=ctx.settings,
+        runtime={},
+    )
+    _renumber(sections)
     return sections
 
 

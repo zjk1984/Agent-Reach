@@ -52,6 +52,7 @@ _CATEGORY_LABELS: dict[str, str] = {
     "holdings_overview": "📋 持仓早盘速览",
     "close_improvements": "改进建议",
     "technical_watch": "技术情景",
+    "deepseek_landing": "DeepSeek 场景·落点",
 }
 
 # Portfolio-wide sections: only one card body when merging per-symbol runs.
@@ -141,6 +142,20 @@ def render_morning_sections(
         sections.append(ReportSection(category="harness", title="", body=harness_markdown.strip()))
     if ai_section is not None:
         sections.append(ai_section)
+    try:
+        from agent_reach.daily_run.settings import load_settings
+
+        push_settings = load_settings()
+    except Exception:
+        push_settings = {}
+    from agent_reach.daily_run.deepseek_landing_cards import append_deepseek_landing_report_section
+
+    sections = append_deepseek_landing_report_section(
+        sections,
+        report_kind="morning",
+        settings=push_settings,
+        runtime={"narrative": narrative},
+    )
     total = len(sections)
     for i, sec in enumerate(sections, start=1):
         extra = verdict if sec.category == "decision" else ""
@@ -244,6 +259,20 @@ def render_close_sections(
         )
     if ai_section is not None:
         sections.append(ai_section)
+    try:
+        from agent_reach.daily_run.settings import load_settings
+
+        push_settings = load_settings()
+    except Exception:
+        push_settings = {}
+    from agent_reach.daily_run.deepseek_landing_cards import append_deepseek_landing_report_section
+
+    sections = append_deepseek_landing_report_section(
+        sections,
+        report_kind="close",
+        settings=push_settings,
+        runtime={"narrative": narrative},
+    )
     total = len(sections)
     for i, sec in enumerate(sections, start=1):
         sec.title = section_title(
@@ -270,6 +299,7 @@ _WEEKLY_CATEGORY_MAP = {
     "观察池": "weekly_watchlist",
     "MSS·经验": "weekly_track",
     "学习·改进": "weekly_insights",
+    "DeepSeek场景": "weekly_deepseek_landing",
 }
 
 
@@ -301,6 +331,7 @@ _FORECAST_CATEGORY_MAP = {
     "大盘板块": "forecast_market_sector",
     "持仓预案": "forecast_holdings_plan",
     "关键事件": "forecast_key_timeline",
+    "DeepSeek场景": "forecast_deepseek_landing",
     "风险应对": "forecast_risk_response",
     "置信度说明": "forecast_confidence",
     "Cookie预警": "xueqiu_cookie",

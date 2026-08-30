@@ -2085,6 +2085,23 @@ def render_weekly_sections(report: WeeklyReport) -> list[WeeklySection]:
     if narrative_md.strip():
         sections.append(WeeklySection("规则解读", narrative_md))
 
+    from agent_reach.daily_run.deepseek_landing_cards import append_deepseek_landing_label_section
+
+    try:
+        from agent_reach.daily_run.settings import load_settings
+
+        wf_settings = load_settings()
+    except Exception:
+        wf_settings = {}
+    sections = append_deepseek_landing_label_section(
+        sections,
+        report_kind="weekly",
+        label="DeepSeek场景",
+        settings=wf_settings,
+        runtime={"narrative": report.llm_narrative or {}},
+        section_factory=lambda label, body: WeeklySection(label, body),
+    )
+
     return sections
 
 

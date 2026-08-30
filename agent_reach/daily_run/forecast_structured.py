@@ -1130,4 +1130,17 @@ def render_structured_forecast_sections(
     if timeline_md.strip():
         sections.append((_FORECAST_SECTION_LABELS[5], timeline_md))
 
+    from agent_reach.daily_run.deepseek_landing_cards import render_deepseek_landing_markdown
+
+    ds_md = render_deepseek_landing_markdown(
+        "forecast",
+        settings=settings,
+        runtime={
+            "narrative": forecast.get("llm_narrative"),
+            "harness_result": harness_result,
+        },
+    )
+    if ds_md.strip():
+        sections.append(("DeepSeek场景", ds_md))
+
     return sections

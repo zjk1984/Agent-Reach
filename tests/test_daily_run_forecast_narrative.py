@@ -98,7 +98,8 @@ def test_render_forecast_sections_puts_limitations_last():
             "notes": [],
         }
     )
-    assert sections[-1].label == "关键事件"
+    assert sections[-1].label == "DeepSeek场景"
+    assert any(s.label == "关键事件" for s in sections)
     assert isinstance(sections[-1], ForecastSection)
 
 
