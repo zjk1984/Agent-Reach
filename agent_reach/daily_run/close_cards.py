@@ -28,6 +28,7 @@ CLOSE_CARD_LABELS: dict[str, str] = {
     "harness_evolution": "🧬 Harness 自进化",
     "hot_research": "🔥 热点与调研",
     "tomorrow_focus": "📋 明日关注",
+    "deepseek_interpretation": "🤖 DeepSeek 解读",
 }
 
 
@@ -852,23 +853,25 @@ def render_close_card_sections(ctx: CloseCardContext) -> list[ReportSection]:
         if not (body or "").strip():
             continue
         sections.append(ReportSection(category=category, title="", body=body.strip()))
-    from agent_reach.daily_run.deepseek_landing_cards import append_deepseek_landing_report_section
+    from agent_reach.daily_run.deepseek_interpretation_cards import (
+        append_interpretation_report_section,
+        interpretation_card_label,
+    )
 
     def _renumber(cards: list[ReportSection]) -> None:
         total = len(cards)
         for i, sec in enumerate(cards, start=1):
-            label = CLOSE_CARD_LABELS.get(sec.category, sec.category)
-            if sec.category == "deepseek_landing":
-                from agent_reach.daily_run.deepseek_landing_cards import _CARD_LABEL
-
-                label = _CARD_LABEL
+            if sec.category == "deepseek_interpretation":
+                label = interpretation_card_label(ctx.narrative)
+            else:
+                label = CLOSE_CARD_LABELS.get(sec.category, sec.category)
             sec.title = f"{label} {i}/{total}"
 
-    sections = append_deepseek_landing_report_section(
+    sections = append_interpretation_report_section(
         sections,
-        report_kind="close",
+        ctx.narrative,
+        job="close",
         settings=ctx.settings,
-        runtime={"narrative": ctx.narrative, "harness_result": ctx.harness_result},
     )
     _renumber(sections)
     return sections

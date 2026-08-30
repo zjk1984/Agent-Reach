@@ -1185,17 +1185,19 @@ def render_structured_forecast_sections(
     if timeline_md.strip():
         sections.append((_FORECAST_SECTION_LABELS[5], timeline_md))
 
-    from agent_reach.daily_run.deepseek_landing_cards import render_deepseek_landing_markdown
+    from agent_reach.daily_run.deepseek_interpretation_cards import render_deepseek_interpretation_markdown
 
-    ds_md = render_deepseek_landing_markdown(
-        "forecast",
+    interpret_md = render_deepseek_interpretation_markdown(
+        forecast.get("llm_narrative"),
+        job="forecast",
         settings=settings,
-        runtime={
-            "narrative": forecast.get("llm_narrative"),
-            "harness_result": harness_result,
-        },
     )
-    if ds_md.strip():
-        sections.append(("DeepSeek场景", ds_md))
+    if interpret_md.strip():
+        label = (
+            "DeepSeek解读"
+            if str((forecast.get("llm_narrative") or {}).get("planner") or "") == "llm"
+            else "规则解读"
+        )
+        sections.append((label, interpret_md))
 
     return sections

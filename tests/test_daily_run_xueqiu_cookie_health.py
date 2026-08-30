@@ -145,6 +145,12 @@ def test_forecast_sections_include_cookie_alert():
             "mss_daily": {"2026-07-13": {"median": 52.0, "range": [50, 54]}},
             "symbols": {},
             "calibration_used": {"hit_rate": 0.5},
+            "structured_predictions": {
+                "market": {"text": "下周大盘（沪深300）预测：+0.0% ~ +1.0%，中枢 +0.5%"},
+                "sectors": [],
+                "symbols": [],
+            },
+            "prior_week_verification": {"rows": [], "accuracy_trend": []},
             "notes": [],
             "xueqiu_cookie_health": {
                 "status": "expired",

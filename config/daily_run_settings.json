@@ -391,7 +391,7 @@
     "feishu_template_forecast": "blue",
     "weekly_split_push": true,
     "forecast_split_push": true,
-    "deepseek_landing_card": {
+    "deepseek_interpretation_card": {
       "enabled": true
     }
   },

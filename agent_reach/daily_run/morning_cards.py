@@ -28,6 +28,7 @@ MORNING_CARD_LABELS: dict[str, str] = {
     "decision": "📊 MSS 决策",
     "harness": "🧬 Harness 进化",
     "ai_narrative": "📋 规则解读",
+    "deepseek_interpretation": "🤖 DeepSeek 解读",
 }
 
 
@@ -482,9 +483,21 @@ def render_harness_markdown(ctx: MorningCardContext) -> str:
 
 
 def render_ai_narrative_markdown(ctx: MorningCardContext) -> str:
+    from agent_reach.daily_run.deepseek_interpretation_cards import render_deepseek_interpretation_markdown
     from agent_reach.daily_run.morning_content_scope import render_scoped_morning_narrative_markdown
 
-    return render_scoped_morning_narrative_markdown(ctx.narrative)
+    narrative = ctx.narrative
+    if not narrative or narrative.get("skipped"):
+        return ""
+    if str(narrative.get("planner") or "") == "llm":
+        md = render_deepseek_interpretation_markdown(
+            narrative,
+            job="morning",
+            settings=ctx.settings,
+        )
+        if md.strip():
+            return md
+    return render_scoped_morning_narrative_markdown(narrative)
 
 
 _CARD_RENDERERS = {
@@ -506,23 +519,13 @@ def render_morning_card_sections(ctx: MorningCardContext) -> list[ReportSection]
         if not (body or "").strip():
             continue
         sections.append(ReportSection(category=category, title="", body=body.strip()))
-    from agent_reach.daily_run.deepseek_landing_cards import append_deepseek_landing_report_section
+    from agent_reach.daily_run.deepseek_interpretation_cards import interpretation_card_label
 
-    def _renumber(cards: list[ReportSection]) -> None:
-        total = len(cards)
-        for i, sec in enumerate(cards, start=1):
+    total = len(sections)
+    for i, sec in enumerate(sections, start=1):
+        if sec.category == "ai_narrative":
+            label = interpretation_card_label(ctx.narrative)
+        else:
             label = MORNING_CARD_LABELS.get(sec.category, sec.category)
-            if sec.category == "deepseek_landing":
-                from agent_reach.daily_run.deepseek_landing_cards import _CARD_LABEL
-
-                label = _CARD_LABEL
-            sec.title = f"{label} {i}/{total}"
-
-    sections = append_deepseek_landing_report_section(
-        sections,
-        report_kind="morning",
-        settings=ctx.settings,
-        runtime={"narrative": ctx.narrative},
-    )
-    _renumber(sections)
+        sec.title = f"{label} {i}/{total}"
     return sections

@@ -257,8 +257,7 @@ def test_render_structured_forecast_sections_order():
     }
     sections = render_structured_forecast_sections(forecast)
     labels = [label for label, _ in sections]
-    assert labels[:-1] == list(forecast_section_labels())
-    assert labels[-1] == "DeepSeek场景"
+    assert labels == list(forecast_section_labels())
     assert "✅ 命中区间" in sections[0][1]
     assert "操作计划总表" in sections[1][1]
     assert "情景预案" in sections[2][1]
@@ -285,7 +284,7 @@ def test_render_forecast_sections_first_is_prior_verify():
         }
     )
     assert sections[0].label == "上周验证"
-    assert sections[-1].label == "DeepSeek场景"
+    assert sections[-1].label == "关键事件"
     assert any(s.label == "关键事件" for s in sections)
     assert all(isinstance(s, ForecastSection) for s in sections)
 

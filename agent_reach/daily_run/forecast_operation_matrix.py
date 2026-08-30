@@ -76,6 +76,8 @@ def _resolve_operation_type(
     action = str(outlook_action or "").strip()
     if action in _VALID_OPS:
         return action
+    if "观望" in action:
+        return "新建仓" if confidence_pct >= 65 else "持有"
     if "清仓" in action or "止损" in action and confidence_pct < 50:
         return "清仓"
     if "减仓" in action or confidence_pct < 55 or "观望" in position_hint:
@@ -239,31 +241,36 @@ def build_master_operation_rows(
         pred = sym_preds.get(code) or {}
         if not pred:
             continue
+        outlook_row = dict(outlook_map.get(code) or {})
+        if not outlook_row:
+            outlook_row = {
+                "action": "观望",
+                "trigger": "回调至预测区间下沿",
+                "stop_loss": "—",
+            }
         conf = _optional_float(pred.get("confidence_pct")) or 55.0
-        op = "新建仓" if conf >= 65 else "持有"
-        outlook_row: dict[str, Any] = {"action": op, "trigger": "", "stop_loss": ""}
+        pos_hint = str(pred.get("position_hint") or position_hint_for_confidence(conf))
+        action = str(outlook_row.get("action") or "观望")
+        if action == "观望":
+            op = "新建仓" if conf >= 65 else "持有"
+        else:
+            op = _resolve_operation_type(
+                outlook_action=action,
+                confidence_pct=conf,
+                position_hint=pos_hint,
+            )
         rows.append(
             {
                 "code": code,
                 "name": w.get("name") or pred.get("name") or code,
                 "current_weight_pct": 0.0,
-                "operation": op if op == "新建仓" else "—",
-                "trigger": _trigger_for_operation(
-                    "新建仓" if op == "新建仓" else "持有",
-                    pred=pred,
-                    outlook_row=outlook_row,
-                ),
-                "target_weight": (
-                    _target_weight_display(0.0, "新建仓", confidence_pct=conf, settings=settings)
-                    if op == "新建仓"
-                    else "0%（观察）"
+                "operation": op,
+                "trigger": _trigger_for_operation(op, pred=pred, outlook_row=outlook_row),
+                "target_weight": _target_weight_display(
+                    0.0, op, confidence_pct=conf, settings=settings
                 ),
                 "stop_loss": _stop_display(
-                    code,
-                    "新建仓" if op == "新建仓" else "持有",
-                    pred=pred,
-                    outlook_row=outlook_row,
-                    settings=settings,
+                    code, op, pred=pred, outlook_row=outlook_row, settings=settings
                 ),
             }
         )

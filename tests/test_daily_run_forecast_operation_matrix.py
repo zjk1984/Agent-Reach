@@ -83,6 +83,42 @@ def test_master_operation_markdown_has_table_and_guidance():
     assert "现金" in md
 
 
+def test_master_operation_rows_watchlist_has_operation_fields():
+    rows = build_master_operation_rows(
+        portfolio={
+            "total_value": 100000,
+            "holdings": [{"code": "300308", "name": "中际旭创", "market_value": 15000}],
+            "watchlist": [{"code": "603986", "name": "兆易创新"}],
+        },
+        structured={
+            "symbols": [
+                {
+                    "code": "300308",
+                    "name": "中际旭创",
+                    "price_low": 108.0,
+                    "price_mid": 118.0,
+                    "price_high": 125.0,
+                    "confidence_pct": 75,
+                },
+                {
+                    "code": "603986",
+                    "name": "兆易创新",
+                    "price_low": 180.0,
+                    "price_mid": 200.0,
+                    "price_high": 220.0,
+                    "confidence_pct": 60,
+                },
+            ]
+        },
+        outlook={"operation_plan": []},
+    )
+    watch = next(r for r in rows if r.get("code") == "603986")
+    assert watch["operation"] != "—"
+    assert watch["trigger"] != "—"
+    assert watch["target_weight"] != "—"
+    assert watch["stop_loss"] != "—"
+
+
 def test_scenario_plans_three_rows():
     rows = build_master_operation_rows(
         portfolio=_sample_portfolio(),

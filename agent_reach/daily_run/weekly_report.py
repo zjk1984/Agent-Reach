@@ -2079,13 +2079,7 @@ def render_weekly_sections(report: WeeklyReport) -> list[WeeklySection]:
         insight_lines = _period_header_lines(report, continuation=True) + insight_body
         sections.append(WeeklySection("学习·改进", _join_section_lines(insight_lines)))
 
-    from agent_reach.daily_run.report_narrative import render_narrative_markdown
-
-    narrative_md = render_narrative_markdown(report.llm_narrative or {}, job="weekly")
-    if narrative_md.strip():
-        sections.append(WeeklySection("规则解读", narrative_md))
-
-    from agent_reach.daily_run.deepseek_landing_cards import append_deepseek_landing_label_section
+    from agent_reach.daily_run.deepseek_interpretation_cards import render_deepseek_interpretation_markdown
 
     try:
         from agent_reach.daily_run.settings import load_settings
@@ -2093,14 +2087,18 @@ def render_weekly_sections(report: WeeklyReport) -> list[WeeklySection]:
         wf_settings = load_settings()
     except Exception:
         wf_settings = {}
-    sections = append_deepseek_landing_label_section(
-        sections,
-        report_kind="weekly",
-        label="DeepSeek场景",
+    narrative_md = render_deepseek_interpretation_markdown(
+        report.llm_narrative or {},
+        job="weekly",
         settings=wf_settings,
-        runtime={"narrative": report.llm_narrative or {}},
-        section_factory=lambda label, body: WeeklySection(label, body),
     )
+    if narrative_md.strip():
+        label = (
+            "DeepSeek解读"
+            if str((report.llm_narrative or {}).get("planner") or "") == "llm"
+            else "规则解读"
+        )
+        sections.append(WeeklySection(label, narrative_md))
 
     return sections
 

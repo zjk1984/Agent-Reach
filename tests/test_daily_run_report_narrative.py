@@ -99,7 +99,7 @@ def test_morning_sections_include_ai_last():
             "job": "morning",
         },
     )
-    assert sections[-1].category == "ai_narrative"
+    assert sections[-1].category == "deepseek_interpretation"
     assert "测试早报" in sections[-1].body
 
 
@@ -109,7 +109,7 @@ def test_close_sections_include_ai_last():
         verify_markdown="verify",
         narrative={"summary": "收盘测试", "focus_points": ["B"], "job": "close"},
     )
-    assert sections[-1].category == "ai_narrative"
+    assert sections[-1].category == "deepseek_interpretation"
 
 
 def test_weekly_sections_include_ai_last():
@@ -814,7 +814,7 @@ def test_append_merged_narrative_section():
         report_kind="morning",
         symbol_count=2,
     )
-    assert out[-1].category == "ai_narrative"
+    assert out[-1].category == "deepseek_interpretation"
     assert "2只" in out[-1].title
 
 

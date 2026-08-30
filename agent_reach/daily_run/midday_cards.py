@@ -69,6 +69,7 @@ class MiddayCardContext:
     rebalance_window_reminder: str = ""
     lunch_news_lines: list[str] = field(default_factory=list)
     t0_opportunity_lines: list[str] = field(default_factory=list)
+    narrative: Optional[dict[str, Any]] = None
     settings: Optional[dict[str, Any]] = None
 
 
@@ -693,6 +694,7 @@ def build_midday_card_context(
     *,
     settings: Optional[dict[str, Any]] = None,
     audit: Any = None,
+    narrative: Optional[dict[str, Any]] = None,
 ) -> MiddayCardContext:
     from agent_reach.daily_run.close_morning_handoff import load_close_handoff_for_morning, load_morning_handoff
     from agent_reach.daily_run.midday_content_scope import (
@@ -841,6 +843,7 @@ def build_midday_card_context(
         rebalance_window_reminder=rebalance_window_reminder,
         lunch_news_lines=lunch_news_lines,
         t0_opportunity_lines=t0_opportunity_lines,
+        narrative=narrative,
         settings=settings,
     )
 
@@ -960,23 +963,25 @@ def render_midday_card_sections(ctx: MiddayCardContext) -> list[ReportSection]:
         if not (body or "").strip():
             continue
         sections.append(ReportSection(category=category, title="", body=body.strip()))
-    from agent_reach.daily_run.deepseek_landing_cards import append_deepseek_landing_report_section
+    from agent_reach.daily_run.deepseek_interpretation_cards import (
+        append_interpretation_report_section,
+        interpretation_card_label,
+    )
 
     def _renumber(cards: list[ReportSection]) -> None:
         total = len(cards)
         for i, sec in enumerate(cards, start=1):
-            label = MIDDAY_CARD_LABELS.get(sec.category, sec.category)
-            if sec.category == "deepseek_landing":
-                from agent_reach.daily_run.deepseek_landing_cards import _CARD_LABEL
-
-                label = _CARD_LABEL
+            if sec.category == "deepseek_interpretation":
+                label = interpretation_card_label(ctx.narrative)
+            else:
+                label = MIDDAY_CARD_LABELS.get(sec.category, sec.category)
             sec.title = f"{label} {i}/{total}"
 
-    sections = append_deepseek_landing_report_section(
+    sections = append_interpretation_report_section(
         sections,
-        report_kind="midday",
+        ctx.narrative,
+        job="midday",
         settings=ctx.settings,
-        runtime={},
     )
     _renumber(sections)
     return sections

@@ -52,7 +52,7 @@ _CATEGORY_LABELS: dict[str, str] = {
     "holdings_overview": "📋 持仓早盘速览",
     "close_improvements": "改进建议",
     "technical_watch": "技术情景",
-    "deepseek_landing": "DeepSeek 场景·落点",
+    "deepseek_interpretation": "DeepSeek 解读",
 }
 
 # Portfolio-wide sections: only one card body when merging per-symbol runs.
@@ -115,13 +115,6 @@ def render_morning_sections(
     name = report.get("name") or report.get("code") or "大盘"
     verdict = report.get("verdict") or "观察"
     sections: list[ReportSection] = []
-    ai_section: Optional[ReportSection] = None
-    if narrative:
-        from agent_reach.daily_run.report_narrative import render_narrative_markdown
-
-        ai_md = render_narrative_markdown(narrative, job="morning")
-        if ai_md.strip():
-            ai_section = ReportSection(category="ai_narrative", title="", body=ai_md)
     if team_markdown.strip():
         sections.append(ReportSection(category="experts", title="", body=team_markdown.strip()))
     if report_markdown.strip():
@@ -140,33 +133,36 @@ def render_morning_sections(
         sections.append(ReportSection(category="eastmoney", title="", body=em_md))
     if harness_markdown.strip():
         sections.append(ReportSection(category="harness", title="", body=harness_markdown.strip()))
-    if ai_section is not None:
-        sections.append(ai_section)
     try:
         from agent_reach.daily_run.settings import load_settings
 
         push_settings = load_settings()
     except Exception:
         push_settings = {}
-    from agent_reach.daily_run.deepseek_landing_cards import append_deepseek_landing_report_section
+    from agent_reach.daily_run.deepseek_interpretation_cards import append_interpretation_report_section
 
-    sections = append_deepseek_landing_report_section(
+    def _renumber_morning(cards: list[ReportSection]) -> None:
+        total = len(cards)
+        for i, sec in enumerate(cards, start=1):
+            extra = verdict if sec.category == "decision" else ""
+            sec.title = section_title(
+                report_kind="morning",
+                category=sec.category,
+                name=name,
+                index=i,
+                total=total,
+                extra=extra,
+            )
+
+    sections = append_interpretation_report_section(
         sections,
-        report_kind="morning",
+        narrative,
+        job="morning",
         settings=push_settings,
-        runtime={"narrative": narrative},
+        renumber=_renumber_morning,
     )
-    total = len(sections)
-    for i, sec in enumerate(sections, start=1):
-        extra = verdict if sec.category == "decision" else ""
-        sec.title = section_title(
-            report_kind="morning",
-            category=sec.category,
-            name=name,
-            index=i,
-            total=total,
-            extra=extra,
-        )
+    if sections and not sections[-1].title:
+        _renumber_morning(sections)
     return sections
 
 
@@ -192,13 +188,6 @@ def render_close_sections(
 ) -> list[ReportSection]:
     label = verify_name or "大盘"
     sections: list[ReportSection] = []
-    ai_section: Optional[ReportSection] = None
-    if narrative:
-        from agent_reach.daily_run.report_narrative import render_narrative_markdown
-
-        ai_md = render_narrative_markdown(narrative, job="close")
-        if ai_md.strip():
-            ai_section = ReportSection(category="ai_narrative", title="", body=ai_md)
     if market_markdown.strip():
         sections.append(ReportSection(category="close_market", title="", body=market_markdown.strip()))
     if team_markdown.strip():
@@ -257,31 +246,46 @@ def render_close_sections(
         sections.append(
             ReportSection(category="daily_portfolio", title="", body=portfolio_markdown.strip())
         )
-    if ai_section is not None:
-        sections.append(ai_section)
     try:
         from agent_reach.daily_run.settings import load_settings
 
         push_settings = load_settings()
     except Exception:
         push_settings = {}
-    from agent_reach.daily_run.deepseek_landing_cards import append_deepseek_landing_report_section
+    from agent_reach.daily_run.deepseek_interpretation_cards import append_interpretation_report_section
 
-    sections = append_deepseek_landing_report_section(
+    def _renumber_close(cards: list[ReportSection]) -> None:
+        total = len(cards)
+        for i, sec in enumerate(cards, start=1):
+            sec.title = section_title(
+                report_kind="close",
+                category=sec.category,
+                name="组合" if sec.category == "daily_portfolio" else label,
+                index=i,
+                total=total,
+            )
+
+    sections = append_interpretation_report_section(
         sections,
-        report_kind="close",
+        narrative,
+        job="close",
         settings=push_settings,
-        runtime={"narrative": narrative},
+        renumber=_renumber_close,
     )
-    total = len(sections)
-    for i, sec in enumerate(sections, start=1):
-        sec.title = section_title(
-            report_kind="close",
-            category=sec.category,
-            name="组合" if sec.category == "daily_portfolio" else label,
-            index=i,
-            total=total,
-        )
+    if sections and not sections[-1].title:
+        _renumber_close(sections)
+    elif sections and sections[0].title:
+        pass
+    else:
+        total = len(sections)
+        for i, sec in enumerate(sections, start=1):
+            sec.title = section_title(
+                report_kind="close",
+                category=sec.category,
+                name="组合" if sec.category == "daily_portfolio" else label,
+                index=i,
+                total=total,
+            )
     return sections
 
 
@@ -299,7 +303,7 @@ _WEEKLY_CATEGORY_MAP = {
     "观察池": "weekly_watchlist",
     "MSS·经验": "weekly_track",
     "学习·改进": "weekly_insights",
-    "DeepSeek场景": "weekly_deepseek_landing",
+    "DeepSeek解读": "weekly_deepseek_interpretation",
 }
 
 
@@ -331,7 +335,7 @@ _FORECAST_CATEGORY_MAP = {
     "大盘板块": "forecast_market_sector",
     "持仓预案": "forecast_holdings_plan",
     "关键事件": "forecast_key_timeline",
-    "DeepSeek场景": "forecast_deepseek_landing",
+    "DeepSeek解读": "forecast_deepseek_interpretation",
     "风险应对": "forecast_risk_response",
     "置信度说明": "forecast_confidence",
     "Cookie预警": "xueqiu_cookie",
@@ -475,27 +479,31 @@ def append_merged_narrative_section(
     *,
     report_kind: str,
     symbol_count: int,
+    settings: Optional[dict[str, Any]] = None,
 ) -> list[ReportSection]:
-    """Append one portfolio-level AI narrative card and refresh section titles."""
-    if not narrative or narrative.get("skipped"):
+    """Append one portfolio-level interpretation card and refresh section titles."""
+    if report_kind == "intraday":
         return sections
-    from agent_reach.daily_run.report_narrative import render_narrative_markdown
+    from agent_reach.daily_run.deepseek_interpretation_cards import append_interpretation_report_section
 
-    ai_md = render_narrative_markdown(narrative, job=report_kind)
-    if not ai_md.strip():
-        return sections
-    out = list(sections)
-    out.append(ReportSection(category="ai_narrative", title="", body=ai_md.strip()))
-    total = len(out)
-    for i, sec in enumerate(out, start=1):
-        sec.title = merged_category_title(
-            report_kind=report_kind,
-            category=sec.category,
-            index=i,
-            total=total,
-            symbol_count=1 if sec.category == "daily_portfolio" else symbol_count,
-        )
-    return out
+    def _renumber(cards: list[ReportSection]) -> None:
+        total = len(cards)
+        for i, sec in enumerate(cards, start=1):
+            sec.title = merged_category_title(
+                report_kind=report_kind,
+                category=sec.category,
+                index=i,
+                total=total,
+                symbol_count=1 if sec.category == "daily_portfolio" else symbol_count,
+            )
+
+    return append_interpretation_report_section(
+        sections,
+        narrative,
+        job=report_kind,
+        settings=settings,
+        renumber=_renumber,
+    )
 
 
 def append_merged_xueqiu_hot_section(

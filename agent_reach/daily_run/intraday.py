@@ -902,17 +902,6 @@ def run_intraday(
             )
             if narrative_feishu:
                 steps.append("narrative_push")
-            from agent_reach.daily_run.deepseek_landing_cards import push_deepseek_landing_card
-
-            ds_feishu = push_deepseek_landing_card(
-                cfg_obj,
-                cfg,
-                report_kind="intraday",
-                runtime={"narrative": (scan_result.get("llm_narrative") or {})},
-                title_suffix=scan_id or "",
-            )
-            if ds_feishu:
-                steps.append("deepseek_landing_push")
         except FeishuError as exc:
             push_error = str(exc)
 

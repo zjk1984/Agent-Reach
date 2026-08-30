@@ -427,7 +427,7 @@ def run_midday(
 
     ctx = None
     if card_layout:
-        ctx = build_midday_card_context(scan_result, settings=cfg, audit=audit)
+        ctx = build_midday_card_context(scan_result, settings=cfg, audit=audit, narrative=narrative)
         from agent_reach.daily_run.midday_handoff import build_midday_handoff, save_midday_handoff
 
         save_midday_handoff(

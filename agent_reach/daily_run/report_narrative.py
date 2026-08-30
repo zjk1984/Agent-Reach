@@ -240,7 +240,7 @@ def _compact_narrative_payload(payload: dict[str, Any], limits: dict[str, int]) 
 
 
 def _narrative_system_prompt(job: str, *, limits: dict[str, int]) -> str:
-    from agent_reach.daily_run.deepseek_landing_cards import DEEPSEEK_NARRATIVE_RULE
+    from agent_reach.daily_run.deepseek_interpretation_cards import DEEPSEEK_NARRATIVE_RULE
 
     label = _JOB_LABELS.get(job, job)
     trade_hint = ""
@@ -430,7 +430,7 @@ def _generate_narrative(
     hint = system.strip()
     use_system = f"{base_system} {hint}".strip() if hint else base_system
 
-    if narrative_use_llm(cfg):
+    if job != "intraday" and narrative_use_llm(cfg):
         from agent_reach.daily_run.llm_chat import chat_json, resolve_chat_provider
 
         provider = str(cfg.get("provider") or "auto")
@@ -1376,52 +1376,8 @@ def push_intraday_narrative_card(
     symbol_results: Optional[list[dict[str, Any]]] = None,
     macro_signals: Optional[dict[str, Any]] = None,
 ) -> Optional[dict[str, Any]]:
-    """Push AI interpretation of this intraday scheduled run (always last)."""
-    if not intraday_append_narrative(settings):
-        return None
-    xq_signals = macro_signals
-    if xq_signals is None and scan_result:
-        xq_signals = scan_result.get("xueqiu_cross")
-    if symbol_results and len(symbol_results) > 1:
-        narrative = generate_merged_intraday_narrative(
-            symbol_results,
-            scan_id=scan_id,
-            settings=settings,
-            macro_signals=xq_signals,
-        )
-    elif scan_result:
-        narrative = generate_intraday_narrative(
-            scan_result=scan_result,
-            trade_result=trade_result,
-            settings=settings,
-            macro_signals=xq_signals,
-        )
-    elif symbol_results:
-        row = next((r for r in symbol_results if not r.get("skipped")), None)
-        if not row:
-            return None
-        inner = row.get("result") or {}
-        if xq_signals is None:
-            scan_payload = inner.get("scan") or {}
-            xq_signals = scan_payload.get("xueqiu_cross")
-        narrative = generate_intraday_narrative(
-            scan_result=inner.get("scan") or {},
-            trade_result=inner.get("trade"),
-            settings=settings,
-            macro_signals=xq_signals,
-        )
-    else:
-        return None
-    if narrative.get("skipped"):
-        return None
-    md = render_narrative_markdown(narrative, job="intraday")
-    if not md.strip():
-        return None
-    from agent_reach.integrations.feishu import send_card
-
-    tpl = (settings.get("report") or {}).get("feishu_template_intraday", "orange")
-    title = intraday_narrative_card_title(scan_id=scan_id, symbol_count=symbol_count)
-    return send_card(config, title, md, template=tpl)
+    """Reserved stub — intraday narrative card push is intentionally disabled."""
+    return None
 
 
 # --- Close ---
