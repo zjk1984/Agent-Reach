@@ -674,6 +674,21 @@ def attach_structured_forecast(
 
     week_start = date.fromisoformat(str(data.get("week_start")))
     prior = load_forecast(_prior_trading_week_start(week_start))
+    try:
+        from agent_reach.daily_run.forecast_advanced import build_forecast_advanced_insights
+
+        data["advanced_insights"] = build_forecast_advanced_insights(
+            forecast=data,
+            prior_forecast=prior,
+            portfolio=portfolio,
+            structured=structured,
+            matrix=matrix,
+            enriched_map=enriched_map,
+            settings=settings,
+        )
+    except Exception:
+        data["advanced_insights"] = {}
+
     if prior:
         verification = verify_prior_week_predictions(prior, settings=settings)
         verification["accuracy_trend"] = four_week_accuracy_trend(as_of=week_start, settings=settings)
@@ -706,47 +721,72 @@ def attach_structured_forecast(
     return data
 
 
-def render_prior_week_verify_markdown(verification: dict[str, Any]) -> str:
+def render_prior_week_verify_markdown(
+    verification: dict[str, Any],
+    *,
+    advanced: Optional[dict[str, Any]] = None,
+) -> str:
     rows = verification.get("rows") or []
     if not rows:
-        return (
+        base = (
             "## 📋 上周预测验证\n\n"
             "- 暂无可验证的上周结构化预测（首次运行或缺少历史 forecast 文件）"
         )
-    lines = ["## 📋 上周预测验证", ""]
-    ws, we = verification.get("week_start"), verification.get("week_end")
-    if ws and we:
-        lines.append(f"**验证周期：** {ws} ~ {we}")
-        lines.append("")
-    lines.extend(
-        [
-            "| 上周预测 | 实际结果 | 验证 | 偏差 |",
-            "|----------|----------|------|------|",
-        ]
-    )
-    for row in rows:
-        lines.append(
-            f"| {row.get('prediction')} | {row.get('actual')} | {row.get('verify')} | {row.get('deviation')} |"
+    else:
+        lines = ["## 📋 上周预测验证", ""]
+        ws, we = verification.get("week_start"), verification.get("week_end")
+        if ws and we:
+            lines.append(f"**验证周期：** {ws} ~ {we}")
+            lines.append("")
+        lines.extend(
+            [
+                "| 上周预测 | 实际结果 | 验证 | 偏差 |",
+                "|----------|----------|------|------|",
+            ]
         )
-    hits = verification.get("hits")
-    total = verification.get("total")
-    acc = verification.get("accuracy_pct")
-    avg_dev = verification.get("avg_deviation_pct")
-    if total:
-        acc_s = f"{float(acc):.0f}%" if acc is not None else "—"
-        dev_s = f"{float(avg_dev):.1f}%" if avg_dev is not None else "—"
-        lines.append("")
-        lines.append(f"→ **上周预测准确率：{hits}/{total} = {acc_s}**，平均偏差 {dev_s}")
-    trend = verification.get("accuracy_trend") or []
-    if trend:
-        parts = [f"{float(t['accuracy_pct']):.0f}%" for t in trend if t.get("accuracy_pct") is not None]
-        if parts:
-            lines.append(f"→ **近{len(parts)}周准确率：** {' → '.join(parts)}")
-    reasons = [r for r in verification.get("miss_reasons") or [] if r]
-    if reasons:
-        lines.append("")
-        lines.append("**偏差原因（摘要）：** " + "；".join(reasons[:2]))
-    return "\n".join(lines).strip()
+        for row in rows:
+            lines.append(
+                f"| {row.get('prediction')} | {row.get('actual')} | {row.get('verify')} | {row.get('deviation')} |"
+            )
+        hits = verification.get("hits")
+        total = verification.get("total")
+        acc = verification.get("accuracy_pct")
+        avg_dev = verification.get("avg_deviation_pct")
+        if total:
+            acc_s = f"{float(acc):.0f}%" if acc is not None else "—"
+            dev_s = f"{float(avg_dev):.1f}%" if avg_dev is not None else "—"
+            lines.append("")
+            lines.append(f"→ **上周预测准确率：{hits}/{total} = {acc_s}**，平均偏差 {dev_s}")
+        trend = verification.get("accuracy_trend") or []
+        if trend:
+            parts = [f"{float(t['accuracy_pct']):.0f}%" for t in trend if t.get("accuracy_pct") is not None]
+            if parts:
+                lines.append(f"→ **近{len(parts)}周准确率：** {' → '.join(parts)}")
+        reasons = [r for r in verification.get("miss_reasons") or [] if r]
+        if reasons:
+            lines.append("")
+            lines.append("**偏差原因（摘要）：** " + "；".join(reasons[:2]))
+        base = "\n".join(lines).strip()
+
+    adv = advanced or {}
+    extras: list[str] = []
+    try:
+        from agent_reach.daily_run.forecast_advanced import (
+            render_prior_operation_execution_markdown,
+            render_scatter_history_markdown,
+        )
+
+        scatter_md = render_scatter_history_markdown(adv.get("scatter") or {})
+        if scatter_md:
+            extras.append(scatter_md)
+        op_md = render_prior_operation_execution_markdown(adv.get("prior_operation_execution") or {})
+        if op_md:
+            extras.append(op_md)
+    except Exception:
+        pass
+    if extras:
+        return base + "\n\n" + "\n\n".join(extras)
+    return base
 
 
 def render_market_sector_markdown(structured: dict[str, Any]) -> str:
@@ -802,6 +842,8 @@ def _plan_by_code(operation_plans: list[dict[str, Any]]) -> dict[str, dict[str, 
 def render_holdings_plans_markdown(
     structured: dict[str, Any],
     operation_plans: list[dict[str, Any]],
+    *,
+    advanced: Optional[dict[str, Any]] = None,
 ) -> str:
     scope = structured.get("content_scope") or {}
     lines = ["## 📊 持仓股下周预测与操作预案", ""]
@@ -824,6 +866,15 @@ def render_holdings_plans_markdown(
         lines.extend(["", "**新建仓候选（非持仓）：**"])
         for row in buy_rows:
             lines.append(f"- {row.get('text')}")
+
+    try:
+        from agent_reach.daily_run.forecast_advanced import render_model_consistency_markdown
+
+        model_md = render_model_consistency_markdown((advanced or {}).get("model_consistency") or [])
+        if model_md:
+            lines.extend(["", model_md])
+    except Exception:
+        pass
 
     cross = structured.get("cross_check") or {}
     if cross.get("issues"):
@@ -914,7 +965,8 @@ def render_structured_forecast_sections(
     matrix = forecast.get("operation_matrix") or {}
 
     sections: list[tuple[str, str]] = []
-    verify_md = render_prior_week_verify_markdown(verification)
+    advanced = forecast.get("advanced_insights") or {}
+    verify_md = render_prior_week_verify_markdown(verification, advanced=advanced)
     if verify_md.strip():
         sections.append((_FORECAST_SECTION_LABELS[0], verify_md))
 
@@ -927,19 +979,42 @@ def render_structured_forecast_sections(
             settings=settings,
         )
 
+    if not advanced and structured:
+        try:
+            from agent_reach.daily_run.forecast_advanced import build_forecast_advanced_insights
+
+            advanced = build_forecast_advanced_insights(
+                forecast=forecast,
+                prior_forecast=None,
+                portfolio=forecast.get("_portfolio"),
+                structured=structured,
+                matrix=matrix,
+                settings=settings,
+            )
+        except Exception:
+            advanced = {}
+
     master_md = render_master_operation_markdown(matrix) if matrix else ""
     if master_md.strip():
         sections.append((_FORECAST_SECTION_LABELS[1], master_md))
 
     scenario_md = render_scenario_markdown(matrix) if matrix else ""
     if scenario_md.strip():
+        try:
+            from agent_reach.daily_run.forecast_advanced import render_stress_tests_markdown
+
+            stress_md = render_stress_tests_markdown(advanced.get("stress_tests") or [])
+            if stress_md:
+                scenario_md = scenario_md + "\n\n" + stress_md
+        except Exception:
+            pass
         sections.append((_FORECAST_SECTION_LABELS[2], scenario_md))
 
     market_md = render_market_sector_markdown(structured)
     if market_md.strip():
         sections.append((_FORECAST_SECTION_LABELS[3], market_md))
 
-    holdings_md = render_holdings_plans_markdown(structured, operation_plans)
+    holdings_md = render_holdings_plans_markdown(structured, operation_plans, advanced=advanced)
     if holdings_md.strip():
         sections.append((_FORECAST_SECTION_LABELS[4], holdings_md))
 
