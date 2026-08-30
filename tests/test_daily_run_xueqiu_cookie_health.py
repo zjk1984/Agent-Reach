@@ -191,9 +191,30 @@ def test_ensure_browser_login_skipped_when_healthy():
         "agent_reach.daily_run.xueqiu_cookie_health._cookie_needs_browser_login",
         return_value=False,
     ):
-        result = ensure_xueqiu_browser_session(settings={"week_forecast": {}})
+        result = ensure_xueqiu_browser_session(
+            settings={
+                "week_forecast": {
+                    "xueqiu_cookie_refresh_every_forecast": False,
+                    "xueqiu_cookie_browser_login_skip_when_healthy": True,
+                }
+            }
+        )
     assert result["skipped"] is True
     assert result["reason"] == "already_healthy"
+
+
+def test_refresh_every_forecast_forces_browser_login_when_healthy():
+    with patch(
+        "agent_reach.daily_run.xueqiu_cookie_health.check_xueqiu_cookie_health",
+        return_value={"status": "ok"},
+    ):
+        assert (
+            __import__(
+                "agent_reach.daily_run.xueqiu_cookie_health",
+                fromlist=["_cookie_needs_browser_login"],
+            )._cookie_needs_browser_login(settings={"week_forecast": {}})
+            is True
+        )
 
 
 def test_ensure_browser_login_skipped_without_display():
@@ -244,6 +265,25 @@ def test_ensure_browser_login_launches_chrome_and_waits_for_token():
     assert result["token_seen_in_browser"] is True
     mock_popen.assert_called_once()
     mock_kill.assert_called_once_with(proc)
+
+
+def test_refresh_still_extracts_when_chrome_running_with_token():
+    with patch(
+        "agent_reach.daily_run.xueqiu_cookie_health.ensure_xueqiu_browser_session",
+        return_value={
+            "skipped": False,
+            "success": True,
+            "reason": "chrome_running",
+            "chrome_was_running": True,
+            "token_seen_in_browser": True,
+        },
+    ), patch("agent_reach.cookie_extract.configure_from_browser") as mock_cfg, patch(
+        "agent_reach.daily_run.xueqiu_cookie_health._reset_xueqiu_channel_cookies"
+    ), patch("agent_reach.config.Config"):
+        mock_cfg.return_value = [("Xueqiu", True, "17 cookies (含 xq_a_token)")]
+        result = refresh_xueqiu_cookie_from_browser(settings={"week_forecast": {}})
+    assert result["success"] is True
+    mock_cfg.assert_called_once()
 
 
 def test_refresh_calls_browser_login_before_extract():

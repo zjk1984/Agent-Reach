@@ -1925,7 +1925,7 @@ def run_forecast(
 
     cookie_refresh = refresh_xueqiu_cookie_from_browser(settings=cfg, config=config)
     steps: list[str] = []
-    if not cookie_refresh.get("skipped"):
+    if wf_cfg.get("xueqiu_cookie_auto_refresh_from_browser", True) is not False:
         steps.append("xueqiu_cookie_refresh")
 
     steps.append("generate")

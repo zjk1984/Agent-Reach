@@ -252,6 +252,11 @@ def _browser_xueqiu_cookie_string(browser: str) -> str:
     return str((extracted.get("xueqiu") or {}).get("cookie_string") or "")
 
 
+def _refresh_every_forecast(settings: Optional[dict[str, Any]] = None) -> bool:
+    wf = _week_forecast_settings(settings)
+    return wf.get("xueqiu_cookie_refresh_every_forecast", True) is not False
+
+
 def _cookie_needs_browser_login(
     *,
     settings: Optional[dict[str, Any]] = None,
@@ -259,6 +264,8 @@ def _cookie_needs_browser_login(
 ) -> bool:
     """Return True when opening xueqiu.com in Chrome may help refresh/login."""
     wf = _week_forecast_settings(settings)
+    if _refresh_every_forecast(settings):
+        return True
     if wf.get("xueqiu_cookie_browser_login_skip_when_healthy", True) is False:
         return True
     health = check_xueqiu_cookie_health(config=config, settings=settings)
@@ -487,15 +494,9 @@ def refresh_xueqiu_cookie_from_browser(
         config=config,
         browser=browser_name,
     )
-    if browser_login.get("chrome_was_running") and browser_login.get("token_seen_in_browser"):
-        return {
-            "skipped": False,
-            "success": False,
-            "browser": browser_name,
-            "browser_login": browser_login,
-            "message": browser_login.get("message", "请关闭 Chrome 后重试"),
-            "job": "xueqiu_cookie_refresh",
-        }
+    chrome_running_hint = bool(
+        browser_login.get("chrome_was_running") and browser_login.get("token_seen_in_browser")
+    )
 
     try:
         from agent_reach.config import Config
@@ -511,31 +512,42 @@ def refresh_xueqiu_cookie_from_browser(
             "browser_login": browser_login,
             "message": str(exc),
             "job": "xueqiu_cookie_refresh",
+            "forced": _refresh_every_forecast(settings),
         }
 
     xueqiu_row = next((row for row in results if row[0] == "Xueqiu"), None)
     if xueqiu_row and xueqiu_row[1]:
         _reset_xueqiu_channel_cookies()
+        message = xueqiu_row[2]
+        if chrome_running_hint:
+            message = f"{message}（Chrome 运行中提取成功）"
         return {
             "skipped": False,
             "success": True,
             "browser": browser_name,
             "browser_login": browser_login,
-            "message": xueqiu_row[2],
+            "message": message,
             "job": "xueqiu_cookie_refresh",
+            "forced": _refresh_every_forecast(settings),
         }
 
     if xueqiu_row:
+        fail_msg = xueqiu_row[2]
+        if chrome_running_hint:
+            fail_msg = f"{fail_msg}；Chrome 已在运行，可关闭 Chrome 后重试"
         return {
             "skipped": False,
             "success": False,
             "browser": browser_name,
             "browser_login": browser_login,
-            "message": xueqiu_row[2],
+            "message": fail_msg,
             "job": "xueqiu_cookie_refresh",
+            "forced": _refresh_every_forecast(settings),
         }
 
     detail = "; ".join(f"{name}: {msg}" for name, ok, msg in results if not ok) or "未找到雪球 Cookie"
+    if chrome_running_hint:
+        detail = f"{detail}；Chrome 已在运行，可关闭 Chrome 后重试"
     return {
         "skipped": False,
         "success": False,
@@ -543,6 +555,7 @@ def refresh_xueqiu_cookie_from_browser(
         "browser_login": browser_login,
         "message": detail,
         "job": "xueqiu_cookie_refresh",
+        "forced": _refresh_every_forecast(settings),
     }
 
 
