@@ -74,7 +74,7 @@ def test_llm_narrative(mock_chat, mock_provider):
     assert "下周偏防守" in md
 
 
-def test_render_forecast_sections_puts_confidence_last():
+def test_render_forecast_sections_puts_limitations_last():
     sections = render_forecast_sections(
         {
             "week_start": "2026-08-17",
@@ -98,7 +98,7 @@ def test_render_forecast_sections_puts_confidence_last():
             "notes": [],
         }
     )
-    assert sections[-1].label == "置信度说明"
+    assert sections[-1].label == "局限性"
     assert isinstance(sections[-1], ForecastSection)
 
 

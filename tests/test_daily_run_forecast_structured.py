@@ -1,6 +1,7 @@
 # -*- coding: utf-8
 """Tests for structured weekly forecast cards."""
 
+from agent_reach.daily_run.forecast_operation_matrix import build_master_operation_rows
 from agent_reach.daily_run.forecast_structured import (
     aggregate_symbol_week_prediction,
     attach_structured_forecast,
@@ -15,11 +16,12 @@ from agent_reach.daily_run.forecast_structured import (
 from agent_reach.daily_run.week_forecast import ForecastSection, render_forecast_sections
 
 
-def test_forecast_section_labels_are_five():
+def test_forecast_section_labels_are_seven():
     labels = forecast_section_labels()
     assert labels[0] == "上周验证"
-    assert labels[-1] == "置信度说明"
-    assert len(labels) == 5
+    assert labels[1] == "操作总表"
+    assert labels[-1] == "局限性"
+    assert len(labels) == 7
 
 
 def test_aggregate_symbol_week_prediction_numeric_text():
@@ -98,7 +100,7 @@ def test_verify_prior_week_predictions_table():
     assert "| 上周预测 | 实际结果 | 验证 | 偏差 |" in md
 
 
-def test_build_tied_operation_plans_has_triggers():
+def test_build_tied_operation_plans_uses_master_rows():
     structured = {
         "symbols": [
             {
@@ -115,9 +117,10 @@ def test_build_tied_operation_plans_has_triggers():
         "total_value": 100000,
         "holdings": [{"code": "300308", "name": "中际旭创", "market_value": 20000}],
     }
-    plans = build_tied_operation_plans(structured, portfolio=portfolio)
+    master_rows = build_master_operation_rows(portfolio=portfolio, structured=structured)
+    plans = build_tied_operation_plans(structured, portfolio=portfolio, master_rows=master_rows)
     assert len(plans) == 1
-    assert "加仓" in plans[0]["operation_plan"]
+    assert "→" in plans[0]["operation_plan"]
     assert "止损" in plans[0]["operation_plan"]
 
 
@@ -157,16 +160,57 @@ def test_render_structured_forecast_sections_order():
                 "operation_plan": "回调至112元加仓至20%；突破125元持有；跌破108元止损至10%",
             }
         ],
-        "risk_calendar": [
-            {"date": "2026-08-28", "event": "股指期货交割", "scope": "大盘波动", "severity": "中"}
-        ],
+        "operation_matrix": {
+            "master_rows": [
+                {
+                    "code": "300308",
+                    "name": "中际旭创",
+                    "current_weight_pct": 15,
+                    "operation": "加仓",
+                    "trigger": "回调至112元",
+                    "target_weight": "15%→20%",
+                    "stop_loss": "108元",
+                },
+                {
+                    "code": "CASH",
+                    "name": "现金",
+                    "current_weight_pct": 85,
+                    "operation": "—",
+                    "trigger": "—",
+                    "target_weight": "—",
+                    "stop_loss": "—",
+                },
+            ],
+            "position_guidance": {
+                "summary": "下周建议整体仓位：50%-60%（当前15%）",
+                "concentration": "单只股票不超过20%",
+                "rationale": "测试",
+            },
+            "scenarios": [
+                {"name": "基准", "probability_pct": 60, "trigger": "t1", "response": "r1"},
+                {"name": "风险", "probability_pct": 25, "trigger": "t2", "response": "r2"},
+                {"name": "乐观", "probability_pct": 15, "trigger": "t3", "response": "r3"},
+            ],
+            "timeline": [
+                {
+                    "date": "2026-08-28",
+                    "event": "股指期货交割",
+                    "scope": "大盘波动",
+                    "severity_emoji": "🟡",
+                    "response": "交割日避免开新仓",
+                }
+            ],
+            "limitations": {"lines": ["不构成投资建议。"], "high_uncertainty_names": []},
+        },
         "notes": [],
     }
     sections = render_structured_forecast_sections(forecast)
     labels = [label for label, _ in sections]
     assert labels == list(forecast_section_labels())
     assert "✅ 命中区间" in sections[0][1]
-    assert "操作预案" in sections[2][1]
+    assert "操作计划总表" in sections[1][1]
+    assert "情景预案" in sections[2][1]
+    assert "操作总表" in sections[4][1] or "详见「操作总表」" in sections[4][1]
 
 
 def test_render_forecast_sections_first_is_prior_verify():
@@ -189,7 +233,7 @@ def test_render_forecast_sections_first_is_prior_verify():
         }
     )
     assert sections[0].label == "上周验证"
-    assert sections[-1].label == "置信度说明"
+    assert sections[-1].label == "局限性"
     assert all(isinstance(s, ForecastSection) for s in sections)
 
 
@@ -222,3 +266,4 @@ def test_attach_structured_forecast_populates_fields():
     enriched = attach_structured_forecast(forecast, portfolio=portfolio, settings={})
     assert enriched.get("structured_predictions", {}).get("market")
     assert enriched.get("operation_plans")
+    assert enriched.get("operation_matrix", {}).get("master_rows")

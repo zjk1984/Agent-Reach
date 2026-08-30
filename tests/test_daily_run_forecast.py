@@ -33,7 +33,7 @@ class TestWeekForecast:
         }
         forecast = generate_week_forecast(snap, load_settings())
         sections = render_forecast_sections(forecast)
-        assert len(sections) == 5
+        assert len(sections) == 7
         assert sections[0].label == "上周验证"
         assert "688008" in forecast.symbols
         push_sections = render_forecast_push_sections(forecast)

@@ -14,6 +14,13 @@ from agent_reach.daily_run.forecast_content_scope import (
     build_forecast_content_scope,
     filter_sectors_to_holdings,
 )
+from agent_reach.daily_run.forecast_operation_matrix import (
+    build_forecast_operation_matrix,
+    render_limitations_markdown,
+    render_master_operation_markdown,
+    render_scenario_markdown,
+    render_timeline_markdown,
+)
 from agent_reach.daily_run.forecast_quality import (
     audit_forecast_cross_check,
     confidence_tier_detail,
@@ -29,10 +36,12 @@ _VAGUE_PATTERN = re.compile(
 
 _FORECAST_SECTION_LABELS = (
     "上周验证",
+    "操作总表",
+    "情景预案",
     "大盘板块",
     "持仓预案",
-    "风险应对",
-    "置信度说明",
+    "关键事件",
+    "局限性",
 )
 
 
@@ -280,13 +289,16 @@ def build_tied_operation_plans(
     *,
     portfolio: Optional[dict[str, Any]] = None,
     outlook: Optional[dict[str, Any]] = None,
+    master_rows: Optional[list[dict[str, Any]]] = None,
 ) -> list[dict[str, Any]]:
-    """Bind numeric predictions to explicit trigger / target / stop actions."""
+    """Bind numeric predictions to master-table operation rows for holdings card."""
     pf = portfolio or {}
     total = _optional_float(pf.get("total_value") or pf.get("portfolio_total"))
     sym_preds = {str(s.get("code")): s for s in structured.get("symbols") or [] if s.get("code")}
-    outlook_rows = {
-        str(r.get("code")): r for r in (outlook or {}).get("operation_plan") or [] if r.get("code")
+    master_map = {
+        _normalize_code(str(r.get("code") or "")): r
+        for r in master_rows or []
+        if r.get("code") and r.get("code") != "CASH"
     }
     plans: list[dict[str, Any]] = []
     for h in pf.get("holdings") or []:
@@ -297,33 +309,17 @@ def build_tied_operation_plans(
         cur = _weight_pct(h, total) or 0.0
         conf = _optional_float(pred.get("confidence_pct")) or 60.0
         pos_hint = str(pred.get("position_hint") or position_hint_for_confidence(conf))
-        low = _optional_float(pred.get("price_low"))
-        mid = _optional_float(pred.get("price_mid"))
-        high = _optional_float(pred.get("price_high"))
         name = str(h.get("name") or pred.get("name") or code)
-        if mid and low and high:
-            add_px = round(mid * 0.95, 0)
-            stop_px = round(low * 0.98, 0)
-            if conf >= 80:
-                add_w = min(cur + 10, 25)
-                stop_w = max(int(cur * 0.5), 10)
-            elif conf >= 60:
-                add_w = min(cur + 5, 20)
-                stop_w = max(int(cur * 0.6), 10)
-            else:
-                add_w = min(cur + 3, 15)
-                stop_w = max(int(cur * 0.4), 5)
-            action = (
-                f"【{pos_hint}】回调至{add_px:.0f}元加仓至{add_w:.0f}%；"
-                f"突破{high:.0f}元持有；跌破{stop_px:.0f}元止损至{stop_w:.0f}%"
-            )
-            pred_text = pred.get("text") or f"区间 {low:.0f}-{high:.0f} 元，中枢 {mid:.0f}"
+        pred_text = pred.get("text") or "—"
+        master = master_map.get(code) or {}
+        if master:
+            op = master.get("operation") or "持有"
+            trigger = master.get("trigger") or "—"
+            target = master.get("target_weight") or f"维持{cur:.0f}%"
+            stop = master.get("stop_loss") or "—"
+            action = f"{op}：{trigger} → 目标 {target}；止损 {stop}"
         else:
-            outlook_row = outlook_rows.get(code) or {}
-            action = str(outlook_row.get("trigger") or "—")
-            if action == "—":
-                action = f"维持 {cur:.0f}% 仓位；MSS<45 减至 {max(cur - 5, 5):.0f}%"
-            pred_text = pred.get("text") or "—"
+            action = f"持有：维持 {cur:.0f}% 仓位；MSS<45 减至 {max(cur - 5, 5):.0f}%"
         plans.append(
             {
                 "code": code,
@@ -655,10 +651,19 @@ def attach_structured_forecast(
     )
     data["structured_predictions"] = structured
     data["forecast_quality_audit"] = structured.get("cross_check") or {}
+    matrix = build_forecast_operation_matrix(
+        portfolio=portfolio,
+        structured=structured,
+        outlook=outlook,
+        forecast=data,
+        settings=settings,
+    )
+    data["operation_matrix"] = matrix
     data["operation_plans"] = build_tied_operation_plans(
         structured,
         portfolio=portfolio,
         outlook=outlook,
+        master_rows=matrix.get("master_rows"),
     )
 
     week_start = date.fromisoformat(str(data.get("week_start")))
@@ -788,23 +793,17 @@ def render_holdings_plans_markdown(
 ) -> str:
     scope = structured.get("content_scope") or {}
     lines = ["## 📊 持仓股下周预测与操作预案", ""]
+    lines.append("_具体操作触发/目标/止损见「操作总表」；此处仅列预测与因子。_")
+    lines.append("")
     compact = scope.get("symbols_compact") or []
-    plans_map = _plan_by_code(operation_plans)
     symbols = structured.get("symbols") or []
 
     if compact:
-        for idx, text in enumerate(compact):
-            code = ""
-            if idx < len(symbols):
-                code = _normalize_code(str(symbols[idx].get("code") or ""))
-            plan = plans_map.get(code) or {}
-            op = plan.get("operation_plan") or "—"
+        for text in compact:
             lines.append(f"- {text}")
-            lines.append(f"  - **预案：** {op}")
     elif operation_plans:
         for row in operation_plans:
             lines.append(f"- **{row.get('name')}** {row.get('prediction_text')}")
-            lines.append(f"  - **预案：** {row.get('operation_plan')}")
     else:
         lines.append("- 暂无持仓预测")
 
@@ -896,31 +895,48 @@ def render_structured_forecast_sections(
     *,
     settings: Optional[dict[str, Any]] = None,
 ) -> list[tuple[str, str]]:
-    """Return five (label, markdown) sections for Sunday forecast push."""
+    """Return structured (label, markdown) sections for Sunday forecast push."""
     structured = forecast.get("structured_predictions") or {}
     verification = forecast.get("prior_week_verification") or {}
     operation_plans = forecast.get("operation_plans") or []
-    risk_calendar = forecast.get("risk_calendar") or []
+    matrix = forecast.get("operation_matrix") or {}
 
     sections: list[tuple[str, str]] = []
     verify_md = render_prior_week_verify_markdown(verification)
     if verify_md.strip():
         sections.append((_FORECAST_SECTION_LABELS[0], verify_md))
 
+    if not matrix and structured:
+        matrix = build_forecast_operation_matrix(
+            portfolio=forecast.get("_portfolio"),
+            structured=structured,
+            outlook=forecast.get("outlook"),
+            forecast=forecast,
+            settings=settings,
+        )
+
+    master_md = render_master_operation_markdown(matrix) if matrix else ""
+    if master_md.strip():
+        sections.append((_FORECAST_SECTION_LABELS[1], master_md))
+
+    scenario_md = render_scenario_markdown(matrix) if matrix else ""
+    if scenario_md.strip():
+        sections.append((_FORECAST_SECTION_LABELS[2], scenario_md))
+
     market_md = render_market_sector_markdown(structured)
     if market_md.strip():
-        sections.append((_FORECAST_SECTION_LABELS[1], market_md))
+        sections.append((_FORECAST_SECTION_LABELS[3], market_md))
 
     holdings_md = render_holdings_plans_markdown(structured, operation_plans)
     if holdings_md.strip():
-        sections.append((_FORECAST_SECTION_LABELS[2], holdings_md))
+        sections.append((_FORECAST_SECTION_LABELS[4], holdings_md))
 
-    risk_md = render_risk_response_markdown(risk_calendar, settings=settings)
-    if risk_md.strip():
-        sections.append((_FORECAST_SECTION_LABELS[3], risk_md))
+    timeline_md = render_timeline_markdown(matrix) if matrix else ""
+    if timeline_md.strip():
+        sections.append((_FORECAST_SECTION_LABELS[5], timeline_md))
 
-    conf_md = render_confidence_limitations_markdown(forecast, structured)
-    if conf_md.strip():
-        sections.append((_FORECAST_SECTION_LABELS[4], conf_md))
+    limit_md = render_limitations_markdown(matrix) if matrix else ""
+    if limit_md.strip():
+        sections.append((_FORECAST_SECTION_LABELS[6], limit_md))
 
     return sections
