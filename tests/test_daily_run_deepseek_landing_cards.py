@@ -34,8 +34,8 @@ def test_render_markdown_has_active_and_suitable_sections():
         runtime={"narrative": {"planner": "llm", "summary": "test"}},
     )
     assert "DeepSeek 引入场景与落地点" in md
-    assert "已落地" in md
-    assert "适合引入" in md
+    assert "计算用代码，解读用模型" in md
+    assert "解读类" in md
     assert "规则解读" in md
 
 
@@ -59,6 +59,14 @@ def test_append_report_section_renumbers():
     assert len(out) >= 2
     assert out[-1].category == "deepseek_landing"
     assert "/2" in out[-1].title or "/3" in out[-1].title
+
+
+def test_narrative_system_prompt_includes_deepseek_rule():
+    from agent_reach.daily_run.report_narrative import _NARRATIVE_LIMITS_DEFAULT, _narrative_system_prompt
+
+    prompt = _narrative_system_prompt("morning", limits=_NARRATIVE_LIMITS_DEFAULT)
+    assert "不得推算、修改或新增价格" in prompt
+    assert "不得给出新的买卖价位" in prompt
 
 
 def test_build_snapshot_filters_by_report_kind():

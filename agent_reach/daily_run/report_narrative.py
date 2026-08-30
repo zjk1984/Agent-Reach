@@ -240,6 +240,8 @@ def _compact_narrative_payload(payload: dict[str, Any], limits: dict[str, int]) 
 
 
 def _narrative_system_prompt(job: str, *, limits: dict[str, int]) -> str:
+    from agent_reach.daily_run.deepseek_landing_cards import DEEPSEEK_NARRATIVE_RULE
+
     label = _JOB_LABELS.get(job, job)
     trade_hint = ""
     if job == "intraday":
@@ -261,6 +263,7 @@ def _narrative_system_prompt(job: str, *, limits: dict[str, int]) -> str:
         f"divergence_notes 仅实质分歧时填，最多 {limits['max_divergence_notes']} 条；"
         f"risk_alerts 最多 {limits['max_risk_alerts']} 条。"
         f"{trade_hint}"
+        f"{DEEPSEEK_NARRATIVE_RULE}"
         "禁止编造未提供数字；禁止复述输入；省略废话；中文。"
     )
 
