@@ -10,6 +10,10 @@ from typing import Any, Optional
 from agent_reach.daily_run.snapshot_builder import _normalize_code
 from agent_reach.daily_run.trade_calendar import today_shanghai
 from agent_reach.daily_run.week_forecast import load_forecast, next_trading_week_range
+from agent_reach.daily_run.forecast_content_scope import (
+    build_forecast_content_scope,
+    filter_sectors_to_holdings,
+)
 from agent_reach.daily_run.forecast_quality import (
     audit_forecast_cross_check,
     confidence_tier_detail,
@@ -176,6 +180,9 @@ def build_structured_predictions(
     digest: Optional[dict[str, Any]] = None,
     snapshot: Optional[dict[str, Any]] = None,
     enriched: Optional[dict[str, Any]] = None,
+    outlook: Optional[dict[str, Any]] = None,
+    watchlist_intel: Optional[dict[str, Any]] = None,
+    risk_calendar: Optional[list[dict[str, Any]]] = None,
 ) -> dict[str, Any]:
     calibration = forecast.get("calibration_used") or {}
     snap = snapshot or forecast.get("_snapshot") or {}
@@ -223,17 +230,22 @@ def build_structured_predictions(
                             kronos=kronos_paths.get(code) or sym.get("kronos"),
                         )
                     )
-    sectors = build_sector_predictions(
+    sectors_all = build_sector_predictions(
         digest=digest,
         snapshot=snap,
         market_mid=float(market.get("change_pct_mid") or 0),
+    )
+    sectors = filter_sectors_to_holdings(
+        sectors_all,
+        portfolio=pf,
+        settings=settings,
     )
     cross_ref = load_cross_reference_data(portfolio=pf, settings=settings)
     audit = audit_forecast_cross_check(
         {"market": market, "symbols": symbols, "sectors": sectors},
         cross_ref,
     )
-    return {
+    base = {
         "market": market,
         "sectors": sectors,
         "symbols": symbols,
@@ -241,6 +253,19 @@ def build_structured_predictions(
         "cross_reference": cross_ref,
         "cross_check": audit,
     }
+    content_scope = build_forecast_content_scope(
+        structured=base,
+        forecast=forecast,
+        portfolio=pf,
+        settings=settings,
+        digest=digest,
+        outlook=outlook,
+        snapshot=snap,
+        enriched=enriched_map,
+        watchlist_intel=watchlist_intel,
+        risk_calendar=risk_calendar,
+    )
+    return {**base, "content_scope": content_scope}
 
 
 def _weight_pct(holding: dict[str, Any], portfolio_total: Optional[float]) -> Optional[float]:
@@ -624,6 +649,9 @@ def attach_structured_forecast(
         digest=digest,
         snapshot=snap,
         enriched=enriched_map,
+        outlook=outlook,
+        watchlist_intel=data.get("watchlist_intel") or snap.get("watchlist_intel"),
+        risk_calendar=list((outlook or {}).get("risk_calendar") or []),
     )
     data["structured_predictions"] = structured
     data["forecast_quality_audit"] = structured.get("cross_check") or {}
@@ -700,83 +728,95 @@ def render_prior_week_verify_markdown(verification: dict[str, Any]) -> str:
     reasons = [r for r in verification.get("miss_reasons") or [] if r]
     if reasons:
         lines.append("")
-        lines.append("**偏差原因：**")
-        for reason in reasons[:4]:
-            lines.append(f"- {reason}")
+        lines.append("**偏差原因（摘要）：** " + "；".join(reasons[:2]))
     return "\n".join(lines).strip()
 
 
 def render_market_sector_markdown(structured: dict[str, Any]) -> str:
+    scope = structured.get("content_scope") or {}
     lines = ["## 🌐 下周大盘与板块预测", ""]
+    recap = scope.get("weekly_recap")
+    if recap:
+        lines.append(f"**本周回顾（1句）：** {recap}")
+        lines.append("")
+    macro = scope.get("macro_brief") or {}
+    if macro.get("text"):
+        lines.append(f"**宏观（核心）：** {macro['text']}")
+        lines.append("")
     market = structured.get("market") or {}
     if market.get("text"):
-        lines.append(f"- {market['text']}")
-    if market.get("width_warning"):
-        lines.append(f"  - ⚠️ {market['width_warning']}")
-    cross = structured.get("cross_check") or {}
-    if cross.get("cutoff_label"):
-        lines.append(f"- **数据截止：** {cross['cutoff_label']}（与收盘卡片/周报交叉核对）")
-    sectors = structured.get("sectors") or []
+        # Numeric band only — drop duplicated long evidence in this card
+        lo = market.get("change_pct_low")
+        hi = market.get("change_pct_high")
+        conf = market.get("confidence_pct")
+        index_name = market.get("index_name") or "沪深300"
+        if lo is not None and hi is not None:
+            conf_s = f"，置信度 {float(conf):.0f}%" if conf is not None else ""
+            lines.append(
+                f"- **{index_name}** {_fmt_pct(float(lo))}~{_fmt_pct(float(hi))}{conf_s}"
+            )
+    sectors = scope.get("sectors_scoped") or structured.get("sectors") or []
     if sectors:
         lines.append("")
-        lines.append("**板块相对收益预测：**")
+        lines.append("**持仓所在板块：**")
         for sec in sectors:
             lines.append(f"- {sec.get('text')}")
+    ref = scope.get("market_reference")
+    if ref:
+        lines.append("")
+        lines.append(f"_{ref}_")
+    extra = scope.get("extra_reading") or []
+    if extra:
+        lines.append("")
+        lines.append(f"**延伸阅读：** {' · '.join(extra)}（完整分析见周六周报/调研摘要）")
     if len(lines) <= 2:
         lines.append("- 暂无大盘/板块结构化预测")
     return "\n".join(lines).strip()
+
+
+def _plan_by_code(operation_plans: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {
+        _normalize_code(str(p.get("code") or "")): p
+        for p in operation_plans
+        if p.get("code")
+    }
 
 
 def render_holdings_plans_markdown(
     structured: dict[str, Any],
     operation_plans: list[dict[str, Any]],
 ) -> str:
+    scope = structured.get("content_scope") or {}
     lines = ["## 📊 持仓股下周预测与操作预案", ""]
-    if not operation_plans:
-        sym_rows = structured.get("symbols") or []
-        if not sym_rows:
-            lines.append("- 暂无持仓预测")
-            return "\n".join(lines).strip()
-        for sym in sym_rows:
-            lines.append(f"- {sym.get('text')}")
-        return "\n".join(lines).strip()
-    lines.extend(
-        [
-            "| 股票 | 下周预测（含置信度/依据） | 操作预案 |",
-            "|------|-------------------------|----------|",
-        ]
-    )
-    for row in operation_plans:
-        pred = str(row.get("prediction_text") or "—")
-        if len(pred) > 80:
-            pred = pred[:77] + "…"
-        lines.append(
-            f"| {row.get('name')} | {pred} | {row.get('operation_plan')} |"
-        )
+    compact = scope.get("symbols_compact") or []
+    plans_map = _plan_by_code(operation_plans)
+    symbols = structured.get("symbols") or []
+
+    if compact:
+        for idx, text in enumerate(compact):
+            code = ""
+            if idx < len(symbols):
+                code = _normalize_code(str(symbols[idx].get("code") or ""))
+            plan = plans_map.get(code) or {}
+            op = plan.get("operation_plan") or "—"
+            lines.append(f"- {text}")
+            lines.append(f"  - **预案：** {op}")
+    elif operation_plans:
+        for row in operation_plans:
+            lines.append(f"- **{row.get('name')}** {row.get('prediction_text')}")
+            lines.append(f"  - **预案：** {row.get('operation_plan')}")
+    else:
+        lines.append("- 暂无持仓预测")
+
+    buy_rows = scope.get("buy_candidates") or []
+    if buy_rows:
+        lines.extend(["", "**新建仓候选（非持仓）：**"])
+        for row in buy_rows:
+            lines.append(f"- {row.get('text')}")
+
     cross = structured.get("cross_check") or {}
-    if cross.get("rows"):
-        lines.extend(["", "**基准价交叉核对：**", ""])
-        lines.extend(
-            [
-                "| 标的 | 预测基准价 | 收盘卡片 | 来源 | 一致 |",
-                "|------|------------|----------|------|:----:|",
-            ]
-        )
-        for row in cross["rows"][:6]:
-            mark = "✅" if row.get("match") else "❌"
-            adj = row.get("adjusted_note") or ""
-            ref = row.get("reference_price")
-            ref_s = f"{ref}{(' ' + adj) if adj else ''}"
-            lines.append(
-                f"| {row.get('name')} | {row.get('forecast_price')} | {ref_s} | "
-                f"{row.get('reference_source')} | {mark} |"
-            )
-        if cross.get("cutoff_label"):
-            lines.append(f"\n_数据截止：{cross['cutoff_label']}_")
     if cross.get("issues"):
-        lines.extend(["", "**数据核对异常（推送前校验）：**"])
-        for issue in cross["issues"][:4]:
-            lines.append(f"- ⚠️ {issue}")
+        lines.extend(["", "**数据核对：** " + "；".join(cross["issues"][:2])])
     return "\n".join(lines).strip()
 
 
@@ -835,19 +875,15 @@ def render_confidence_limitations_markdown(
         lines.append(f"- **低置信度标的：** {names}（建议轻仓或观望）")
     if hit_rate is not None:
         lines.append(f"- **历史校准命中率：** {float(hit_rate):.0%}（滚动更新）")
-    lines.append(
-        f"- **本周覆盖：** 大盘 1 项 · 板块 {sector_count} 项 · 持仓 {sym_count} 项（均为数值区间）"
-    )
-    notes = forecast.get("notes") or []
-    if notes:
-        lines.append(f"- **数据说明：** {'；'.join(str(n) for n in notes[:2])}")
-    narrative = forecast.get("llm_narrative") or {}
-    summary = str(narrative.get("summary") or "").strip()
-    if summary and not contains_vague_language(summary):
-        lines.append(f"- **规则解读摘要：** {summary[:120]}")
+    scope = structured.get("content_scope") or {}
+    lines.append(f"- **下周聚焦：** 持仓 {sym_count} 只 · 相关板块 {sector_count} 个（已剔除无关热点）")
+    extra = scope.get("extra_reading") or []
+    if extra:
+        lines.append(f"- **延伸阅读：** {' · '.join(extra)}")
+    lines.append(f"- **本周详情：** {scope.get('weekly_report_link') or '详见本周周报'}")
     lines.append(
         "- **局限性：** 预测基于 MSS/Kronos/历史波动外推，不含未披露信息与黑天鹅；"
-        "区间外结果按操作预案执行，不以单次偏差否定框架"
+        "区间外结果按操作预案执行"
     )
     prob_note = structured.get("probability_note")
     if prob_note:
