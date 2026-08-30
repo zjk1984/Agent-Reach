@@ -10,6 +10,14 @@ from typing import Any, Optional
 from agent_reach.daily_run.snapshot_builder import _normalize_code
 from agent_reach.daily_run.trade_calendar import today_shanghai
 from agent_reach.daily_run.week_forecast import load_forecast, next_trading_week_range
+from agent_reach.daily_run.forecast_quality import (
+    audit_forecast_cross_check,
+    confidence_tier_detail,
+    enrich_market_prediction,
+    enrich_symbol_prediction,
+    load_cross_reference_data,
+    position_hint_for_confidence,
+)
 
 _VAGUE_PATTERN = re.compile(
     r"(有望|可能|关注|谨慎|或许|大概|或|视情况|待定|择机|适度|灵活|偏|略|待观察)"
@@ -166,20 +174,39 @@ def build_structured_predictions(
     portfolio: Optional[dict[str, Any]] = None,
     settings: Optional[dict[str, Any]] = None,
     digest: Optional[dict[str, Any]] = None,
+    snapshot: Optional[dict[str, Any]] = None,
+    enriched: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     calibration = forecast.get("calibration_used") or {}
-    market = build_market_prediction(
+    snap = snapshot or forecast.get("_snapshot") or {}
+    market_raw = build_market_prediction(
+        mss_daily=forecast.get("mss_daily") or {},
+        calibration=calibration,
+        settings=settings,
+    )
+    market = enrich_market_prediction(
+        market_raw,
+        snapshot=snap,
         mss_daily=forecast.get("mss_daily") or {},
         calibration=calibration,
         settings=settings,
     )
     symbols: list[dict[str, Any]] = []
+    kronos_paths = forecast.get("kronos_paths") or {}
+    enriched_map = enriched or {}
     for code, sym in (forecast.get("symbols") or {}).items():
         if sym.get("role") != "holding":
             continue
         row = aggregate_symbol_week_prediction({**sym, "code": code})
         if row:
-            symbols.append(row)
+            symbols.append(
+                enrich_symbol_prediction(
+                    row,
+                    sym=sym,
+                    enriched=enriched_map.get(_normalize_code(code)) or enriched_map.get(code),
+                    kronos=kronos_paths.get(code) or sym.get("kronos"),
+                )
+            )
     pf = portfolio or {}
     if not symbols:
         for h in pf.get("holdings") or []:
@@ -188,17 +215,31 @@ def build_structured_predictions(
             if sym:
                 row = aggregate_symbol_week_prediction({**sym, "code": code})
                 if row:
-                    symbols.append(row)
+                    symbols.append(
+                        enrich_symbol_prediction(
+                            row,
+                            sym=sym,
+                            enriched=enriched_map.get(code),
+                            kronos=kronos_paths.get(code) or sym.get("kronos"),
+                        )
+                    )
     sectors = build_sector_predictions(
         digest=digest,
-        snapshot=forecast.get("_snapshot"),
+        snapshot=snap,
         market_mid=float(market.get("change_pct_mid") or 0),
+    )
+    cross_ref = load_cross_reference_data(portfolio=pf, settings=settings)
+    audit = audit_forecast_cross_check(
+        {"market": market, "symbols": symbols, "sectors": sectors},
+        cross_ref,
     )
     return {
         "market": market,
         "sectors": sectors,
         "symbols": symbols,
         "generated_for_week": forecast.get("week_start"),
+        "cross_reference": cross_ref,
+        "cross_check": audit,
     }
 
 
@@ -229,6 +270,8 @@ def build_tied_operation_plans(
             continue
         pred = sym_preds.get(code) or {}
         cur = _weight_pct(h, total) or 0.0
+        conf = _optional_float(pred.get("confidence_pct")) or 60.0
+        pos_hint = str(pred.get("position_hint") or position_hint_for_confidence(conf))
         low = _optional_float(pred.get("price_low"))
         mid = _optional_float(pred.get("price_mid"))
         high = _optional_float(pred.get("price_high"))
@@ -236,12 +279,18 @@ def build_tied_operation_plans(
         if mid and low and high:
             add_px = round(mid * 0.95, 0)
             stop_px = round(low * 0.98, 0)
-            add_w = min(cur + 10, 25)
-            stop_w = max(int(cur * 0.5), 10)
+            if conf >= 80:
+                add_w = min(cur + 10, 25)
+                stop_w = max(int(cur * 0.5), 10)
+            elif conf >= 60:
+                add_w = min(cur + 5, 20)
+                stop_w = max(int(cur * 0.6), 10)
+            else:
+                add_w = min(cur + 3, 15)
+                stop_w = max(int(cur * 0.4), 5)
             action = (
-                f"回调至{add_px:.0f}元加仓至{add_w:.0f}%；"
-                f"突破{high:.0f}元持有；"
-                f"跌破{stop_px:.0f}元止损至{stop_w:.0f}%"
+                f"【{pos_hint}】回调至{add_px:.0f}元加仓至{add_w:.0f}%；"
+                f"突破{high:.0f}元持有；跌破{stop_px:.0f}元止损至{stop_w:.0f}%"
             )
             pred_text = pred.get("text") or f"区间 {low:.0f}-{high:.0f} 元，中枢 {mid:.0f}"
         else:
@@ -257,6 +306,8 @@ def build_tied_operation_plans(
                 "prediction_text": pred_text,
                 "operation_plan": sanitize_prediction_text(action),
                 "current_weight_pct": cur,
+                "confidence_pct": conf,
+                "position_hint": pos_hint,
             }
         )
     return plans[:10]
@@ -557,13 +608,25 @@ def attach_structured_forecast(
 ) -> dict[str, Any]:
     """Populate structured_predictions, operation_plans, prior_week_verification on forecast dict."""
     data = dict(forecast)
+    snap = data.get("_snapshot") or {}
+    enriched_map: dict[str, Any] = {}
+    if snap:
+        try:
+            from agent_reach.daily_run.symbols import build_enriched_symbols
+
+            enriched_map = build_enriched_symbols(snap)
+        except Exception:
+            enriched_map = {}
     structured = build_structured_predictions(
         data,
         portfolio=portfolio,
         settings=settings,
         digest=digest,
+        snapshot=snap,
+        enriched=enriched_map,
     )
     data["structured_predictions"] = structured
+    data["forecast_quality_audit"] = structured.get("cross_check") or {}
     data["operation_plans"] = build_tied_operation_plans(
         structured,
         portfolio=portfolio,
@@ -648,6 +711,11 @@ def render_market_sector_markdown(structured: dict[str, Any]) -> str:
     market = structured.get("market") or {}
     if market.get("text"):
         lines.append(f"- {market['text']}")
+    if market.get("width_warning"):
+        lines.append(f"  - ⚠️ {market['width_warning']}")
+    cross = structured.get("cross_check") or {}
+    if cross.get("cutoff_label"):
+        lines.append(f"- **数据截止：** {cross['cutoff_label']}（与收盘卡片/周报交叉核对）")
     sectors = structured.get("sectors") or []
     if sectors:
         lines.append("")
@@ -674,17 +742,41 @@ def render_holdings_plans_markdown(
         return "\n".join(lines).strip()
     lines.extend(
         [
-            "| 股票 | 下周预测区间 | 操作预案 |",
-            "|------|-------------|----------|",
+            "| 股票 | 下周预测（含置信度/依据） | 操作预案 |",
+            "|------|-------------------------|----------|",
         ]
     )
     for row in operation_plans:
         pred = str(row.get("prediction_text") or "—")
-        if len(pred) > 42:
-            pred = pred[:39] + "…"
+        if len(pred) > 80:
+            pred = pred[:77] + "…"
         lines.append(
             f"| {row.get('name')} | {pred} | {row.get('operation_plan')} |"
         )
+    cross = structured.get("cross_check") or {}
+    if cross.get("rows"):
+        lines.extend(["", "**基准价交叉核对：**", ""])
+        lines.extend(
+            [
+                "| 标的 | 预测基准价 | 收盘卡片 | 来源 | 一致 |",
+                "|------|------------|----------|------|:----:|",
+            ]
+        )
+        for row in cross["rows"][:6]:
+            mark = "✅" if row.get("match") else "❌"
+            adj = row.get("adjusted_note") or ""
+            ref = row.get("reference_price")
+            ref_s = f"{ref}{(' ' + adj) if adj else ''}"
+            lines.append(
+                f"| {row.get('name')} | {row.get('forecast_price')} | {ref_s} | "
+                f"{row.get('reference_source')} | {mark} |"
+            )
+        if cross.get("cutoff_label"):
+            lines.append(f"\n_数据截止：{cross['cutoff_label']}_")
+    if cross.get("issues"):
+        lines.extend(["", "**数据核对异常（推送前校验）：**"])
+        for issue in cross["issues"][:4]:
+            lines.append(f"- ⚠️ {issue}")
     return "\n".join(lines).strip()
 
 
@@ -727,6 +819,20 @@ def render_confidence_limitations_markdown(
     sym_count = len(structured.get("symbols") or [])
     sector_count = len(structured.get("sectors") or [])
     lines = ["## 🎯 预测置信度与局限性说明", ""]
+    market = structured.get("market") or {}
+    mconf = market.get("confidence_pct")
+    if mconf is not None:
+        lines.append(
+            f"- **大盘置信度：** {confidence_tier_detail(float(mconf))} · "
+            f"操作建议：{position_hint_for_confidence(float(mconf))}"
+        )
+    low_conf = [
+        s for s in structured.get("symbols") or []
+        if _optional_float(s.get("confidence_pct")) is not None and float(s["confidence_pct"]) < 60
+    ]
+    if low_conf:
+        names = "、".join(str(s.get("name")) for s in low_conf[:4])
+        lines.append(f"- **低置信度标的：** {names}（建议轻仓或观望）")
     if hit_rate is not None:
         lines.append(f"- **历史校准命中率：** {float(hit_rate):.0%}（滚动更新）")
     lines.append(
