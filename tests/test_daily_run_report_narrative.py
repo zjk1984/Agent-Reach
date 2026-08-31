@@ -413,6 +413,17 @@ def test_merged_morning_narrative_deterministic():
     assert "2只" in narrative["summary"] or "2只" in " ".join(narrative.get("focus_points") or [])
 
 
+def test_merged_morning_narrative_accepts_snapshot_in_entries():
+    from agent_reach.daily_run.report_narrative import build_merged_morning_context
+
+    entries = [
+        ("澜起科技", "688008", {"verdict": "观察", "mss_final": 42.5}, {"portfolio": {}}),
+    ]
+    ctx = build_merged_morning_context(entries, primary_snapshot={"portfolio": {"cash_ratio": 0.5}})
+    assert ctx["symbol_count"] == 1
+    assert ctx["symbols"][0]["code"] == "688008"
+
+
 def test_merged_close_narrative_uses_portfolio_pnl():
     from agent_reach.daily_run.report_narrative import generate_merged_close_narrative
 

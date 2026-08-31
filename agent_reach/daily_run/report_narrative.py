@@ -799,12 +799,13 @@ def merge_narrative_single_call(settings: Optional[dict[str, Any]]) -> bool:
 
 
 def build_merged_morning_context(
-    entries: list[tuple[str, str, dict[str, Any]]],
+    entries: list[tuple],
     *,
     primary_snapshot: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     symbols: list[dict[str, Any]] = []
-    for name, code, report in entries:
+    for entry in entries:
+        name, code, report = entry[0], entry[1], entry[2]
         symbols.append(
             {
                 "name": name,
@@ -882,7 +883,7 @@ def _merged_morning_deterministic(ctx: dict[str, Any]) -> dict[str, Any]:
 
 
 def generate_merged_morning_narrative(
-    entries: list[tuple[str, str, dict[str, Any]]],
+    entries: list[tuple],
     *,
     primary_snapshot: Optional[dict[str, Any]] = None,
     settings: Optional[dict[str, Any]] = None,
