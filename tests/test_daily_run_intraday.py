@@ -418,6 +418,29 @@ class TestIntradayWorkflow:
         assert not any("早盘全持仓" in body for _, body in sends)
         assert result.get("narrative_feishu") is None
 
+    def test_run_intraday_emits_audit_summary_when_trade_skipped(
+        self, intraday_snapshot, tmp_path, monkeypatch
+    ):
+        state_path = tmp_path / "intraday.json"
+        reset_state(state_path)
+        monkeypatch.setattr("agent_reach.daily_run.intraday.is_continuous_session", lambda dt=None: False)
+        result = run_intraday(
+            intraday_snapshot,
+            settings=load_settings(),
+            push=False,
+            trade=False,
+            state_path=state_path,
+        )
+        assert "audit_summary" in result["steps"]
+        assert "trade" not in result["steps"]
+        trade = result.get("trade") or {}
+        assert trade.get("audit_only") is True
+        assert "审核摘要" in (trade.get("markdown") or "")
+        assert "本轮未写入调仓序列" in (trade.get("markdown") or "")
+        assert "连续竞价" in (trade.get("skip_reason") or "")
+        scan_md = (result.get("scan") or {}).get("markdown") or ""
+        assert "未调仓评估" not in scan_md
+
 
 class TestConsecutiveBuyCashBypass:
     def test_consecutive_buy_recommendations(self):

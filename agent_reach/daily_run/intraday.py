@@ -792,6 +792,54 @@ def evaluate_trade(
     }
 
 
+def build_intraday_trade_audit_summary(
+    enriched: dict[str, Any],
+    evaluation: dict[str, Any],
+    state: IntradayState,
+    *,
+    settings: Optional[dict[str, Any]] = None,
+    skip_reason: Optional[str] = None,
+    expected_return_pct: Optional[float] = None,
+) -> dict[str, Any]:
+    """Dry-run trade decision for every scan; does not persist T_n or apply portfolio."""
+    cfg = effective_settings(settings)
+    from agent_reach.daily_run.intraday_rebound import apply_intraday_rebound_overlay
+
+    cfg = apply_intraday_rebound_overlay(cfg, state.scans)
+    report = evaluation["report"]
+    verdict = evaluation["verdict"]
+    lookback_mss, lookback_detail = compute_lookback_mss(state.scans, cfg)
+    trend = detect_mss_trend(state.scans, cfg)
+    decision = _decide_trade(
+        lookback_mss=lookback_mss,
+        trend=trend,
+        verdict=verdict,
+        report=report,
+        snapshot=enriched,
+        settings=cfg,
+        trade_index=len(state.trades) + 1,
+        expected_return_pct=expected_return_pct,
+        prior_trades=state.trades,
+        session_scans=state.scans,
+    )
+    markdown = render_intraday_trade_markdown(
+        decision,
+        lookback_detail,
+        report,
+        state.scans,
+        settings=cfg,
+        enriched=enriched,
+        audit_only=True,
+        skip_reason=skip_reason,
+    )
+    return {
+        "decision": decision.to_dict(),
+        "markdown": markdown,
+        "audit_only": True,
+        "skip_reason": skip_reason,
+    }
+
+
 def run_intraday(
     snapshot: dict[str, Any],
     *,
@@ -838,12 +886,12 @@ def run_intraday(
 
     cfg = apply_intraday_rebound_overlay(cfg, st_after_scan.scans)
     do_trade = trade or should_evaluate_trade(st_after_scan, cfg, state_path=state_path)
+    skip_reason: Optional[str] = None
     if not do_trade:
         skip_reason = explain_trade_skip_reason(st_after_scan, cfg, state_path=state_path)
-        scan_result["markdown"] = append_trade_skip_note(scan_result.get("markdown") or "", skip_reason)
         scan_result["trade_skip_reason"] = skip_reason
 
-    trade_result = None
+    trade_result: Optional[dict[str, Any]] = None
     if do_trade and not trade:
         steps.append("trade_auto")
 
@@ -862,6 +910,18 @@ def run_intraday(
         steps.append("trade")
         if trade_result.get("portfolio_apply", {}).get("applied"):
             steps.append("portfolio_apply")
+    else:
+        evaluation = scan_result.get("evaluation")
+        if evaluation:
+            trade_result = build_intraday_trade_audit_summary(
+                scan_result.get("enriched") or snapshot,
+                evaluation,
+                st_after_scan,
+                settings=cfg,
+                skip_reason=skip_reason,
+                expected_return_pct=expected_return_pct,
+            )
+            steps.append("audit_summary")
 
     feishu_result = None
     narrative_feishu = None
@@ -1061,14 +1121,23 @@ def render_intraday_trade_markdown(
     *,
     settings: Optional[dict[str, Any]] = None,
     enriched: Optional[dict[str, Any]] = None,
+    audit_only: bool = False,
+    skip_reason: Optional[str] = None,
 ) -> str:
     action_map = {"buy": "买入", "sell": "卖出", "hold": "观望", "skip": "跳过"}
+    action_label = action_map.get(decision.action, decision.action)
+    if audit_only:
+        title = f"**审核摘要 · {action_label}**"
+    else:
+        title = f"**{decision.trade_id or '调仓评估'} · {action_label}**"
     lines = [
-        f"**{decision.trade_id or '调仓评估'} · {action_map.get(decision.action, decision.action)}**",
+        title,
         "",
         f"**Lookback MSS：** {decision.lookback_mss} 分 · **趋势：** {decision.trend}",
         f"**决策：** {decision.reasoning}",
     ]
+    if audit_only and skip_reason:
+        lines.append(f"ℹ️ **说明：** 本轮未写入调仓序列 — {skip_reason}")
     if decision.friction_blocked:
         lines.append("⚠️ **摩擦惩罚阻断：** 预期收益不足以覆盖佣金与滑点")
     block_message = format_trade_block_message(decision)
