@@ -214,7 +214,7 @@ def intraday_to_harness_evidence(
                 settings=settings,
             )
             evals = evaluate_active_scenarios(snapshot, settings=settings)
-            lines = technical_scenario_harness_evidence(evals)
+            lines = technical_scenario_harness_evidence(evals, settings=settings)
             memory.extend(lines.get("memory") or [])
             policy.extend(lines.get("policy") or [])
             playbook.extend(lines.get("playbook") or [])
@@ -272,7 +272,7 @@ def intraday_to_harness_evidence(
                     settings=settings,
                 )
             evals = evaluate_active_scenarios(snapshot, settings=settings)
-            lines = technical_scenario_harness_evidence(evals)
+            lines = technical_scenario_harness_evidence(evals, settings=settings)
             memory.extend(lines.get("memory") or [])
             policy.extend(lines.get("policy") or [])
             playbook.extend(lines.get("playbook") or [])

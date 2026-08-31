@@ -1499,6 +1499,7 @@ def _persist_scenario_status(
 def technical_scenario_harness_evidence(
     evaluations: list[dict[str, Any]],
     *,
+    settings: Optional[dict[str, Any]] = None,
     path: Optional[Path] = None,
 ) -> dict[str, list[str]]:
     memory: list[str] = []

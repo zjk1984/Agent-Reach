@@ -261,6 +261,30 @@ def test_evaluate_shrink_pullback_support_holding(scenario_path):
     assert "210" in result["headline"]
 
 
+def test_harness_evidence_support_holding_uses_settings(scenario_path):
+    scenario = register_limit_up_shrink_pullback_scenario(
+        code="688008",
+        name="澜起科技",
+        setup_date="2026-08-28",
+        prior_close=221.22,
+        session_close=213.0,
+        session_low=213.0,
+        session_high=221.49,
+        support_level=210.0,
+        path=scenario_path,
+    )
+    result = evaluate_scenario(scenario, price=211.0, change_pct=-0.5, volume_ratio=0.7)
+    assert result["status"] == "support_holding"
+    lines = technical_scenario_harness_evidence(
+        [result],
+        settings={"technical_watch": {}},
+        path=scenario_path,
+    )
+    assert lines["playbook"]
+    assert lines["plan"]
+    assert "210" in lines["plan"][0]
+
+
 def test_evaluate_shrink_pullback_adjustment_open(scenario_path):
     scenario = register_limit_up_shrink_pullback_scenario(
         code="688008",
