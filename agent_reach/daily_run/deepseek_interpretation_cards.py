@@ -20,6 +20,7 @@ DEEPSEEK_NARRATIVE_RULE = (
 
 _CATEGORY = "deepseek_interpretation"
 _INTRADAY_JOBS = frozenset({"intraday"})
+_LLM_BODY_KEYS = ("focus_points", "divergence_notes", "risk_alerts", "trade_operations")
 
 
 def interpretation_card_enabled(settings: Optional[dict[str, Any]] = None) -> bool:
@@ -35,6 +36,20 @@ def interpretation_card_label(narrative: Optional[dict[str, Any]]) -> str:
     return "📋 规则解读"
 
 
+def _render_llm_interpretation_body(narrative: dict[str, Any]) -> str:
+    """DeepSeek card: summary + LLM bullet fields only (no harness/meta sections)."""
+    lines: list[str] = []
+    summary = str(narrative.get("summary") or "").strip()
+    if summary:
+        lines.append(summary)
+    for key in _LLM_BODY_KEYS:
+        for item in narrative.get(key) or []:
+            text = str(item).strip()
+            if text:
+                lines.append(f"- {text}")
+    return "\n".join(lines).strip()
+
+
 def render_deepseek_interpretation_markdown(
     narrative: Optional[dict[str, Any]],
     *,
@@ -48,24 +63,12 @@ def render_deepseek_interpretation_markdown(
         return ""
     if not narrative or narrative.get("skipped"):
         return ""
+    planner = str(narrative.get("planner") or "deterministic")
+    if planner == "llm":
+        return _render_llm_interpretation_body(narrative)
     from agent_reach.daily_run.report_narrative import render_narrative_markdown
 
-    body = render_narrative_markdown(narrative, job=job).strip()
-    if not body:
-        return ""
-    planner = str(narrative.get("planner") or "deterministic")
-    if planner != "llm":
-        return body
-    lines = body.splitlines()
-    if lines and lines[0].startswith("##"):
-        lines[0] = "## 🤖 DeepSeek 解读"
-    return "\n".join(
-        [
-            f"_{DEEPSEEK_USAGE_PRINCIPLE}_",
-            "",
-            *lines,
-        ]
-    ).strip()
+    return render_narrative_markdown(narrative, job=job).strip()
 
 
 def append_interpretation_report_section(

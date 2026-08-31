@@ -15,11 +15,14 @@ def test_interpretation_card_enabled_default():
     assert interpretation_card_enabled({"report": {"deepseek_interpretation_card": {"enabled": False}}}) is False
 
 
-def test_render_markdown_llm_includes_principle():
+def test_render_markdown_llm_only_interpretation_body():
     narrative = {
         "planner": "llm",
         "summary": "测试摘要",
         "focus_points": ["要点A"],
+        "risk_alerts": ["风险B"],
+        "harness_tuning": {"summary": "不应出现"},
+        "context_trace": ["不应出现"],
         "job": "morning",
     }
     md = render_deepseek_interpretation_markdown(
@@ -27,9 +30,11 @@ def test_render_markdown_llm_includes_principle():
         job="morning",
         settings={"report": {"deepseek_interpretation_card": {"enabled": True}}},
     )
-    assert DEEPSEEK_USAGE_PRINCIPLE in md
-    assert "DeepSeek 解读" in md
-    assert "测试摘要" in md
+    assert md == "测试摘要\n- 要点A\n- 风险B"
+    assert DEEPSEEK_USAGE_PRINCIPLE not in md
+    assert "Harness" not in md
+    assert "规则解读" not in md
+    assert "DeepSeek 解读" not in md
 
 
 def test_render_markdown_skips_intraday():
