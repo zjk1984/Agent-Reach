@@ -126,13 +126,20 @@ def _session_price_stats(
     holding: dict[str, Any],
     snapshot: dict[str, Any],
     am_scans: list[dict[str, Any]],
+    *,
+    code: Optional[str] = None,
 ) -> dict[str, Optional[float]]:
+    sym = _normalize_code(str(code or holding.get("code") or snapshot.get("code") or ""))
     prices: list[float] = []
     for key in ("open", "price", "high", "low"):
         val = _optional_float(holding.get(key) if key in holding else snapshot.get(key))
         if val is not None and val > 0:
             prices.append(val)
     for scan in am_scans:
+        if sym:
+            scan_code = _normalize_code(str(scan.get("code") or ""))
+            if scan_code and scan_code != sym:
+                continue
         px = _optional_float(scan.get("price"))
         if px is not None and px > 0:
             prices.append(px)
@@ -585,7 +592,7 @@ def build_midday_plan_rows(
         morning_plan = _morning_plan_text(action)
         holding = _holding_for_code(enriched, code)
         snapshot = _snapshot_fields(enriched, code)
-        stats = _session_price_stats(holding, snapshot, am_scans)
+        stats = _session_price_stats(holding, snapshot, am_scans, code=code)
         change_pct = _change_pct(holding, snapshot)
         volume_ratio = _optional_float(holding.get("volume_ratio") or snapshot.get("volume_ratio"))
         target_weight = _optional_float(action.get("target_weight_pct"))
@@ -756,6 +763,7 @@ def build_midday_card_context(
         plan_rows=plan_rows,
         enriched=enriched,
         am_scans=am_scans,
+        state=state,
     )
     timeline_nodes = build_afternoon_timeline_nodes(
         enriched=enriched,

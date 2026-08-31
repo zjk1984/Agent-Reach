@@ -480,15 +480,90 @@ def enrich_plan_row_signals(row: dict[str, Any]) -> dict[str, Any]:
     return row
 
 
+def _snapshot_fields_for_code(enriched: dict[str, Any], code: str) -> dict[str, Any]:
+    if _normalize_code(str(enriched.get("code") or "")) == code:
+        return dict(enriched)
+    return {}
+
+
+def _scan_matches_code(scan: dict[str, Any], code: str) -> bool:
+    scan_code = _normalize_code(str(scan.get("code") or ""))
+    return not scan_code or scan_code == code
+
+
+def _resolve_am_scans_for_code(
+    code: str,
+    *,
+    state: Optional[dict[str, Any]],
+    fallback: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    from agent_reach.daily_run.midday_cards import _am_scans
+
+    filtered = [s for s in fallback if _scan_matches_code(s, code)]
+    if state is None:
+        return filtered
+    try:
+        from agent_reach.daily_run.intraday import default_state_path, load_state
+
+        sym_state = load_state(default_state_path(code), code=code).to_dict()
+        sym_scans = _am_scans(sym_state)
+        if sym_scans:
+            return sym_scans
+    except Exception:
+        pass
+    return filtered
+
+
+def _holding_prev_close(
+    holding: dict[str, Any],
+    enriched: dict[str, Any],
+    *,
+    code: str,
+) -> Optional[float]:
+    prev = _optional_float(
+        holding.get("prev_close") or holding.get("pre_close") or holding.get("reference_price")
+    )
+    if prev is not None:
+        return prev
+    from agent_reach.daily_run.morning_signals import _prev_close_value
+
+    return _prev_close_value(holding, _snapshot_fields_for_code(enriched, code))
+
+
+def _holding_am_price_stats(
+    holding: dict[str, Any],
+    enriched: dict[str, Any],
+    am_scans: list[dict[str, Any]],
+    *,
+    code: str,
+) -> dict[str, Optional[float]]:
+    snapshot = _snapshot_fields_for_code(enriched, code)
+    prices: list[float] = []
+    for key in ("open", "price", "high", "low"):
+        val = _optional_float(holding.get(key) if key in holding else snapshot.get(key))
+        if val is not None and val > 0:
+            prices.append(val)
+    for scan in am_scans:
+        if not _scan_matches_code(scan, code):
+            continue
+        px = _optional_float(scan.get("price"))
+        if px is not None and px > 0:
+            prices.append(px)
+    open_px = _optional_float(holding.get("open") or snapshot.get("open"))
+    price = _optional_float(holding.get("price") or snapshot.get("price"))
+    high = max(prices) if prices else None
+    low = min(prices) if prices else None
+    return {"open": open_px, "price": price, "high": high, "low": low}
+
+
 def build_holdings_am_brief_rows(
     *,
     portfolio: dict[str, Any],
     plan_rows: list[dict[str, Any]],
     enriched: dict[str, Any],
     am_scans: list[dict[str, Any]],
+    state: Optional[dict[str, Any]] = None,
 ) -> list[dict[str, Any]]:
-    from agent_reach.daily_run.morning_signals import _prev_close_value
-
     by_code = {_normalize_code(str(r.get("code") or "")): r for r in plan_rows if r.get("code")}
     rows: list[dict[str, Any]] = []
     for holding in portfolio.get("holdings") or []:
@@ -498,17 +573,17 @@ def build_holdings_am_brief_rows(
         if not code:
             continue
         name = str(holding.get("name") or code)
-        prev = _prev_close_value(holding, enriched)
-        price = _optional_float(holding.get("price"))
-        high = _optional_float(holding.get("high"))
-        low = _optional_float(holding.get("low"))
-        for scan in am_scans:
-            px = _optional_float(scan.get("price"))
-            if px is not None and px > 0:
-                high = max(filter(None, [high, px]), default=high)
-                low = min(filter(None, [low, px]), default=low)
+        code_scans = _resolve_am_scans_for_code(code, state=state, fallback=am_scans)
+        stats = _holding_am_price_stats(holding, enriched, code_scans, code=code)
+        prev = _holding_prev_close(holding, enriched, code=code)
+        price = stats.get("price")
+        high = stats.get("high")
+        low = stats.get("low")
         change_pct = _holding_change_pct(holding)
-        vol = _optional_float(holding.get("volume_ratio") or enriched.get("volume_ratio"))
+        if change_pct is None and prev is not None and price is not None and prev > 0:
+            change_pct = round((price - prev) / prev * 100.0, 2)
+        snapshot = _snapshot_fields_for_code(enriched, code)
+        vol = _optional_float(holding.get("volume_ratio") or snapshot.get("volume_ratio"))
         plan = by_code.get(code) or {}
         rows.append(
             {
@@ -915,7 +990,16 @@ def build_t0_opportunity_lines(
         candidates.append((score, text))
 
     candidates.sort(key=lambda item: item[0], reverse=True)
-    return [text for _, text in candidates[:limit]]
+    lines: list[str] = []
+    seen: set[str] = set()
+    for _, text in candidates:
+        if text in seen:
+            continue
+        seen.add(text)
+        lines.append(text)
+        if len(lines) >= limit:
+            break
+    return lines
 
 
 def build_afternoon_timeline_nodes(
