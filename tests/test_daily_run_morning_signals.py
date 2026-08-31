@@ -115,8 +115,53 @@ class TestMorningSignals:
         assert "**今日操作清单**" in md
         assert "| 股票 | 操作 | 触发条件 | 目标仓位 |" in md
         assert "中际旭创" in md
+        by_name = {row["name"]: row for row in rows}
+        assert by_name["中际旭创"]["trigger"] != "—"
+        assert "120" in by_name["中际旭创"]["trigger"] or "130" in by_name["中际旭创"]["trigger"]
         assert "**今日时间节点**" in md
         assert "09:30" in md
+        assert "定方向" in md
+
+    def test_action_checklist_uses_close_handoff_trigger(self):
+        ctx = _ctx(
+            close_handoff={
+                "tomorrow_focus": [
+                    {
+                        "code": "688008",
+                        "name": "澜起科技",
+                        "text": "触发做多：在 210 元附近缩量企稳",
+                    }
+                ]
+            },
+            symbol_rows=[
+                MorningSymbolRow(
+                    code="688008",
+                    name="澜起科技",
+                    holding={
+                        "code": "688008",
+                        "name": "澜起科技",
+                        "shares": 100,
+                        "price": 205.0,
+                    },
+                    report={"verdict": "观察", "mss_final": 50.0},
+                    snapshot={},
+                )
+            ],
+            portfolio={
+                "total": 100000.0,
+                "cash": 80000.0,
+                "holdings": [
+                    {
+                        "code": "688008",
+                        "name": "澜起科技",
+                        "shares": 100,
+                        "price": 205.0,
+                    }
+                ],
+            },
+        )
+        rows = build_action_checklist_rows(ctx)
+        assert rows[0]["trigger"] == "触发做多：在 210 元附近缩量企稳"
 
     def test_holdings_snapshot_table_format(self):
         md = render_holdings_snapshot_table_markdown(_ctx())

@@ -10,11 +10,11 @@ from agent_reach.daily_run.morning_content_scope import infer_impact_label, sele
 from agent_reach.daily_run.snapshot_builder import _normalize_code
 
 _SESSION_NODES: tuple[tuple[str, str, str], ...] = (
-    ("09:30", "开盘", "—"),
-    ("11:30", "午间休市", "—"),
-    ("13:00", "午后开盘", "—"),
-    ("14:57", "尾盘集合竞价", "—"),
-    ("15:00", "收盘", "—"),
+    ("09:30", "开盘", "定方向/量能"),
+    ("11:30", "午间休市", "上午走势定调"),
+    ("13:00", "午后开盘", "续势或反转"),
+    ("14:57", "尾盘集合竞价", "收盘价博弈"),
+    ("15:00", "收盘", "当日结果锁定"),
 )
 
 _MACRO_EVENT_PATTERNS: tuple[tuple[str, str, str], ...] = (
@@ -58,6 +58,52 @@ def _target_position_label(current_pct: float, target_pct: float) -> str:
     return f"{current_pct:.0f}% → {target_pct:.0f}%"
 
 
+def _close_handoff_trigger(code: str, ctx: Any) -> str:
+    handoff = getattr(ctx, "close_handoff", None) or {}
+    code_norm = _normalize_code(code)
+    for item in handoff.get("tomorrow_focus") or []:
+        if not isinstance(item, dict):
+            continue
+        item_code = _normalize_code(str(item.get("code") or ""))
+        if not item_code or item_code != code_norm:
+            continue
+        text = str(item.get("text") or "").strip()
+        if text:
+            return text[:48]
+    for item in handoff.get("watch_risks") or []:
+        if not isinstance(item, dict):
+            continue
+        item_code = _normalize_code(str(item.get("code") or ""))
+        if not item_code or item_code != code_norm:
+            continue
+        text = str(item.get("text") or "").strip()
+        if text:
+            return f"风险：{text[:40]}"
+    return ""
+
+
+def _monitor_trigger(
+    *,
+    holding: dict[str, Any],
+    snapshot: dict[str, Any],
+    report: dict[str, Any],
+) -> str:
+    parts: list[str] = []
+    stop = _optional_float(report.get("stop_loss_price"))
+    entry = _optional_float(report.get("entry_price"))
+    ma20 = _optional_float(holding.get("ma20") or snapshot.get("ma20"))
+    if stop is not None:
+        parts.append(f"止损 ≤ {stop:.2f} 元")
+    if entry is not None:
+        parts.append(f"突破 {entry:.2f} 元")
+    if ma20 is not None:
+        parts.append(f"MA20 {ma20:.2f} 元")
+    invalidation = str(report.get("invalidation") or "").strip()
+    if invalidation and len(parts) < 2:
+        parts.append(invalidation[:32])
+    return " · ".join(parts[:2]) if parts else ""
+
+
 def _trigger_condition(
     *,
     operation: str,
@@ -65,10 +111,21 @@ def _trigger_condition(
     snapshot: dict[str, Any],
     report: dict[str, Any],
     suspended: bool,
+    ctx: Any = None,
+    code: str = "",
 ) -> str:
     if suspended:
         return "停牌"
     if operation in ("观望", "持有"):
+        handoff_trig = _close_handoff_trigger(code, ctx) if ctx is not None else ""
+        if handoff_trig:
+            return handoff_trig
+        monitor = _monitor_trigger(holding=holding, snapshot=snapshot, report=report)
+        if monitor:
+            return monitor
+        mss = _optional_float(report.get("mss_final"))
+        if mss is not None:
+            return f"MSS {mss:.0f} 临界，突破/跌破跟进"
         return "—"
 
     stop = _optional_float(report.get("stop_loss_price"))
@@ -137,6 +194,8 @@ def build_action_checklist_rows(ctx: Any) -> list[dict[str, str]]:
                     snapshot=snap,
                     report=report,
                     suspended=suspended,
+                    ctx=ctx,
+                    code=sym.code,
                 ),
                 "target_position": _target_position_label(current, target),
                 "current_weight_pct": round(current, 1),
