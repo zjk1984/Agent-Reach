@@ -56,14 +56,13 @@ class CloseCardContext:
 
 
 def _fmt_pct(value: Any) -> str:
+    """Format a value already in percent points (e.g. -0.43 → -0.43%)."""
     if value is None:
         return "—"
     try:
         pct = float(value)
     except (TypeError, ValueError):
         return "—"
-    if abs(pct) <= 1.5 and abs(pct) != 0:
-        pct *= 100.0
     return f"{pct:+.2f}%"
 
 
@@ -92,10 +91,9 @@ def _benchmark_vs_portfolio(
     if port_pct is None or idx_pct is None:
         return ""
     port = float(port_pct)
-    if abs(port) <= 1.5:
-        port *= 100.0
-    alpha = port - idx_pct
-    return f"组合 **{_fmt_pct(port)}** vs {idx_name} **{_fmt_pct(idx_pct)}**（超额 **{alpha:+.2f}%**）"
+    idx = float(idx_pct)
+    alpha = port - idx
+    return f"组合 **{_fmt_pct(port)}** vs {idx_name} **{_fmt_pct(idx)}**（超额 **{alpha:+.2f}%**）"
 
 
 def _risk_summary(

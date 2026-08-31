@@ -156,8 +156,24 @@ class TestCloseCardLayout:
         )
         md = render_close_summary_markdown(ctx)
         assert "当日盈亏" in md
+        assert "+¥1,250（+1.20%）" in md
+        assert "组合 **+1.20%** vs 沪深300 **+0.40%**（超额 **+0.80%**）" in md
         assert "澜起科技" in md
         assert "风控" in md
+
+    def test_summary_pnl_pct_not_double_scaled(self):
+        ctx = CloseCardContext(
+            portfolio_summary={
+                "daily_pnl": -457.0,
+                "daily_pnl_pct": -0.43,
+            },
+            market_review={"indices": {"000300": {"name": "沪深300", "change_pct": 0.35}}},
+        )
+        md = render_close_summary_markdown(ctx)
+        assert "¥-457（-0.43%）" in md
+        assert "组合 **-0.43%** vs 沪深300 **+0.35%**（超额 **-0.78%**）" in md
+        assert "-43.00%" not in md
+        assert "+35.00%" not in md
 
     def test_holdings_detail_table(self):
         ctx = CloseCardContext(portfolio_summary=PORTFOLIO_SUMMARY, symbol_rows=SYMBOL_ROWS)
