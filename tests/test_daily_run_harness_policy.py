@@ -1351,6 +1351,71 @@ class TestHarnessRuntimeExtensions:
         assert deep_loss_policy_base(settings, "realized_loss_threshold") == 500
         assert deep_loss_policy_base(settings, "realized_gain_threshold") == 800
 
+    def test_buy_deploy_step_up_blocked_under_defensive_trim(self):
+        from agent_reach.daily_run.harness import HarnessEntry, HarnessState
+        from agent_reach.daily_run.harness_policy import resolve_harness_position_policy
+
+        state = HarnessState()
+        state.entries["policy"]["buy"] = HarnessEntry(
+            id="buy",
+            kind="policy",
+            title="buy",
+            content="基准买入优于自进化：上调 deploy_ratio harness",
+            source="deterministic",
+            job="sell_rules_whatif",
+            evidence="weekly",
+            created_at="2026-08-19T00:00:00+00:00",
+            updated_at="2026-08-19T00:00:00+00:00",
+        )
+        state.entries["memory"]["miss"] = HarnessEntry(
+            id="miss",
+            kind="memory",
+            title="miss",
+            content="MSS 预测偏离",
+            source="deterministic",
+            job="close",
+            evidence="close",
+            created_at="2026-08-19T00:00:00+00:00",
+            updated_at="2026-08-19T00:00:00+00:00",
+        )
+        settings = {
+            "harness": {
+                "enabled": True,
+                "runtime_overlay": True,
+                "runtime_overlay_sources": ["memory", "policy"],
+            }
+        }
+        pos = resolve_harness_position_policy(state, settings=settings)
+        assert pos["deploy_ratio"] == 0.25
+        assert pos["max_position_pct"] == 25.0
+
+    def test_buy_deploy_step_up_applies_without_defensive_trim(self):
+        from agent_reach.daily_run.harness import HarnessEntry, HarnessState
+        from agent_reach.daily_run.harness_policy import resolve_harness_position_policy
+
+        state = HarnessState()
+        state.entries["policy"]["buy"] = HarnessEntry(
+            id="buy",
+            kind="policy",
+            title="buy",
+            content="基准买入优于自进化：上调 deploy_ratio harness",
+            source="deterministic",
+            job="sell_rules_whatif",
+            evidence="weekly",
+            created_at="2026-08-19T00:00:00+00:00",
+            updated_at="2026-08-19T00:00:00+00:00",
+        )
+        settings = {
+            "harness": {
+                "enabled": True,
+                "runtime_overlay": True,
+                "runtime_overlay_sources": ["policy"],
+            }
+        }
+        pos = resolve_harness_position_policy(state, settings=settings)
+        assert pos["deploy_ratio"] >= 0.55
+        assert pos["max_position_pct"] >= 30.0
+
     def test_whatif_baseline_better_steps_up_sell_ratios(self):
         from agent_reach.daily_run.harness import HarnessEntry, HarnessState
         from agent_reach.daily_run.harness_policy import resolve_harness_deep_loss_policy

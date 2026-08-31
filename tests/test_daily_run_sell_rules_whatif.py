@@ -519,6 +519,63 @@ class TestWhatIfHarnessEvidence:
         )
         assert any("自进化优于基准" in line for line in evidence["policy"])
 
+    def test_buy_baseline_better_blocked_on_down_day(self):
+        from agent_reach.daily_run.sell_rules_whatif import summarize_buy_whatif_for_harness
+
+        evidence = summarize_buy_whatif_for_harness(
+            {
+                "skipped": False,
+                "actual_buy_notional": 22163,
+                "hypothetical_buy_notional": 0,
+                "buy_notional_delta": -22163,
+                "baseline_excess_buy_mtm_pnl": -500,
+                "rows": [
+                    {
+                        "code": "000725",
+                        "name": "京东方A",
+                        "actual_bought": 1000,
+                        "hypothetical_bought": 0,
+                        "share_delta": -1000,
+                        "price": 4.5,
+                    }
+                ],
+            },
+            weekly_pnl=-457,
+            weekly_pnl_pct=-0.43,
+            defensive_trim=True,
+        )
+        assert not any("上调 deploy_ratio harness" in line for line in evidence["policy"])
+        assert evidence["step_up"]["eligible"] is False
+        assert any("deploy step-up" in line for line in evidence["suggestions"])
+
+    def test_buy_baseline_better_steps_up_when_validated(self):
+        from agent_reach.daily_run.sell_rules_whatif import summarize_buy_whatif_for_harness
+
+        evidence = summarize_buy_whatif_for_harness(
+            {
+                "skipped": False,
+                "actual_buy_notional": 12000,
+                "hypothetical_buy_notional": 0,
+                "buy_notional_delta": -12000,
+                "baseline_excess_buy_mtm_pnl": 800,
+                "rows": [
+                    {
+                        "code": "000725",
+                        "name": "京东方A",
+                        "actual_bought": 500,
+                        "hypothetical_bought": 0,
+                        "share_delta": -500,
+                        "price": 4.0,
+                    }
+                ],
+            },
+            weekly_pnl=1200,
+            weekly_pnl_pct=1.2,
+            defensive_trim=False,
+        )
+        assert any("上调 deploy_ratio harness" in line for line in evidence["policy"])
+        assert evidence["step_up"]["eligible"] is True
+
     def test_apply_weekly_harness_refinement(self, harness_tmp):
         from agent_reach.daily_run.sell_rules_whatif_harness import (
             apply_sell_rules_whatif_harness_refinement,

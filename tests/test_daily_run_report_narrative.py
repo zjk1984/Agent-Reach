@@ -649,7 +649,9 @@ def test_build_harness_tuning_summary_down_day():
     )
     assert tuning is not None
     assert any("partial sell" in line or "sell_ratio" in line for line in tuning["policy_lines"])
-    assert any("deploy_ratio" in line for line in tuning["policy_lines"])
+    assert not any("上调 deploy_ratio harness" in line for line in tuning["policy_lines"])
+    assert tuning.get("suggestion_lines")
+    assert any("deploy step-up" in line for line in (tuning.get("suggestion_lines") or []))
     assert any("本次 harness" in line for line in tuning["execution_lines"])
     assert tuning.get("notes")
 
@@ -672,6 +674,23 @@ def test_render_narrative_includes_harness_tuning():
     assert "partial sell_ratio" in md
     assert "策略：" in md
     assert "执行：" in md
+
+
+def test_render_narrative_shows_effective_position_and_suggestions():
+    md = render_narrative_markdown(
+        {
+            "summary": "收盘全持仓 4 只复盘",
+            "harness_tuning": {
+                "summary": "deploy_ratio 100%→25%（已生效）",
+                "effective_position_lines": ["deploy_ratio 100%→25%（已生效）"],
+                "suggestion_lines": ["买入 what-if 基准多买，但未触发 deploy step-up：当日组合净值亏损"],
+                "policy_lines": ["自进化优于基准：维持 partial sell_ratio harness 进化"],
+            },
+        },
+        job="close",
+    )
+    assert "已生效：" in md
+    assert "建议（未执行）：" in md
 
 
 def test_build_harness_evolution_summary_weekly():

@@ -42,6 +42,10 @@ class SellRulesWhatIfResult:
         }
 
 
+_BUY_STEP_UP_NOTIONAL_THRESHOLD = 5000.0
+_BUY_STEP_UP_MTM_THRESHOLD = 0.0
+
+
 @dataclass
 class BuyRulesWhatIfResult:
     as_of: str
@@ -50,6 +54,7 @@ class BuyRulesWhatIfResult:
     actual_buy_notional: float = 0.0
     hypothetical_buy_notional: float = 0.0
     buy_notional_delta: float = 0.0
+    baseline_excess_buy_mtm_pnl: float = 0.0
     skipped: bool = False
     skip_reason: str = ""
     scope: str = "daily"
@@ -64,6 +69,7 @@ class BuyRulesWhatIfResult:
             "actual_buy_notional": self.actual_buy_notional,
             "hypothetical_buy_notional": self.hypothetical_buy_notional,
             "buy_notional_delta": self.buy_notional_delta,
+            "baseline_excess_buy_mtm_pnl": self.baseline_excess_buy_mtm_pnl,
             "skipped": self.skipped,
             "skip_reason": self.skip_reason,
             "scope": self.scope,
@@ -121,6 +127,71 @@ def _buy_price_by_code(
         if price is not None and float(price) > 0:
             out.setdefault(code, float(price))
     return out
+
+
+def _estimate_baseline_excess_buy_mtm_pnl(
+    rows: list[dict[str, Any]],
+    close_prices: dict[str, float],
+) -> float:
+    """MTM at close for shares baseline bought but evolved rules would skip."""
+    total = 0.0
+    has_any = False
+    for row in rows:
+        actual = int(row.get("actual_bought") or 0)
+        hypo = int(row.get("hypothetical_bought") or 0)
+        extra = actual - hypo
+        if extra <= 0:
+            continue
+        code = str(row.get("code") or "")
+        close_px = float(close_prices.get(code) or row.get("close_price") or row.get("price") or 0)
+        buy_px = float(row.get("price") or close_px or 0)
+        if close_px <= 0 or buy_px <= 0:
+            continue
+        total += extra * (close_px - buy_px)
+        has_any = True
+    return round(total, 2) if has_any else 0.0
+
+
+def evaluate_buy_deploy_step_up(
+    data: dict[str, Any],
+    *,
+    period_pnl: Optional[float] = None,
+    period_pnl_pct: Optional[float] = None,
+    defensive_trim: bool = False,
+) -> dict[str, Any]:
+    """Gate deploy_ratio step-up on P&L, defensive signals, and counterfactual MTM."""
+    scope = "weekly" if data.get("scope") == "weekly" else "daily"
+    scope_s = "本周" if scope == "weekly" else "当日"
+    notional_delta = float(data.get("buy_notional_delta") or 0)
+    baseline_better_notional = notional_delta <= -_BUY_STEP_UP_NOTIONAL_THRESHOLD
+    counterfactual_pnl = data.get("baseline_excess_buy_mtm_pnl")
+    if counterfactual_pnl is None:
+        counterfactual_pnl = _estimate_baseline_excess_buy_mtm_pnl(
+            list(data.get("rows") or []),
+            {},
+        )
+
+    block_reasons: list[str] = []
+    if not baseline_better_notional:
+        block_reasons.append("基准成交额未显著高于自进化")
+    if period_pnl is not None and float(period_pnl) < 0:
+        block_reasons.append(f"{scope_s}组合净值亏损（{float(period_pnl):+,.0f}）")
+    if defensive_trim:
+        block_reasons.append("防御减仓/偏差信号 active，禁止 deploy step-up")
+    if baseline_better_notional and float(counterfactual_pnl) <= _BUY_STEP_UP_MTM_THRESHOLD:
+        block_reasons.append(
+            f"少买部分收盘 MTM {float(counterfactual_pnl):+,.0f} 未验证加仓机会"
+        )
+
+    eligible = baseline_better_notional and not block_reasons
+    return {
+        "eligible": eligible,
+        "baseline_better_notional": baseline_better_notional,
+        "block_reasons": block_reasons,
+        "counterfactual_pnl": float(counterfactual_pnl),
+        "scope": scope,
+        "scope_label": scope_s,
+    }
 
 
 def _estimate_buy_notional(
@@ -455,8 +526,14 @@ def build_buy_rules_whatif(
         )
 
     prices = _buy_price_by_code(rows, enriched)
+    close_prices = {
+        str(code): float(row.get("price") or 0)
+        for code, row in enriched.items()
+        if row.get("price") is not None and float(row.get("price") or 0) > 0
+    }
     actual_notional = _estimate_buy_notional(rows, shares_key="actual_bought", prices=prices)
     hypo_notional = _estimate_buy_notional(rows, shares_key="hypothetical_bought", prices=prices)
+    baseline_excess_mtm = _estimate_baseline_excess_buy_mtm_pnl(rows, close_prices)
     return BuyRulesWhatIfResult(
         as_of=as_of,
         policy_note=_buy_policy_note(cfg),
@@ -464,6 +541,7 @@ def build_buy_rules_whatif(
         actual_buy_notional=actual_notional,
         hypothetical_buy_notional=hypo_notional,
         buy_notional_delta=round(hypo_notional - actual_notional, 2),
+        baseline_excess_buy_mtm_pnl=baseline_excess_mtm,
     )
 
 
@@ -500,6 +578,7 @@ def build_weekly_buy_rules_whatif(
     trading_days = 0
     actual_notional = 0.0
     hypo_notional = 0.0
+    baseline_excess_mtm = 0.0
 
     for day, day_trades in sorted(_trades_by_day(trades, week_start=week_start, week_end=week_end).items()):
         if not _day_has_buy(day_trades):
@@ -528,6 +607,7 @@ def build_weekly_buy_rules_whatif(
         daily_rows.extend(day_result.rows)
         actual_notional += float(day_result.actual_buy_notional or 0)
         hypo_notional += float(day_result.hypothetical_buy_notional or 0)
+        baseline_excess_mtm += float(day_result.baseline_excess_buy_mtm_pnl or 0)
 
     rows = _merge_weekly_buy_rows(daily_rows)
     if not rows:
@@ -547,6 +627,7 @@ def build_weekly_buy_rules_whatif(
         actual_buy_notional=round(actual_notional, 2),
         hypothetical_buy_notional=round(hypo_notional, 2),
         buy_notional_delta=round(hypo_notional - actual_notional, 2),
+        baseline_excess_buy_mtm_pnl=round(baseline_excess_mtm, 2),
         scope="weekly",
         period_label=period_label,
         trading_days=trading_days,
@@ -1155,6 +1236,8 @@ def summarize_buy_whatif_for_harness(
     *,
     weekly_pnl: Optional[float] = None,
     weekly_pnl_pct: Optional[float] = None,
+    settings: Optional[dict[str, Any]] = None,
+    defensive_trim: Optional[bool] = None,
 ) -> dict[str, Any]:
     """Turn baseline vs evolved buy comparison into harness memory/policy/playbook/plan."""
     data = whatif.to_dict() if isinstance(whatif, BuyRulesWhatIfResult) else dict(whatif or {})
@@ -1164,10 +1247,21 @@ def summarize_buy_whatif_for_harness(
         "playbook": [],
         "plan": [],
         "summary": "buy what-if skipped",
+        "step_up": {"eligible": False, "block_reasons": []},
     }
     if data.get("skipped"):
         empty["summary"] = str(data.get("skip_reason") or "buy what-if skipped")
         return empty
+
+    if defensive_trim is None and settings is not None:
+        from agent_reach.daily_run.harness import load_harness
+        from agent_reach.daily_run.harness_policy import resolve_harness_trade_signals
+
+        defensive_trim = bool(
+            resolve_harness_trade_signals(load_harness(), settings=settings).get("defensive_trim")
+        )
+    if defensive_trim is None:
+        defensive_trim = False
 
     rows = list(data.get("rows") or [])
     actual_notional = float(data.get("actual_buy_notional") or 0)
@@ -1181,6 +1275,7 @@ def summarize_buy_whatif_for_harness(
     policy: list[str] = []
     playbook: list[str] = []
     plan: list[str] = []
+    suggestions: list[str] = []
 
     period = str(data.get("period_label") or data.get("as_of") or "").strip()
     scope = "weekly" if data.get("scope") == "weekly" else "daily"
@@ -1205,17 +1300,40 @@ def summarize_buy_whatif_for_harness(
             )
         memory.append(f"自进化少买 {len(underbought_rows)} 只：{'；'.join(bits)}")
 
-    notional_threshold = 5000.0
-    baseline_better = notional_delta <= -notional_threshold
+    step_up = evaluate_buy_deploy_step_up(
+        data,
+        period_pnl=weekly_pnl,
+        period_pnl_pct=weekly_pnl_pct,
+        defensive_trim=bool(defensive_trim),
+    )
+    counterfactual_pnl = float(step_up.get("counterfactual_pnl") or 0)
+    if step_up.get("baseline_better_notional"):
+        memory.append(
+            f"基准多买部分收盘 MTM {counterfactual_pnl:+,.0f}（step-up "
+            f"{'通过' if step_up.get('eligible') else '未通过'}）"
+        )
+
+    notional_threshold = _BUY_STEP_UP_NOTIONAL_THRESHOLD
+    baseline_better = bool(step_up.get("baseline_better_notional"))
     evolved_better = notional_delta >= notional_threshold
 
-    if baseline_better:
+    if step_up.get("eligible"):
         policy.append("基准买入优于自进化：上调 deploy_ratio harness")
         playbook.append(
             f"{scope_s} 买入 what-if 基准成交额更高（¥{actual_notional:,.0f} vs ¥{hypo_notional:,.0f}），"
-            "harness 适度上调 deploy_ratio / max_position_pct"
+            f"少买 MTM {counterfactual_pnl:+,.0f}，harness 适度上调 deploy_ratio / max_position_pct"
         )
         plan.append("weekly：step-up deploy_ratio / max_position_pct harness")
+    elif baseline_better:
+        block_s = "；".join(step_up.get("block_reasons") or [])
+        suggestions.append(
+            f"买入 what-if 基准多买 ¥{abs(notional_delta):,.0f}，但未触发 deploy step-up：{block_s}"
+        )
+        playbook.append(
+            f"{scope_s} 买入 what-if 基准成交额更高（¥{actual_notional:,.0f} vs ¥{hypo_notional:,.0f}），"
+            "仅记录为建议，不写入 deploy step-up policy"
+        )
+        memory.append(f"deploy step-up 未触发：{block_s}")
     elif evolved_better:
         policy.append("自进化买入优于基准：维持 deploy_ratio harness 进化")
         playbook.append(
@@ -1234,13 +1352,16 @@ def summarize_buy_whatif_for_harness(
 
     summary = (
         f"buy what-if {scope} delta={notional_delta:+.0f} "
-        f"baseline_better={baseline_better} evolved_better={evolved_better}"
+        f"step_up={bool(step_up.get('eligible'))} "
+        f"counterfactual_mtm={counterfactual_pnl:+.0f}"
     )
     return {
         "memory": memory,
         "policy": policy,
         "playbook": playbook,
         "plan": plan,
+        "suggestions": suggestions,
+        "step_up": step_up,
         "summary": summary,
     }
 

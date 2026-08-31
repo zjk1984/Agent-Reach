@@ -511,8 +511,12 @@ def render_narrative_markdown(narrative: dict[str, Any], *, job: str = "") -> st
         lines.append("**Harness 调参总结**")
         if harness_tuning.get("summary"):
             lines.append(str(harness_tuning["summary"]))
+        for item in harness_tuning.get("effective_position_lines") or []:
+            lines.append(f"- 已生效：{item}")
         for item in harness_tuning.get("policy_lines") or []:
             lines.append(f"- 策略：{item}")
+        for item in harness_tuning.get("suggestion_lines") or []:
+            lines.append(f"- 建议（未执行）：{item}")
         for item in harness_tuning.get("plan_lines") or []:
             lines.append(f"- 计划：{item}")
         for item in harness_tuning.get("playbook_lines") or []:
@@ -1844,6 +1848,39 @@ def build_harness_evolution_summary(
     return out
 
 
+def _format_effective_position_lines(settings: Optional[dict[str, Any]]) -> list[str]:
+    if not settings:
+        return []
+    from agent_reach.daily_run.harness import load_harness
+    from agent_reach.daily_run.harness_policy import (
+        harness_position_overlay_meta,
+        resolve_harness_base_position_policy,
+        resolve_harness_position_policy,
+    )
+
+    base = resolve_harness_base_position_policy(settings)
+    effective = resolve_harness_position_policy(load_harness(), settings=settings)
+    overlay = harness_position_overlay_meta(base, effective)
+    lines: list[str] = []
+    deploy = overlay.get("deploy_ratio")
+    if deploy:
+        lines.append(
+            f"deploy_ratio {float(deploy['base']):.0%}→{float(deploy['effective']):.0%}（已生效）"
+        )
+    max_pos = overlay.get("max_position_pct")
+    if max_pos:
+        lines.append(
+            "max_position_pct "
+            f"{float(max_pos['base']):.0f}%→{float(max_pos['effective']):.0f}%（已生效）"
+        )
+    if not lines:
+        lines.append(
+            f"deploy_ratio {float(effective.get('deploy_ratio', 1.0)):.0%} · "
+            f"max_position_pct {float(effective.get('max_position_pct', 35.0)):.0f}%（已生效）"
+        )
+    return lines
+
+
 def build_harness_tuning_summary(
     ctx: dict[str, Any],
     *,
@@ -1867,6 +1904,7 @@ def build_harness_tuning_summary(
     policy: list[str] = []
     plan: list[str] = []
     playbook: list[str] = []
+    suggestions: list[str] = []
 
     sell = ctx.get("sell_rules_whatif") or {}
     if sell and not sell.get("skipped") and (
@@ -1881,10 +1919,16 @@ def build_harness_tuning_summary(
 
     buy = ctx.get("buy_rules_whatif") or {}
     if buy and not buy.get("skipped") and buy.get("rows"):
-        block = summarize_buy_whatif_for_harness(buy, weekly_pnl=pnl, weekly_pnl_pct=pnl_pct)
+        block = summarize_buy_whatif_for_harness(
+            buy,
+            weekly_pnl=pnl,
+            weekly_pnl_pct=pnl_pct,
+            settings=settings,
+        )
         policy.extend(block.get("policy") or [])
         plan.extend(block.get("plan") or [])
         playbook.extend(block.get("playbook") or [])
+        suggestions.extend(block.get("suggestions") or [])
 
     friction = ctx.get("intraday_friction_whatif") or {}
     if friction and not friction.get("skipped"):
@@ -1903,8 +1947,10 @@ def build_harness_tuning_summary(
     policy = _dedupe_text_lines(policy)
     plan = _dedupe_text_lines(plan)
     playbook = _dedupe_text_lines(playbook)
+    suggestions = _dedupe_text_lines(suggestions)
 
     execution = _compact_harness_execution_summary(dict(ctx.get("harness_result") or {}))
+    effective_position_lines = _format_effective_position_lines(settings)
 
     overlay_lines: list[str] = []
     if settings:
@@ -1918,12 +1964,24 @@ def build_harness_tuning_summary(
                 if line.startswith("- ")
             ]
 
-    if not policy and not plan and not playbook and not execution and not overlay_lines:
+    if (
+        not policy
+        and not plan
+        and not playbook
+        and not suggestions
+        and not execution
+        and not overlay_lines
+        and not effective_position_lines
+    ):
         return None
 
     summary_parts: list[str] = []
+    if effective_position_lines:
+        summary_parts.append(effective_position_lines[0])
     if policy:
         summary_parts.append(policy[0])
+    elif suggestions:
+        summary_parts.append("买入 deploy step-up 建议未执行")
     elif plan:
         summary_parts.append(plan[0][:72])
     elif playbook:
@@ -1933,25 +1991,18 @@ def build_harness_tuning_summary(
     summary = "；".join(summary_parts[:2]) if summary_parts else "维持当前 harness 参数"
 
     notes: list[str] = []
-    buy_delta = float((buy or {}).get("buy_notional_delta") or 0)
-    if (
-        buy
-        and not buy.get("skipped")
-        and buy_delta <= -5000
-        and pnl is not None
-        and float(pnl) < 0
-        and any("deploy_ratio" in item for item in policy)
-    ):
-        notes.append(
-            "买入 harness 建议上调 deploy_ratio，与当日下跌盈亏方向相反，"
-            "执行时需对照上方「基准值 vs 自进化」综合结论"
-        )
+    if suggestions:
+        notes.extend(suggestions[:2])
 
     out: dict[str, Any] = {
         "summary": summary,
         "policy_lines": policy[:4],
         "plan_lines": plan[:3],
     }
+    if effective_position_lines:
+        out["effective_position_lines"] = effective_position_lines[:2]
+    if suggestions:
+        out["suggestion_lines"] = suggestions[:3]
     if playbook:
         out["playbook_lines"] = playbook[:2]
     if execution:

@@ -33,6 +33,7 @@ def whatif_report_to_harness_evidence(
             buy_whatif,
             weekly_pnl=report.get("weekly_pnl"),
             weekly_pnl_pct=report.get("weekly_pnl_pct"),
+            settings=settings,
         )
         evidence = merge_harness_evidence(evidence, buy_evidence)
     evidence["rigor_domain"] = {

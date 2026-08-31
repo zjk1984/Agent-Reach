@@ -700,6 +700,7 @@ def _evidence_from_weekly(
             buy_whatif,
             weekly_pnl=pnl,
             weekly_pnl_pct=pct,
+            settings=settings,
         )
         memory.extend(bi.get("memory") or [])
         policy.extend(bi.get("policy") or [])

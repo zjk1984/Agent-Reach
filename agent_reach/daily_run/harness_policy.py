@@ -2093,7 +2093,11 @@ def _apply_position_signal_evolution(
     if signals.get("mss_forecast_miss") and not signals.get("defensive_trim"):
         if evolution_mode(settings, "deploy_ratio") == "harness":
             merged["deploy_ratio"] = float(merged.get("deploy_ratio", 1.0)) * 0.7
-    if _overlay_has_phrase(state, "基准买入优于自进化", settings=settings):
+    if (
+        _overlay_has_phrase(state, "基准买入优于自进化", settings=settings)
+        and not signals.get("defensive_trim")
+        and not signals.get("pnl_target_miss")
+    ):
         if evolution_mode(settings, "deploy_ratio") == "harness":
             cur = float(merged.get("deploy_ratio", 1.0))
             merged["deploy_ratio"] = min(1.0, max(cur + 0.1, 0.55))
