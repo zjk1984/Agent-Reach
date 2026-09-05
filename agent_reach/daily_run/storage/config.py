@@ -124,18 +124,39 @@ def retrieval_settings(settings: Optional[dict[str, Any]] = None) -> dict[str, A
 
 
 def prune_settings(settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    from agent_reach.daily_run.storage.prune_policy import (
+        DEFAULT_PRUNE_L0_KINDS,
+        DEFAULT_PRUNE_L1_KINDS,
+        PROTECTED_L0_KINDS,
+        PROTECTED_L1_KINDS,
+    )
+
     cfg = storage_settings(settings)
     block = dict(cfg.get("prune") or {})
     return {
         "enabled": block.get("enabled", True) is not False,
         "auto_on_forecast": block.get("auto_on_forecast", True) is not False,
+        "auto_distill_before_prune": block.get("auto_distill_before_prune", True) is not False,
+        "auto_repair_quant_before_prune": block.get("auto_repair_quant_before_prune", True) is not False,
+        "distill_batch_limit": max(100, int(block.get("distill_batch_limit") or 3000)),
+        "distill_max_rounds": int(block.get("distill_max_rounds") if block.get("distill_max_rounds") is not None else 0),
         "runs_keep_days": max(1, int(block.get("runs_keep_days") or 60)),
         "cache_keep_days": max(1, int(block.get("cache_keep_days") or 14)),
         "log_keep_days": max(1, int(block.get("log_keep_days") or 30)),
         "l0_keep_days": max(1, int(block.get("l0_keep_days") or 90)),
+        "l1_keep_days": max(1, int(block.get("l1_keep_days") or 90)),
+        "l1_prune_enabled": block.get("l1_prune_enabled", True) is not False,
         "forecast_keep_days": max(1, int(block.get("forecast_keep_days") or 56)),
         "market_review_keep_days": max(1, int(block.get("market_review_keep_days") or 30)),
         "intraday_keep_days": max(0, int(block.get("intraday_keep_days") or 1)),
+        "overlay_log_keep_days": max(7, int(block.get("overlay_log_keep_days") or 90)),
+        "handoff_intraday_keep_days": max(7, int(block.get("handoff_intraday_keep_days") or 21)),
         "snapshot_keep": max(3, int(block.get("snapshot_keep") or 20)),
         "vacuum": block.get("vacuum", True) is not False,
+        "push_card": block.get("push_card", True) is not False,
+        "include_in_forecast_markdown": block.get("include_in_forecast_markdown", True) is not False,
+        "protected_l0_kinds": list(block.get("protected_l0_kinds") or PROTECTED_L0_KINDS),
+        "prune_l0_kinds": list(block.get("prune_l0_kinds") or DEFAULT_PRUNE_L0_KINDS),
+        "protected_l1_kinds": list(block.get("protected_l1_kinds") or PROTECTED_L1_KINDS),
+        "prune_l1_kinds": list(block.get("prune_l1_kinds") or DEFAULT_PRUNE_L1_KINDS),
     }

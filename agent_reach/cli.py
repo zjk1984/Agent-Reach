@@ -472,6 +472,9 @@ def main():
 
     add_context_subparser(sub)
     add_storage_subparser(p_daily_sub)
+    from agent_reach.daily_run.quant_cli import add_quant_subparser
+
+    add_quant_subparser(p_daily_sub)
 
     args = parser.parse_args()
 
@@ -2642,10 +2645,16 @@ def _cmd_daily_run(args):
         cmd_storage(args)
         return
 
+    if args.daily_action == "quant":
+        from agent_reach.daily_run.quant_cli import cmd_quant
+
+        cmd_quant(args)
+        return
+
     if args.daily_action not in ("evaluate", "push"):
         print(
             "Usage: agent-reach daily-run "
-            "{morning|close|intraday|build-snapshot|schedule|hot-news|configure|redfox|kronos|harness|capital|pnl|storage|evaluate|push|fetch|verify|backtest|optimize|plugins|sample} ..."
+            "{morning|close|intraday|build-snapshot|schedule|hot-news|configure|redfox|kronos|harness|capital|pnl|storage|quant|evaluate|push|fetch|verify|backtest|optimize|plugins|sample} ..."
         )
         sys.exit(1)
 

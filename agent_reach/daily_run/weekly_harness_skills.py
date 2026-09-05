@@ -76,6 +76,12 @@ def run_weekly_harness_refinements(
     """Run weekly finance harness jobs and run_guard when skill_closure is off."""
     cfg = effective_settings(settings or load_settings())
     harness_cfg = cfg.get("harness") or {}
+    weekly_cfg = cfg.get("weekly_report") or {}
+    wf_cfg = cfg.get("week_forecast") or {}
+    lightweight = (
+        weekly_cfg.get("harness_lightweight", True) is not False
+        and wf_cfg.get("enabled", True) is not False
+    )
     out = WeeklyHarnessSkillsReport()
 
     if _job_enabled(harness_cfg, "finance_variance"):
@@ -90,10 +96,15 @@ def run_weekly_harness_refinements(
 
         out.finance_statements = apply_finance_statements_harness_refinement(report, settings=cfg)
 
-    if _job_enabled(harness_cfg, "finance_research"):
+    if _job_enabled(harness_cfg, "finance_research") and not lightweight:
         from agent_reach.daily_run.finance_research_harness import apply_finance_research_harness_refinement
 
         out.finance_research = apply_finance_research_harness_refinement(report, settings=cfg)
+    elif lightweight:
+        out.finance_research = {
+            "skipped": True,
+            "reason": "harness_lightweight: finance_research runs on Sunday forecast",
+        }
 
     if _job_enabled(harness_cfg, "finance_close_plan"):
         from agent_reach.daily_run.finance_close_plan_harness import apply_finance_close_plan_harness_refinement
@@ -124,10 +135,15 @@ def run_weekly_harness_refinements(
             settings=cfg,
         )
 
-    if _job_enabled(harness_cfg, "harness_threshold"):
+    if _job_enabled(harness_cfg, "harness_threshold") and not lightweight:
         from agent_reach.daily_run.harness_evolution_optimizers import apply_weekly_harness_llm_refinement
 
         out.harness_threshold = apply_weekly_harness_llm_refinement(report, settings=cfg)
+    elif lightweight:
+        out.harness_threshold = {
+            "skipped": True,
+            "reason": "harness_lightweight: threshold tuning deferred to forecast/close",
+        }
 
     if _job_enabled(harness_cfg, "intraday_friction"):
         from agent_reach.daily_run.intraday_friction_harness import (

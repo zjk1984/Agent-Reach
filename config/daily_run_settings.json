@@ -17,6 +17,53 @@
     "show_delta_in_report": true
   },
 
+  "morning_open": {
+    "enabled": true,
+    "high_cash_ratio": 0.45,
+    "weak_mss_below_veto_buffer": 0.0,
+    "aggressive_entry_delta": 2.0,
+    "macro_veto_delta": 2.0,
+    "trade_every_n_delta": 1,
+    "supportive_mss_above_aggressive": 0.0,
+    "supportive_aggressive_entry_delta": -1.0,
+    "supportive_trade_every_n_delta": -1
+  },
+
+  "quant_calibration": {
+    "enabled": true,
+    "rolling_window_days": 5,
+    "walkforward_window_days": 10,
+    "apply_walkforward_overlay": true,
+    "rolling_mtm_gate_enabled": true,
+    "rolling_mtm_min_sum": 0.0,
+    "loss_pct_defensive": -0.15,
+    "supportive_pnl_pct": 0.1,
+    "friction_buy_multiplier": 1.25,
+    "friction_block_buys": true,
+    "forecast_hit_rate_min": 0.45,
+    "forecast_hit_rate_gate_enabled": true
+  },
+
+  "overlay_telemetry": {
+    "schema_version": 2,
+    "dual_write_db": true,
+    "read_prefer_db": true,
+    "fail_loud": false
+  },
+
+  "week_open": {
+    "enabled": true,
+    "morning_session_only": false,
+    "defensive_plan_count": 2,
+    "supportive_plan_count": 2,
+    "low_confidence_pct": 50.0,
+    "aggressive_entry_delta": 1.5,
+    "macro_veto_delta": 1.5,
+    "trade_every_n_delta": 1,
+    "supportive_aggressive_entry_delta": -1.0,
+    "supportive_trade_every_n_delta": -1
+  },
+
   "thresholds": {
     "max_snapshot_age_hours": 24,
     "low_position_20d": 0.4
@@ -58,7 +105,10 @@
       "recovery_mixed_delta_factor": 0.5,
       "once_per_symbol_per_day": true,
       "block_sell_in_recovery_zone": true,
-      "persist_macro_warming_intraday": true
+      "persist_macro_warming_intraday": true,
+      "hold_debounce": {
+        "enabled": true
+      }
     },
     "profit_lock": {
       "enabled": true,
@@ -398,6 +448,7 @@
 
   "weekly_report": {
     "enabled": true,
+    "harness_lightweight": true,
     "split_push": true,
     "exa_sector_research": true,
     "max_sector_queries": 3,
@@ -445,6 +496,18 @@
     "exclude_from_trend": true,
     "lookback_weight_scale": 0.25,
     "record_scan": false,
+    "pm_session": {
+      "enabled": true,
+      "weak_am_mss_delta": -5.0,
+      "halfday_loss_pct": -0.3,
+      "red_anomaly_count": 2,
+      "aggressive_entry_delta": 3.0,
+      "macro_veto_delta": 2.0,
+      "trade_every_n_delta": 1,
+      "supportive_am_mss_delta": 5.0,
+      "supportive_aggressive_entry_delta": -1.0,
+      "supportive_trade_every_n_delta": -1
+    },
     "llm_narrative": {
       "enabled": true,
       "planner": "deterministic"
@@ -454,6 +517,13 @@
   "week_forecast": {
     "enabled": true,
     "harness_evolve": true,
+    "skip_finance_research_if_weekly_digest": true,
+    "intraday_miss_overlay": true,
+    "miss_streak_min_days": 2,
+    "miss_streak_base_spread_delta": 2,
+    "miss_streak_max_base_spread": 14,
+    "pm_session_symbol_accuracy_gate": true,
+    "pm_session_symbol_accuracy_min": 0.45,
     "split_push": true,
     "exa_news_research": true,
     "max_news_queries": 2,
@@ -983,6 +1053,29 @@
     "postgres": {
       "dsn": "",
       "schema": "daily_run"
+    },
+    "prune": {
+      "enabled": true,
+      "auto_on_forecast": true,
+      "auto_distill_before_prune": true,
+      "auto_repair_quant_before_prune": true,
+      "distill_batch_limit": 3000,
+      "distill_max_rounds": 0,
+      "runs_keep_days": 60,
+      "cache_keep_days": 14,
+      "log_keep_days": 30,
+      "l0_keep_days": 90,
+      "l1_keep_days": 90,
+      "l1_prune_enabled": true,
+      "forecast_keep_days": 56,
+      "market_review_keep_days": 30,
+      "intraday_keep_days": 1,
+      "overlay_log_keep_days": 90,
+      "handoff_intraday_keep_days": 21,
+      "snapshot_keep": 20,
+      "vacuum": true,
+      "push_card": true,
+      "include_in_forecast_markdown": true
     }
   },
 
@@ -1058,6 +1151,8 @@
     "profit_lock_min_unrealized_gain_pct_mode": "harness",
     "profit_lock_sell_ratio_mode": "harness",
     "profit_lock_pullback_from_high_pct_mode": "harness",
+    "hold_debounce_required_strikes_mode": "harness",
+    "hold_debounce_hold_sell_ratio_cap_mode": "harness",
     "min_mss_delta_mode": "harness",
     "min_latest_mss_mode": "harness",
     "recovery_min_mss_mode": "harness",

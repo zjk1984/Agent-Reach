@@ -9,7 +9,7 @@ from agent_reach.daily_run.harness_evolution_optimizers import optimize_forecast
 from agent_reach.daily_run.harness_skill_base import apply_skill_refinement, merge_harness_evidence
 
 
-def forecast_to_harness_evidence(forecast: dict[str, Any]) -> dict[str, Any]:
+def forecast_to_harness_evidence(forecast: dict[str, Any], *, settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     memory: list[str] = []
     policy: list[str] = []
     playbook: list[str] = []
@@ -18,6 +18,24 @@ def forecast_to_harness_evidence(forecast: dict[str, Any]) -> dict[str, Any]:
     ws = forecast.get("week_start") or ""
     we = forecast.get("week_end") or ""
     memory.append(f"forecast 窗口 {ws}~{we}")
+
+    if settings is not None:
+        from agent_reach.daily_run.quant_calibration import walkforward_report
+
+        wf = walkforward_report(settings=settings)
+        rec = wf.get("overlay_recommendation") or {}
+        basis = rec.get("basis") or {}
+        memory.append(
+            f"walk-forward：loss_days={basis.get('loss_days')} pnl_sum={basis.get('pnl_sum')} "
+            f"mtm_sum={basis.get('mtm_sum')}"
+        )
+        mo = rec.get("morning_open") or {}
+        if mo:
+            playbook.append(
+                f"walk-forward 建议 morning_open agg_delta={mo.get('aggressive_entry_delta')} "
+                f"macro_delta={mo.get('macro_veto_delta')}"
+            )
+            plan.append("forecast：采纳 close handoff walk-forward overlay 建议")
 
     cal = forecast.get("calibration_used") or {}
     if cal:
@@ -53,7 +71,7 @@ def apply_forecast_calibrate_harness_refinement(
     *,
     settings: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
-    evidence = forecast_to_harness_evidence(forecast)
+    evidence = forecast_to_harness_evidence(forecast, settings=settings)
     evidence["forge_domain"] = {
         "calibration_used": forecast.get("calibration_used") or {},
         "week_start": forecast.get("week_start"),

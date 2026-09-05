@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -744,3 +745,61 @@ def read_morning_baseline_from_store(
             out.setdefault("_baseline_source", "baseline_morning_db")
             return out
     return None
+
+
+def read_session_overlay_daily(
+    day: date | str,
+    *,
+    settings: Optional[dict[str, Any]] = None,
+) -> Optional[dict[str, Any]]:
+    from agent_reach.daily_run.overlay_telemetry import _coerce_v2_record
+
+    day_key = day.isoformat() if isinstance(day, date) else str(day)[:10]
+    if not day_key:
+        return None
+
+    if storage_prefer_db(settings):
+        store = _get_store(settings)
+        query = getattr(store, "query_l1_state", None)
+        if callable(query):
+            payload = query(state_key=f"session_overlay:{day_key}", kind="session_overlay_daily")
+            if isinstance(payload, dict) and payload:
+                try:
+                    return _coerce_v2_record(payload, date.fromisoformat(day_key))
+                except ValueError:
+                    return payload
+
+    from agent_reach.daily_run.overlay_telemetry import _load_daily_record
+
+    try:
+        return _load_daily_record(date.fromisoformat(day_key))
+    except ValueError:
+        return None
+
+
+def read_session_overlay_daily_range(
+    week_start: date,
+    week_end: date,
+    *,
+    settings: Optional[dict[str, Any]] = None,
+) -> list[dict[str, Any]]:
+    from agent_reach.daily_run.overlay_telemetry import _coerce_v2_record, _log_path
+
+    rows: list[dict[str, Any]] = []
+    day = week_start
+    while day <= week_end:
+        hit = read_session_overlay_daily(day, settings=settings)
+        if hit and (hit.get("morning") or {}).get("seen") or (hit.get("afternoon") or {}).get("seen"):
+            rows.append(hit)
+        elif _log_path(day).is_file():
+            try:
+                hit = _coerce_v2_record(
+                    json.loads(_log_path(day).read_text(encoding="utf-8")),
+                    day,
+                )
+                if (hit.get("morning") or {}).get("seen") or (hit.get("afternoon") or {}).get("seen"):
+                    rows.append(hit)
+            except Exception:
+                pass
+        day += timedelta(days=1)
+    return rows

@@ -246,9 +246,15 @@ def run_morning_for_symbols(
                 save_morning_handoff,
             )
             from agent_reach.daily_run.morning_signals import build_action_checklist_rows
+            from agent_reach.daily_run.am_open_overlay import build_am_open_overlay_from_ctx
 
+            am_overlay = build_am_open_overlay_from_ctx(morning_ctx, settings=cfg)
             save_morning_handoff(
-                build_morning_handoff(morning_ctx, build_action_checklist_rows(morning_ctx))
+                build_morning_handoff(
+                    morning_ctx,
+                    build_action_checklist_rows(morning_ctx),
+                    am_open_overlay=am_overlay,
+                )
             )
             merged = render_morning_card_sections(morning_ctx)
             feishu_result = push_report_sections(

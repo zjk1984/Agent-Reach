@@ -344,6 +344,7 @@ _FORECAST_CATEGORY_MAP = {
     "个股路径": "forecast_symbols",
     "新闻热点": "forecast_news",
     "雪球热门": "xueqiu_hot",
+    "存储维护": "storage_prune",
 }
 
 

@@ -317,12 +317,31 @@ def run_morning(
                 save_morning_handoff,
             )
             from agent_reach.daily_run.morning_signals import build_action_checklist_rows
+            from agent_reach.daily_run.am_open_overlay import build_am_open_overlay_from_ctx
 
+            am_overlay = build_am_open_overlay_from_ctx(morning_ctx, settings=cfg)
             save_morning_handoff(
-                build_morning_handoff(morning_ctx, build_action_checklist_rows(morning_ctx))
+                build_morning_handoff(
+                    morning_ctx,
+                    build_action_checklist_rows(morning_ctx),
+                    am_open_overlay=am_overlay,
+                )
             )
+            steps.append("am_open_overlay")
             sections = render_morning_card_sections(morning_ctx)
         else:
+            from agent_reach.daily_run.am_open_overlay import (
+                build_am_open_overlay_from_run,
+                merge_am_open_into_handoff,
+            )
+
+            merge_am_open_into_handoff(
+                build_am_open_overlay_from_run(
+                    {"snapshot": enriched, "evaluation": evaluation},
+                    settings=cfg,
+                )
+            )
+            steps.append("am_open_overlay")
             sections = render_morning_sections(
                 team_markdown=team_md,
                 report_markdown=report_md,
@@ -1975,13 +1994,21 @@ def run_forecast(
     )
     prior_friday = week_start - timedelta(days=3)
     digest = load_weekly_digest()
-    outlook = build_next_week_outlook(
-        week_end=prior_friday,
-        holdings=list(pf.get("holdings") or []),
-        watchlist=list(pf.get("watchlist") or []),
-        settings=cfg,
-        watchlist_intel=getattr(forecast, "watchlist_intel", None) or snapshot.get("watchlist_intel"),
-    )
+    from agent_reach.daily_run.close_morning_handoff import load_close_handoff
+
+    handoff = load_close_handoff(close_day=prior_friday, settings=cfg) or {}
+    saved_outlook = handoff.get("next_week_outlook")
+    if isinstance(saved_outlook, dict) and saved_outlook.get("operation_plan"):
+        outlook = saved_outlook
+        steps.append("outlook_from_close_handoff")
+    else:
+        outlook = build_next_week_outlook(
+            week_end=prior_friday,
+            holdings=list(pf.get("holdings") or []),
+            watchlist=list(pf.get("watchlist") or []),
+            settings=cfg,
+            watchlist_intel=getattr(forecast, "watchlist_intel", None) or snapshot.get("watchlist_intel"),
+        )
     enriched = attach_structured_forecast(
         {**forecast.to_dict(), "_snapshot": snapshot},
         portfolio=pf,
@@ -1999,6 +2026,19 @@ def run_forecast(
     forecast.outlook = outlook
     steps.append("structured_forecast")
 
+    try:
+        from agent_reach.daily_run.week_open_overlay import build_and_save_week_open_overlay
+
+        week_open_path = build_and_save_week_open_overlay(
+            {**forecast.to_dict(), "outlook": outlook},
+            outlook=outlook,
+            settings=cfg,
+        )
+        if week_open_path:
+            steps.append("week_open_overlay")
+    except Exception as exc:
+        _workflow_harness_error(harness_errors, "week_open_overlay", exc)
+
     path = persist_week_forecast(forecast)
     steps.append("persist")
 
@@ -2012,8 +2052,9 @@ def run_forecast(
         prune_cfg = prune_settings(cfg)
         if storage_enabled(cfg) and prune_cfg.get("auto_on_forecast", True):
             prune_result = run_scheduled_prune(settings=cfg)
+            forecast.storage_prune = prune_result or {}
             steps.append("storage_prune")
-            if push:
+            if push and prune_cfg.get("push_card", True) is not False:
                 from agent_reach.config import Config
 
                 cfg_obj = config or Config()

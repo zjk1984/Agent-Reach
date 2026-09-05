@@ -549,3 +549,78 @@ def sync_l3_policy_persona(state_payload: dict[str, Any]) -> None:
         dedupe_key="l3:policy_persona:harness_policy",
     )
 
+
+def on_session_overlay_event(
+    snap: dict[str, Any],
+    *,
+    day: str = "",
+    source_path: str = "",
+) -> None:
+    from agent_reach.daily_run.storage import get_store
+
+    if not _allow_storage_write(kind="session_overlay", payload=snap):
+        return
+
+    at = str(snap.get("scan_at") or day or "")
+    dedupe = f"session_overlay:{day}:{at}"
+
+    def _write() -> None:
+        get_store().append_l0_event(
+            "session_overlay",
+            snap,
+            at=at,
+            source_path=source_path,
+            dedupe_key=dedupe,
+        )
+
+    _safe("session_overlay_event", _write)
+
+
+def on_session_overlay_daily(
+    day: str,
+    daily: dict[str, Any],
+    *,
+    source_path: str = "",
+) -> None:
+    day_key = str(day or daily.get("date") or "")[:10]
+    if not day_key:
+        return
+    on_l1_state(
+        f"session_overlay:{day_key}",
+        "session_overlay_daily",
+        daily,
+        at=day_key,
+    )
+
+
+def on_close_handoff(payload: dict[str, Any], *, source_path: str = "") -> None:
+    day = str(payload.get("close_date") or "")[:10]
+    if not day:
+        return
+    on_l2_scenario(
+        "close_handoff",
+        day,
+        payload,
+        at=day,
+        title=f"close handoff {day}",
+        content=str(payload.get("next_day_session_seed") or "")[:500],
+        source_path=source_path,
+        dedupe_key=f"l2:close_handoff:{day}",
+    )
+
+
+def on_week_open_overlay(payload: dict[str, Any], *, source_path: str = "") -> None:
+    week_start = str(payload.get("week_start") or "")[:10]
+    if not week_start:
+        return
+    on_l2_scenario(
+        "week_open_overlay",
+        week_start,
+        payload,
+        at=week_start,
+        title=f"week open {week_start}",
+        content=str(payload.get("regime") or "")[:200],
+        source_path=source_path,
+        dedupe_key=f"l2:week_open_overlay:{week_start}",
+    )
+

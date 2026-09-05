@@ -471,6 +471,7 @@ class WeekForecast:
     portfolio_snapshot: dict[str, Any] = field(default_factory=dict)
     harness_result: dict[str, Any] = field(default_factory=dict)
     outlook: dict[str, Any] = field(default_factory=dict)
+    storage_prune: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -500,6 +501,7 @@ class WeekForecast:
             "portfolio_snapshot": self.portfolio_snapshot,
             "harness_result": self.harness_result,
             "outlook": self.outlook,
+            "storage_prune": self.storage_prune,
         }
 
 
@@ -852,6 +854,18 @@ def render_forecast_sections(forecast: WeekForecast | dict[str, Any]) -> list[Fo
         if idx == 0 and cookie_prefix:
             body = cookie_prefix + body
         sections.append(ForecastSection(label=label, markdown=body))
+
+    prune_block = data.get("storage_prune") or {}
+    if prune_block and not prune_block.get("skipped"):
+        from agent_reach.daily_run.storage.config import prune_settings
+        from agent_reach.daily_run.storage.prune import render_prune_markdown
+
+        pcfg = prune_settings(settings)
+        if pcfg.get("include_in_forecast_markdown", True) is not False:
+            prune_md = render_prune_markdown(prune_block, settings=settings)
+            if prune_md.strip():
+                sections.append(ForecastSection(label="存储维护", markdown=prune_md))
+
     return sections
 
 

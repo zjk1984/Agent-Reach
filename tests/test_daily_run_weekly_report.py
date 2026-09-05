@@ -984,3 +984,76 @@ class TestWeeklyExperienceSnippets:
         assert "海能达" in names
         assert "长电科技" not in names
         assert any("MSS=48" in s and "澜起科技" in s for s in snippets)
+
+
+class TestWeeklyOverlayStatsSection:
+    def test_render_week_overlay_stats_markdown_empty_when_no_days(self):
+        from agent_reach.daily_run.overlay_telemetry import render_week_overlay_stats_markdown
+
+        assert render_week_overlay_stats_markdown({}) == []
+        assert render_week_overlay_stats_markdown({"days": 0}) == []
+
+    def test_render_week_overlay_stats_markdown_includes_counts(self):
+        from agent_reach.daily_run.overlay_telemetry import render_week_overlay_stats_markdown
+
+        lines = render_week_overlay_stats_markdown(
+            {
+                "days": 5,
+                "defensive_days": 2,
+                "supportive_days": 1,
+                "morning_overlay_days": 5,
+                "afternoon_overlay_days": 4,
+                "symbol_gate_days": 3,
+                "forecast_accuracy_defensive_days": 1,
+            }
+        )
+        body = "\n".join(lines)
+        assert "## 📊 量化 Overlay" in body
+        assert "覆盖" in body or "记录天数" in body
+        assert "防御 2" in body
+        assert "阈值调整" in body
+        assert "session_overlay" in body
+
+    def test_render_weekly_sections_includes_overlay_card(self):
+        from agent_reach.daily_run.weekly_report import WeeklyReport, render_weekly_sections
+
+        report = WeeklyReport(
+            week_start=date(2026, 9, 1),
+            week_end=date(2026, 9, 5),
+            start_total=100000,
+            end_total=101000,
+            weekly_pnl=1000,
+            weekly_pnl_pct=1.0,
+            realized_pnl=0,
+            overlay_stats={
+                "days": 3,
+                "defensive_days": 1,
+                "supportive_days": 0,
+                "morning_overlay_days": 3,
+                "afternoon_overlay_days": 2,
+                "symbol_gate_days": 1,
+                "forecast_accuracy_defensive_days": 0,
+            },
+        )
+        sections = render_weekly_sections(report)
+        labels = [s.label for s in sections]
+        assert "量化Overlay" in labels
+        overlay = next(s for s in sections if s.label == "量化Overlay")
+        assert "防御 2" in overlay.markdown or "防御" in overlay.markdown
+        assert "session_overlay" in overlay.markdown
+
+    def test_render_weekly_sections_omits_overlay_card_without_logs(self):
+        from agent_reach.daily_run.weekly_report import WeeklyReport, render_weekly_sections
+
+        report = WeeklyReport(
+            week_start=date(2026, 9, 1),
+            week_end=date(2026, 9, 5),
+            start_total=100000,
+            end_total=101000,
+            weekly_pnl=1000,
+            weekly_pnl_pct=1.0,
+            realized_pnl=0,
+            overlay_stats={"days": 0},
+        )
+        labels = [s.label for s in render_weekly_sections(report)]
+        assert "量化Overlay" not in labels

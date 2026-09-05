@@ -43,6 +43,22 @@ def is_continuous_session(dt: Optional[datetime] = None) -> bool:
     return any(start <= t < end for start, end in CONTINUOUS_SESSIONS)
 
 
+def is_morning_session(dt: Optional[datetime] = None) -> bool:
+    """True during A-share morning continuous session (09:30-11:30 Asia/Shanghai)."""
+    now = dt or datetime.now(_SH_TZ)
+    now = now.replace(tzinfo=_SH_TZ) if now.tzinfo is None else now.astimezone(_SH_TZ)
+    t = now.time()
+    return time(9, 30) <= t < time(11, 30)
+
+
+def is_afternoon_session(dt: Optional[datetime] = None) -> bool:
+    """True during A-share afternoon continuous session (13:00-14:57 Asia/Shanghai)."""
+    now = dt or datetime.now(_SH_TZ)
+    now = now.replace(tzinfo=_SH_TZ) if now.tzinfo is None else now.astimezone(_SH_TZ)
+    t = now.time()
+    return time(13, 0) <= t < time(14, 57)
+
+
 def is_lunch_break(dt: Optional[datetime] = None) -> bool:
     """True during A-share lunch break (11:30-13:00 Asia/Shanghai).
 

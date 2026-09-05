@@ -293,6 +293,24 @@ def test_compute_day_realized_pnl_prefers_stored_sell_fields():
     assert compute_realized_pnl(day_trades) != 2025.2
 
 
+def test_compute_day_realized_pnl_empty_day_returns_zero_not_cumulative():
+    prior = [
+        {
+            "at": "2026-09-01T02:16:03+00:00",
+            "actions": [
+                {
+                    "side": "sell",
+                    "code": "000725",
+                    "shares": 1300,
+                    "realized_pnl": -2080.16,
+                }
+            ],
+        }
+    ]
+    assert compute_day_realized_pnl([], prior_trades=prior) == 0.0
+    assert compute_day_realized_pnl([], prior_trades=prior, use_stored=False) == 0.0
+
+
 def test_annotate_ledger_sell_pnl_overwrites_wrong_stored_fields():
     prior = [
         {

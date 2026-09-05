@@ -158,6 +158,7 @@ def evaluate_buy_deploy_step_up(
     period_pnl: Optional[float] = None,
     period_pnl_pct: Optional[float] = None,
     defensive_trim: bool = False,
+    settings: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Gate deploy_ratio step-up on P&L, defensive signals, and counterfactual MTM."""
     scope = "weekly" if data.get("scope") == "weekly" else "daily"
@@ -182,6 +183,15 @@ def evaluate_buy_deploy_step_up(
         block_reasons.append(
             f"少买部分收盘 MTM {float(counterfactual_pnl):+,.0f} 未验证加仓机会"
         )
+    if settings is not None:
+        from agent_reach.daily_run.quant_calibration import forecast_hit_rate_gate, rolling_buy_mtm_gate
+
+        mtm_pass, mtm_detail = rolling_buy_mtm_gate(settings=settings)
+        if not mtm_pass and mtm_detail:
+            block_reasons.append(mtm_detail)
+        hit_pass, hit_detail = forecast_hit_rate_gate(settings=settings)
+        if not hit_pass and hit_detail:
+            block_reasons.append(hit_detail)
 
     eligible = baseline_better_notional and not block_reasons
     return {
@@ -1305,6 +1315,7 @@ def summarize_buy_whatif_for_harness(
         period_pnl=weekly_pnl,
         period_pnl_pct=weekly_pnl_pct,
         defensive_trim=bool(defensive_trim),
+        settings=settings,
     )
     counterfactual_pnl = float(step_up.get("counterfactual_pnl") or 0)
     if step_up.get("baseline_better_notional"):

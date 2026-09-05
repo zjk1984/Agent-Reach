@@ -766,19 +766,22 @@ def compute_day_realized_pnl(
     use_stored: bool = True,
 ) -> float:
     """Day realized P&L: prefer stored sell fields, else FIFO replay with buy history."""
+    if not day_trades:
+        return 0.0
     if use_stored:
         stored = sum_stored_realized_pnl(day_trades)
         if stored is not None:
             return stored
-    merged = list(prior_trades or []) + list(day_trades or [])
-    if not merged:
+    day_s = ""
+    for entry in day_trades:
+        day_s = str(entry.get("at") or "")[:10]
+        if day_s:
+            break
+    if not day_s:
         return 0.0
-    day_s = str(day_trades[0].get("at") or "")[:10] if day_trades else ""
-    if not day_s and day_trades:
-        day_s = ""
+    merged = list(prior_trades or []) + list(day_trades)
     rows = replay_realized_sells(merged, opening_costs=opening_costs)
-    if day_s:
-        rows = [r for r in rows if r.date == day_s]
+    rows = [r for r in rows if r.date == day_s]
     return round(sum(r.realized_pnl for r in rows), 2)
 
 

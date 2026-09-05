@@ -801,6 +801,17 @@ def _apply_sell(
             sell_ratio_override=effective_ratio,
         )
         sell_analysis = {**sell_analysis, "sell_ratio": effective_ratio, "sell_shares": sell_shares}
+    elif sell_kind == "defensive_trim" and sell_ratio_override is not None:
+        capped = min(float(sell_analysis.get("sell_ratio") or 1.0), float(sell_ratio_override))
+        code_norm = _normalize_code(str(target.get("code") or ""))
+        sell_shares = resolve_deep_loss_sell_shares(
+            min(int(target.get("shares") or 0), sellable),
+            code_norm,
+            settings,
+            is_deep_loss=bool(sell_analysis.get("is_deep_loss")),
+            sell_ratio_override=capped,
+        )
+        sell_analysis = {**sell_analysis, "sell_ratio": capped, "sell_shares": sell_shares}
 
     shares = min(int(sell_analysis["sell_shares"] or 0), sellable)
     # Ceiling for lot rounding is `sellable`, not the raw holding total: T+1-locked

@@ -362,9 +362,9 @@ def test_render_prune_markdown_and_forecast_hook(storage_env):
 
     result = run_scheduled_prune(settings=settings, root=storage_env["root"], dry_run=True)
     md = render_prune_markdown(result, settings=settings)
-    assert "周日存储维护完成" in md
-    assert "保留策略" in md
-    assert "runs manifest" in md
+    assert "周日存储维护" in md
+    assert "安全策略" in md
+    assert "trade" in md
 
 
 def test_run_forecast_runs_storage_prune(monkeypatch):

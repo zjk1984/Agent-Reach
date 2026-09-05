@@ -18,9 +18,13 @@ def save_weekly_digest(report: dict[str, Any], *, week_end: Optional[str] = None
     path = digest_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     macro_signals = dict(report.get("macro_signals") or {})
+    overlay_stats = dict(report.get("overlay_stats") or {})
     record = {
         "saved_at": today_shanghai().isoformat(),
         "week_end": week_end or report.get("week_end"),
+        "week_start": report.get("week_start"),
+        "overlay_stats_source": overlay_stats.get("source") or "empty",
+        "overlay_stats_quality": overlay_stats.get("data_quality") or "missing",
         "hot_sectors": report.get("hot_sectors") or [],
         "sector_research": report.get("sector_research") or [],
         "sector_groups": report.get("sector_groups") or {},
@@ -29,6 +33,7 @@ def save_weekly_digest(report: dict[str, Any], *, week_end: Optional[str] = None
         "macro_signals": macro_signals,
         "watchlist_intel": report.get("watchlist_intel") or {},
         "xueqiu_exa_research": macro_signals.get("xueqiu_exa_research") or [],
+        "overlay_stats": overlay_stats,
     }
     path.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return path

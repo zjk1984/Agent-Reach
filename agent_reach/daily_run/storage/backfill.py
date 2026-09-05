@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date
 from pathlib import Path
 from typing import Any, Optional
 
@@ -162,6 +163,9 @@ def _backfill_roadmap(store, base: Path, stats: dict[str, int]) -> None:
         on_rejected_strategy,
         on_rules_summary,
         on_runtime_overlay,
+        on_session_overlay_daily,
+        on_close_handoff,
+        on_week_open_overlay,
         on_skill_changelog,
         on_skill_fragment,
         on_trade_case,
@@ -374,3 +378,42 @@ def _backfill_roadmap(store, base: Path, stats: dict[str, int]) -> None:
         if path.exists():
             on_skill_fragment(name.replace(".md", ""), path.read_text(encoding="utf-8"), source_path=str(path))
             stats["skill_doc"] = stats.get("skill_doc", 0) + 1
+
+    overlay_log = base / "overlay_log"
+    if overlay_log.is_dir():
+        from agent_reach.daily_run.overlay_telemetry import _coerce_v2_record
+
+        for path in sorted(overlay_log.glob("*.json")):
+            try:
+                row = json.loads(path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                continue
+            if not isinstance(row, dict):
+                continue
+            day_s = path.stem
+            daily = _coerce_v2_record(row, date.fromisoformat(day_s))
+            on_session_overlay_daily(day_s, daily, source_path=str(path))
+            stats["session_overlay_daily"] = stats.get("session_overlay_daily", 0) + 1
+
+    handoff_dir = base / "handoff"
+    if handoff_dir.is_dir():
+        for path in sorted(handoff_dir.glob("close_*.json")):
+            if path.name == "last_close_handoff.json":
+                continue
+            try:
+                row = json.loads(path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                continue
+            if isinstance(row, dict):
+                on_close_handoff(row, source_path=str(path))
+                stats["close_handoff"] = stats.get("close_handoff", 0) + 1
+        for path in sorted(handoff_dir.glob("week_open_*.json")):
+            if path.name == "last_week_open_overlay.json":
+                continue
+            try:
+                row = json.loads(path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                continue
+            if isinstance(row, dict):
+                on_week_open_overlay(row, source_path=str(path))
+                stats["week_open_overlay"] = stats.get("week_open_overlay", 0) + 1

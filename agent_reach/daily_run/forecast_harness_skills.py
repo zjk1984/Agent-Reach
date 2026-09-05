@@ -45,16 +45,35 @@ def run_forecast_harness_refinements(
 
     harness_cfg = cfg.get("harness") or {}
     jobs = harness_cfg.get("jobs") or {}
-    if not isinstance(jobs, dict) or jobs.get("finance_research", True) is not False:
-        fr_cfg = cfg.get("finance_research") or {}
-        if fr_cfg.get("run_on_forecast", True) is not False:
-            from agent_reach.daily_run.finance_research_harness import apply_finance_research_harness_refinement
+    weekly_cfg = cfg.get("weekly_report") or {}
+    wf_cfg = cfg.get("week_forecast") or {}
+    skip_finance = (
+        bool(wf_cfg.get("skip_finance_research_if_weekly_digest", False))
+        and weekly_cfg.get("enabled", True) is not False
+    )
+    if skip_finance:
+        from agent_reach.daily_run.weekly_digest import load_weekly_digest
 
-            report.finance_research = apply_finance_research_harness_refinement(
-                {"week_start": forecast.get("week_start"), "week_end": forecast.get("week_end")},
-                settings=cfg,
-                forecast=forecast,
-            )
+        skip_finance = bool(load_weekly_digest())
+
+    if not isinstance(jobs, dict) or jobs.get("finance_research", True) is not False:
+        if skip_finance:
+            report.finance_research = {
+                "skipped": True,
+                "reason": "weekly digest available; finance_research deferred to Saturday",
+            }
+        else:
+            fr_cfg = cfg.get("finance_research") or {}
+            if fr_cfg.get("run_on_forecast", True) is not False:
+                from agent_reach.daily_run.finance_research_harness import (
+                    apply_finance_research_harness_refinement,
+                )
+
+                report.finance_research = apply_finance_research_harness_refinement(
+                    {"week_start": forecast.get("week_start"), "week_end": forecast.get("week_end")},
+                    settings=cfg,
+                    forecast=forecast,
+                )
 
     report.effective_overlay = effective_overlay_snapshot(cfg)
     return report

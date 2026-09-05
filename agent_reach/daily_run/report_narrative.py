@@ -334,8 +334,11 @@ def _narrative_supplement_fields(
 
         norm = str(code).strip()
         intel_by = snapshot.get("watchlist_intel") or {}
+        intel_summary = intel_line_for_code(intel_by, norm)
+        if not intel_summary and intel_by:
+            intel_summary = watchlist_intel_narrative_summary(snapshot=snapshot)
         out = {
-            "watchlist_intel_summary": intel_line_for_code(intel_by, norm),
+            "watchlist_intel_summary": intel_summary,
             "xueqiu_stock_search_summary": symbol_stock_search_summary(
                 norm,
                 macro_signals or snapshot.get("macro_signals"),
@@ -698,7 +701,7 @@ def _morning_deterministic(ctx: dict[str, Any]) -> dict[str, Any]:
         or ctx.get("portfolio_hot_post_summary")
         or ctx.get("xueqiu_hot_summary")
     )
-    if overlap and ctx.get("portfolio_scope") != "symbol":
+    if overlap:
         focus.insert(1, overlap[:100])
     for idx, extra in enumerate(intel_extras):
         focus.insert(2 + idx, extra)
@@ -868,7 +871,7 @@ def _merged_morning_deterministic(ctx: dict[str, Any]) -> dict[str, Any]:
         or ctx.get("portfolio_hot_post_summary")
         or ctx.get("xueqiu_hot_summary")
     )
-    if overlap and ctx.get("portfolio_scope") != "symbol":
+    if overlap:
         focus.insert(1, overlap[:100])
     for idx, extra in enumerate(_narrative_intel_focus(ctx)):
         focus.insert(2 + idx, extra)

@@ -84,6 +84,7 @@ class WeeklyReport:
     brinson_attribution: dict[str, Any] = field(default_factory=dict)
     strategy_health: dict[str, Any] = field(default_factory=dict)
     pending_issues: dict[str, Any] = field(default_factory=dict)
+    overlay_stats: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -152,6 +153,7 @@ class WeeklyReport:
             "brinson_attribution": self.brinson_attribution,
             "strategy_health": self.strategy_health,
             "pending_issues": self.pending_issues,
+            "overlay_stats": self.overlay_stats,
         }
 
 
@@ -1427,6 +1429,18 @@ def generate_weekly_report(
         settings=settings,
         watchlist_intel=watchlist_intel,
     )
+    from agent_reach.daily_run.close_morning_handoff import load_close_handoff
+
+    handoff = load_close_handoff(close_day=week_end, settings=settings) or {}
+    saved_outlook = handoff.get("next_week_outlook")
+    if isinstance(saved_outlook, dict) and saved_outlook.get("operation_plan"):
+        next_week_outlook = {
+            "operation_plan": list(saved_outlook.get("operation_plan") or []),
+            "risk_calendar": list(saved_outlook.get("risk_calendar") or []),
+            "next_week_start": saved_outlook.get("next_week_start") or next_week_outlook.get("next_week_start"),
+            "next_week_end": saved_outlook.get("next_week_end") or next_week_outlook.get("next_week_end"),
+            "source": "close_handoff",
+        }
 
     outlook_backtrack: dict[str, Any] = {}
     from agent_reach.daily_run.weekly_close_loop import (
@@ -1565,6 +1579,18 @@ def generate_weekly_report(
         strategy_health=strategy_health,
         pending_issues=pending_issues,
     )
+    try:
+        from agent_reach.daily_run.overlay_telemetry import aggregate_week_overlay_stats
+
+        report.overlay_stats = aggregate_week_overlay_stats(week_start, week_end, settings=settings)
+    except Exception:
+        report.overlay_stats = {
+            "days": 0,
+            "log_days": 0,
+            "data_quality": "error",
+            "source": "empty",
+        }
+    return report
 
 
 @dataclass
@@ -2037,6 +2063,13 @@ def render_weekly_sections(report: WeeklyReport) -> list[WeeklySection]:
     if any(line.strip() for line in strategy_lines):
         sections.append(WeeklySection("策略验证", _join_section_lines(strategy_lines)))
 
+    from agent_reach.daily_run.overlay_telemetry import render_week_overlay_stats_markdown
+
+    overlay_body = render_week_overlay_stats_markdown(report.overlay_stats or {})
+    if overlay_body:
+        overlay_lines = _period_header_lines(report, continuation=True) + overlay_body
+        sections.append(WeeklySection("量化Overlay", _join_section_lines(overlay_lines)))
+
     market_lines = _period_header_lines(report, continuation=True) + _render_market_lines(report)
     wl_update = report.watchlist_candidates_update or {}
     if wl_update.get("candidates") or wl_update.get("message"):
@@ -2078,6 +2111,13 @@ def render_weekly_sections(report: WeeklyReport) -> list[WeeklySection]:
     if insight_body:
         insight_lines = _period_header_lines(report, continuation=True) + insight_body
         sections.append(WeeklySection("学习·改进", _join_section_lines(insight_lines)))
+
+    from agent_reach.daily_run.xueqiu_hot_display import render_xueqiu_hot_markdown
+
+    xueqiu_md = render_xueqiu_hot_markdown(report.macro_signals or {})
+    if xueqiu_md.strip():
+        xueqiu_lines = _period_header_lines(report, continuation=True) + [xueqiu_md]
+        sections.append(WeeklySection("雪球热门", _join_section_lines(xueqiu_lines)))
 
     from agent_reach.daily_run.deepseek_interpretation_cards import render_deepseek_interpretation_markdown
 

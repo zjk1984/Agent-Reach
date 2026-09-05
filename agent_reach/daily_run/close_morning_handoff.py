@@ -206,16 +206,42 @@ def collect_close_positions(ctx: Any) -> dict[str, dict[str, Any]]:
 
 
 def build_close_handoff(ctx: Any) -> dict[str, Any]:
+    from agent_reach.daily_run.quant_calibration import build_next_day_session_seed
     from agent_reach.daily_run.trade_calendar import today_shanghai
 
     day = today_shanghai()
-    return {
+    settings = getattr(ctx, "settings", None)
+    payload: dict[str, Any] = {
         "close_date": day.isoformat(),
         "tomorrow_focus": collect_tomorrow_focus_items(ctx),
         "watch_risks": collect_watch_risk_items(ctx),
         "positions": collect_close_positions(ctx),
         "portfolio_total": _optional_float((ctx.portfolio_summary or {}).get("end_total")),
+        "next_day_session_seed": build_next_day_session_seed(
+            portfolio_summary=ctx.portfolio_summary,
+            settings=settings,
+        ),
     }
+    if day.weekday() == 4:
+        pf = ctx.portfolio_summary or {}
+        try:
+            from agent_reach.daily_run.weekly_signals import build_next_week_outlook
+
+            outlook = build_next_week_outlook(
+                week_end=day,
+                holdings=list(pf.get("holdings") or []),
+                watchlist=list(pf.get("watchlist") or []),
+                settings=settings,
+            )
+            payload["next_week_outlook"] = {
+                "operation_plan": outlook.get("operation_plan") or [],
+                "risk_calendar": outlook.get("risk_calendar") or [],
+                "next_week_start": outlook.get("next_week_start"),
+                "next_week_end": outlook.get("next_week_end"),
+            }
+        except Exception:
+            pass
+    return payload
 
 
 def save_close_handoff(payload: dict[str, Any]) -> Path:
@@ -230,6 +256,12 @@ def save_close_handoff(payload: dict[str, Any]) -> Path:
     path = close_handoff_path(day)
     _write_handoff(path, payload)
     _write_handoff(last_close_handoff_path(), payload)
+    try:
+        from agent_reach.daily_run.storage.hooks import on_close_handoff
+
+        on_close_handoff(payload, source_path=str(path))
+    except Exception:
+        pass
     return path
 
 
@@ -309,7 +341,12 @@ def collect_morning_predictions(ctx: Any, action_rows: list[dict[str, Any]]) -> 
     return items[:6]
 
 
-def build_morning_handoff(ctx: Any, action_rows: list[dict[str, Any]]) -> dict[str, Any]:
+def build_morning_handoff(
+    ctx: Any,
+    action_rows: list[dict[str, Any]],
+    *,
+    am_open_overlay: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
     from agent_reach.daily_run.trade_calendar import today_shanghai
 
     close_handoff = getattr(ctx, "close_handoff", None) or {}
@@ -322,13 +359,16 @@ def build_morning_handoff(ctx: Any, action_rows: list[dict[str, Any]]) -> dict[s
         target = _optional_float(row.get("target_weight_pct"))
         checklist.append({**row, "code": code, "current_weight_pct": current, "target_weight_pct": target})
 
-    return {
+    payload = {
         "morning_date": today_shanghai().isoformat(),
         "source_close_date": close_handoff.get("close_date"),
         "action_checklist": checklist,
         "positions_at_morning": dict(close_handoff.get("positions") or {}),
         "morning_predictions": collect_morning_predictions(ctx, action_rows),
     }
+    if am_open_overlay:
+        payload["am_open_overlay"] = dict(am_open_overlay)
+    return payload
 
 
 def save_morning_handoff(payload: dict[str, Any]) -> Path:

@@ -267,6 +267,16 @@ _PROFIT_LOCK_NEUTRAL: dict[str, float] = {
     "pullback_from_high_pct": 1.5,
 }
 
+_EVOLVED_HOLD_DEBOUNCE_KEYS: tuple[str, ...] = (
+    "required_strikes",
+    "hold_sell_ratio_cap",
+)
+
+_HOLD_DEBOUNCE_NEUTRAL: dict[str, float] = {
+    "required_strikes": 2.0,
+    "hold_sell_ratio_cap": 0.15,
+}
+
 _DEFAULT_EVAL_TRENDS: tuple[str, ...] = (
     "turning_up",
     "turning_down",
@@ -397,6 +407,12 @@ HARNESS_CONSUMER_HELPERS: dict[str, str] = {
     "min_position_20d": "profit_lock_policy_default(settings, 'min_position_20d')",
     "min_unrealized_gain_pct": "profit_lock_policy_default(settings, 'min_unrealized_gain_pct')",
     "pullback_from_high_pct": "profit_lock_policy_default(settings, 'pullback_from_high_pct')",
+    "hold_debounce_required_strikes": (
+        "hold_debounce_policy_default(settings, 'required_strikes')"
+    ),
+    "hold_debounce_hold_sell_ratio_cap": (
+        "hold_debounce_policy_default(settings, 'hold_sell_ratio_cap')"
+    ),
 }
 
 
@@ -733,9 +749,17 @@ def threshold_default(settings: dict[str, Any], key: str) -> float:
     """Effective threshold; harness-evolved keys ignore static ``thresholds.*`` pollution."""
     thresholds = settings.get("thresholds") or {}
     if key in _EVOLVED_THRESHOLD_KEYS and threshold_mode(settings, key) == "harness":
+        from agent_reach.daily_run.am_open_overlay import am_open_overlay_active
         from agent_reach.daily_run.intraday_rebound import intraday_rebound_active
+        from agent_reach.daily_run.pm_session_overlay import pm_session_overlay_active
+        from agent_reach.daily_run.week_open_overlay import week_open_overlay_active
 
-        if intraday_rebound_active(settings):
+        if (
+            intraday_rebound_active(settings)
+            or pm_session_overlay_active(settings)
+            or am_open_overlay_active(settings)
+            or week_open_overlay_active(settings)
+        ):
             return float(thresholds.get(key, _HARNESS_NEUTRAL[key]))
         from agent_reach.daily_run.settings import effective_settings
 
@@ -1966,6 +1990,26 @@ def apply_harness_policy_overlay(settings: dict[str, Any]) -> dict[str, Any]:
     for key in _EVOLVED_PROFIT_LOCK_KEYS:
         profit_lock_block[key] = float(effective_profit_lock.get(key, _PROFIT_LOCK_NEUTRAL[key]))
     intraday["profit_lock"] = profit_lock_block
+    base_hold_debounce = resolve_harness_base_hold_debounce_policy(cfg)
+    effective_hold_debounce = resolve_harness_hold_debounce_policy(state, settings=cfg)
+    harness_meta["hold_debounce_policy"] = effective_hold_debounce
+    hold_debounce_meta = harness_hold_debounce_overlay_meta(
+        base_hold_debounce, effective_hold_debounce
+    )
+    if hold_debounce_meta:
+        harness_meta["hold_debounce_overlay"] = hold_debounce_meta
+    defensive_trim_block = dict(intraday.get("defensive_trim") or {})
+    hold_debounce_block = dict(defensive_trim_block.get("hold_debounce") or {})
+    hold_debounce_block["required_strikes"] = int(
+        round(float(effective_hold_debounce.get("required_strikes", _HOLD_DEBOUNCE_NEUTRAL["required_strikes"])))
+    )
+    hold_debounce_block["hold_sell_ratio_cap"] = float(
+        effective_hold_debounce.get(
+            "hold_sell_ratio_cap", _HOLD_DEBOUNCE_NEUTRAL["hold_sell_ratio_cap"]
+        )
+    )
+    defensive_trim_block["hold_debounce"] = hold_debounce_block
+    intraday["defensive_trim"] = defensive_trim_block
     cfg["intraday"] = intraday
     base_bad_trade = resolve_harness_base_bad_trade_policy(cfg)
     effective_bad_trade = resolve_harness_bad_trade_policy(state, settings=cfg)
@@ -3421,6 +3465,121 @@ def _profit_lock_policy(settings: dict[str, Any]) -> dict[str, float]:
 
 def profit_lock_policy_default(settings: dict[str, Any], key: str) -> float:
     return float(_profit_lock_policy(settings).get(key, _PROFIT_LOCK_NEUTRAL.get(key, 0.0)))
+
+
+def _hold_debounce_evolution_key(key: str) -> str:
+    return f"hold_debounce_{key}"
+
+
+def hold_debounce_policy_base(settings: dict[str, Any], key: str) -> float:
+    block = dict(
+        (((settings.get("intraday") or {}).get("defensive_trim") or {}).get("hold_debounce") or {})
+    )
+    if key in block:
+        return float(block[key])
+    return float(_HOLD_DEBOUNCE_NEUTRAL.get(key, 0.0))
+
+
+def resolve_harness_base_hold_debounce_policy(settings: dict[str, Any]) -> dict[str, float]:
+    return {key: hold_debounce_policy_base(settings, key) for key in _EVOLVED_HOLD_DEBOUNCE_KEYS}
+
+
+def _hold_debounce_mode(settings: dict[str, Any], key: str) -> str:
+    return evolution_mode(settings, _hold_debounce_evolution_key(key))
+
+
+def _apply_hold_debounce_policy_evolution(
+    merged: dict[str, float],
+    state: Any,
+    *,
+    settings: dict[str, Any],
+) -> dict[str, float]:
+    signals = resolve_harness_trade_signals(state, settings=settings)
+
+    def _adjust_strikes(delta: float) -> None:
+        if _hold_debounce_mode(settings, "required_strikes") != "harness":
+            return
+        merged["required_strikes"] = float(merged.get("required_strikes", 2.0)) + delta
+
+    def _adjust_cap(delta: float) -> None:
+        if _hold_debounce_mode(settings, "hold_sell_ratio_cap") != "harness":
+            return
+        merged["hold_sell_ratio_cap"] = float(merged.get("hold_sell_ratio_cap", 0.15)) + delta
+
+    if _overlay_has_phrase(state, "卖早了", settings=settings):
+        _adjust_strikes(1.0)
+        _adjust_cap(-0.05)
+    if _overlay_has_phrase(state, "周日计划", settings=settings) and _overlay_has_phrase(
+        state, "持有", settings=settings
+    ):
+        _adjust_strikes(1.0)
+        _adjust_cap(-0.03)
+    if _overlay_has_phrase(state, "卖晚了", settings=settings):
+        _adjust_strikes(-1.0)
+        _adjust_cap(0.05)
+    if signals.get("defensive_trim") or signals.get("pnl_target_miss"):
+        _adjust_strikes(1.0)
+        _adjust_cap(-0.03)
+    elif signals.get("mss_recovery") or signals.get("macro_warming"):
+        _adjust_strikes(-1.0)
+        _adjust_cap(0.02)
+    return merged
+
+
+def resolve_harness_hold_debounce_policy(
+    state: Any,
+    *,
+    settings: dict[str, Any],
+) -> dict[str, float]:
+    merged = resolve_harness_base_hold_debounce_policy(settings)
+    if not _overlay_enabled(settings):
+        return merged
+    merged = _apply_hold_debounce_policy_evolution(merged, state, settings=settings)
+    if _hold_debounce_mode(settings, "required_strikes") == "harness":
+        merged["required_strikes"] = max(
+            1.0, min(4.0, float(merged.get("required_strikes", 2.0)))
+        )
+    else:
+        merged["required_strikes"] = hold_debounce_policy_base(settings, "required_strikes")
+    if _hold_debounce_mode(settings, "hold_sell_ratio_cap") == "harness":
+        merged["hold_sell_ratio_cap"] = max(
+            0.05, min(0.35, float(merged.get("hold_sell_ratio_cap", 0.15)))
+        )
+    else:
+        merged["hold_sell_ratio_cap"] = hold_debounce_policy_base(
+            settings, "hold_sell_ratio_cap"
+        )
+    return merged
+
+
+def harness_hold_debounce_overlay_meta(
+    base_policy: dict[str, float],
+    effective_policy: dict[str, float],
+) -> dict[str, Any]:
+    changed: dict[str, dict[str, float]] = {}
+    for key in _EVOLVED_HOLD_DEBOUNCE_KEYS:
+        base_val = float(base_policy.get(key, _HOLD_DEBOUNCE_NEUTRAL.get(key, 0.0)))
+        eff_val = float(effective_policy.get(key, base_val))
+        threshold = 0.5 if key == "required_strikes" else 0.01
+        if abs(eff_val - base_val) >= threshold:
+            changed[key] = {"base": base_val, "effective": eff_val}
+    return changed
+
+
+def _hold_debounce_policy(settings: dict[str, Any]) -> dict[str, float]:
+    runtime = settings.get("harness_runtime") or {}
+    policy = runtime.get("hold_debounce_policy")
+    if policy:
+        return {k: float(v) for k, v in policy.items()}
+    if _overlay_enabled(settings):
+        from agent_reach.daily_run.harness import load_harness
+
+        return resolve_harness_hold_debounce_policy(load_harness(), settings=settings)
+    return resolve_harness_base_hold_debounce_policy(settings)
+
+
+def hold_debounce_policy_default(settings: dict[str, Any], key: str) -> float:
+    return float(_hold_debounce_policy(settings).get(key, _HOLD_DEBOUNCE_NEUTRAL.get(key, 0.0)))
 
 
 def symbol_score_weight_base(settings: dict[str, Any], key: str) -> float:

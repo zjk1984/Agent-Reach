@@ -121,7 +121,7 @@ def test_run_midday_records_source_midday_when_record_scan_enabled(mock_eval, mo
 @patch("agent_reach.daily_run.midday.apply_midday_macro_refresh", side_effect=lambda s, **_: s)
 @patch("agent_reach.daily_run.intraday.record_scan_from_evaluation")
 @patch("agent_reach.daily_run.pipeline.evaluate_snapshot")
-def test_run_midday_macro_only_skips_record_scan(mock_eval, mock_record, _mock_macro):
+def test_run_midday_macro_only_skips_record_scan(mock_eval, mock_record, mock_macro):
     from agent_reach.daily_run.intraday import IntradayState
 
     state = IntradayState(
@@ -177,6 +177,45 @@ def test_run_midday_shows_audit_warning_without_blocking(mock_eval, mock_record,
     assert "数据审计提示" in result["markdown"]
     assert "行情覆盖率不足" in result["markdown"]
     assert "quote missing" in result["markdown"]
+
+
+@patch("agent_reach.daily_run.midday_handoff.save_midday_handoff")
+@patch(
+    "agent_reach.daily_run.midday.apply_midday_macro_refresh",
+    side_effect=lambda s, **_: {**s, "macro_summary": "午休宏观 refresh"},
+)
+def test_run_midday_card_layout_runs_macro_refresh(mock_macro, _mock_save):
+    from agent_reach.daily_run.intraday import IntradayState
+
+    state = IntradayState(date="2026-08-31", scans=[{"scan_id": "S7", "mss_final": 50.0}])
+    handoff = {
+        "morning_date": "2026-08-31",
+        "action_checklist": [{"code": "688008", "name": "澜起", "operation": "持有", "trigger": "—"}],
+    }
+    with patch("agent_reach.daily_run.intraday.load_state", return_value=state), patch(
+        "agent_reach.daily_run.macro_collector.fetch_intraday_xueqiu_cross_alerts",
+        return_value={},
+    ), patch(
+        "agent_reach.daily_run.auditor.run_data_audit",
+        return_value=type("A", (), {"passed": True, "warnings": [], "issues": []})(),
+    ), patch(
+        "agent_reach.daily_run.close_morning_handoff.load_morning_handoff",
+        return_value=handoff,
+    ), patch(
+        "agent_reach.daily_run.close_morning_handoff.load_close_handoff_for_morning",
+        return_value=None,
+    ):
+        result = run_midday(
+            {"code": "688008", "portfolio": {"holdings": []}},
+            settings={
+                "report": {"midday_card_layout": "cards"},
+                "midday": {"enabled": True, "macro_refresh": True, "record_scan": False},
+            },
+            push=False,
+        )
+    mock_macro.assert_called_once()
+    assert "macro_refresh" in result["steps"]
+    assert result["snapshot"].get("macro_summary") == "午休宏观 refresh"
 
 
 def test_render_midday_markdown_sections():

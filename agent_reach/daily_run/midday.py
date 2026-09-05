@@ -363,7 +363,7 @@ def run_midday(
 
     card_layout = bool(mcfg.get("card_layout")) and midday_card_layout_enabled(cfg)
 
-    if mcfg["macro_refresh"] and not card_layout:
+    if mcfg["macro_refresh"]:
         enriched = apply_midday_macro_refresh(enriched, settings=cfg, config=config)
         steps.append("macro_refresh")
 
@@ -429,16 +429,37 @@ def run_midday(
     if card_layout:
         ctx = build_midday_card_context(scan_result, settings=cfg, audit=audit, narrative=narrative)
         from agent_reach.daily_run.midday_handoff import build_midday_handoff, save_midday_handoff
+        from agent_reach.daily_run.midday_content_scope import compute_halfday_pnl
+        from agent_reach.daily_run.pm_session_overlay import build_pm_session_overlay_payload
 
+        halfday = compute_halfday_pnl(
+            portfolio=dict(enriched.get("portfolio") or {}),
+            holdings_am_rows=list(ctx.holdings_am_rows or []),
+        )
+        red_count = sum(
+            1
+            for item in (ctx.anomaly_signal_items or [])
+            if isinstance(item, dict) and str(item.get("severity") or "") == "red"
+        )
+        pm_overlay = build_pm_session_overlay_payload(
+            scans=list((scan_result.get("state") or {}).get("scans") or []),
+            settings=cfg,
+            halfday_pnl_pct=halfday.get("halfday_pnl_pct"),
+            red_anomaly_count=red_count,
+            lookback_mss=scan_result.get("lookback_mss"),
+            anchor_trend=scan_result.get("anchor_trend") or scan_result.get("trend"),
+        )
         save_midday_handoff(
             build_midday_handoff(
                 ctx,
                 morning_handoff=ctx.morning_handoff,
                 portfolio=dict(enriched.get("portfolio") or {}),
                 enriched=enriched,
+                pm_session_overlay=pm_overlay,
             )
         )
         steps.append("save_midday_handoff")
+        steps.append("pm_session_overlay")
         markdown = render_midday_cards_markdown(ctx)
         steps.append("render_cards")
     else:

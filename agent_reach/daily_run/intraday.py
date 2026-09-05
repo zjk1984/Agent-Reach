@@ -13,7 +13,6 @@ from agent_reach.daily_run.lookback import compute_lookback_mss, detect_mss_tren
 from agent_reach.daily_run.defensive_trim_guards import evaluate_defensive_trim_sell
 from agent_reach.daily_run.intraday_policy import (
     effective_aggressive_entry,
-    effective_friction_hurdle,
     estimate_expected_return,
     intraday_audit_block_reason,
     kronos_buy_block_reason,
@@ -204,6 +203,9 @@ TRADE_BLOCK_MESSAGES: dict[str, str] = {
     "sell_defensive_trim": (
         "⚠️ **风控阻断：** Lookback 已进入回暖区，记忆驱动防御减仓暂缓，维持观望"
     ),
+    "sell_week_open_hold_debounce": (
+        "⚠️ **风控阻断：** 周日计划为「持有」，defensive_trim 需连续确认后再减仓"
+    ),
     "sell_profit_lock": "⚠️ **风控阻断：** 动态止盈条件未满足或今日已执行，维持观望",
 }
 
@@ -250,16 +252,31 @@ class IntradayState:
     date: str
     scans: list[dict[str, Any]] = field(default_factory=list)
     trades: list[dict[str, Any]] = field(default_factory=list)
+    hold_debounce_strikes: dict[str, int] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        return {"date": self.date, "scans": self.scans, "trades": self.trades}
+        payload: dict[str, Any] = {
+            "date": self.date,
+            "scans": self.scans,
+            "trades": self.trades,
+        }
+        if self.hold_debounce_strikes:
+            payload["hold_debounce_strikes"] = dict(self.hold_debounce_strikes)
+        return payload
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> IntradayState:
+        raw_strikes = data.get("hold_debounce_strikes") or {}
+        strikes = {
+            str(k): int(v)
+            for k, v in raw_strikes.items()
+            if str(k).strip() and v is not None
+        }
         return cls(
             date=str(data.get("date", _today_str())),
             scans=list(data.get("scans") or []),
             trades=list(data.get("trades") or []),
+            hold_debounce_strikes=strikes,
         )
 
 
@@ -517,17 +534,15 @@ def should_evaluate_trade(
     state_path: Optional[Path] = None,
 ) -> bool:
     """Heuristic: trade after ≥ trade_min_scans scans, on trend shift or every N scans."""
-    from agent_reach.daily_run.intraday_rebound import (
-        apply_intraday_rebound_overlay,
-        intraday_rebound_active,
-    )
+    from agent_reach.daily_run.intraday_rebound import intraday_rebound_active
+    from agent_reach.daily_run.pm_session_overlay import apply_intraday_session_overlays
 
     st = state or load_state(state_path)
     if settings is not None and intraday_rebound_active(settings):
         cfg = settings
     else:
         cfg = effective_settings(settings)
-        cfg = apply_intraday_rebound_overlay(cfg, st.scans)
+        cfg = apply_intraday_session_overlays(cfg, st.scans)
     sched = cfg.get("schedule", {})
     if not sched.get("intraday_trade_enabled", True):
         return False
@@ -653,9 +668,9 @@ def evaluate_trade(
     """Evaluate T_n trade opportunity using lookback MSS over recent scans."""
     cfg = effective_settings(settings)
     st = state or load_state(state_path)
-    from agent_reach.daily_run.intraday_rebound import apply_intraday_rebound_overlay
+    from agent_reach.daily_run.pm_session_overlay import apply_intraday_session_overlays
 
-    cfg = apply_intraday_rebound_overlay(cfg, st.scans)
+    cfg = apply_intraday_session_overlays(cfg, st.scans)
 
     try:
         from agent_reach.daily_run.defensive_trim_guards import maybe_persist_intraday_macro_warming
@@ -703,6 +718,7 @@ def evaluate_trade(
         expected_return_pct=expected_return_pct,
         prior_trades=st.trades,
         session_scans=st.scans,
+        hold_debounce_strikes=st.hold_debounce_strikes,
     )
 
     symbol_code = str(report.get("code") or "")
@@ -803,9 +819,9 @@ def build_intraday_trade_audit_summary(
 ) -> dict[str, Any]:
     """Dry-run trade decision for every scan; does not persist T_n or apply portfolio."""
     cfg = effective_settings(settings)
-    from agent_reach.daily_run.intraday_rebound import apply_intraday_rebound_overlay
+    from agent_reach.daily_run.pm_session_overlay import apply_intraday_session_overlays
 
-    cfg = apply_intraday_rebound_overlay(cfg, state.scans)
+    cfg = apply_intraday_session_overlays(cfg, state.scans)
     report = evaluation["report"]
     verdict = evaluation["verdict"]
     lookback_mss, lookback_detail = compute_lookback_mss(state.scans, cfg)
@@ -821,6 +837,7 @@ def build_intraday_trade_audit_summary(
         expected_return_pct=expected_return_pct,
         prior_trades=state.trades,
         session_scans=state.scans,
+        hold_debounce_strikes=state.hold_debounce_strikes,
     )
     markdown = render_intraday_trade_markdown(
         decision,
@@ -882,9 +899,9 @@ def run_intraday(
         pass
 
     st_after_scan = IntradayState.from_dict(scan_result["state"])
-    from agent_reach.daily_run.intraday_rebound import apply_intraday_rebound_overlay
+    from agent_reach.daily_run.pm_session_overlay import apply_intraday_session_overlays
 
-    cfg = apply_intraday_rebound_overlay(cfg, st_after_scan.scans)
+    cfg = apply_intraday_session_overlays(cfg, st_after_scan.scans)
     do_trade = trade or should_evaluate_trade(st_after_scan, cfg, state_path=state_path)
     skip_reason: Optional[str] = None
     if not do_trade:
@@ -1215,6 +1232,7 @@ def _decide_trade(
     expected_return_pct: Optional[float],
     prior_trades: Optional[list[dict[str, Any]]] = None,
     session_scans: Optional[list[dict[str, Any]]] = None,
+    hold_debounce_strikes: Optional[dict[str, int]] = None,
 ) -> TradeDecision:
     trading = settings.get("trading", {})
     macro_veto = macro_veto_default(settings)
@@ -1293,6 +1311,14 @@ def _decide_trade(
             settings=settings,
             trend=trend,
         )
+        if not buy_block:
+            from agent_reach.daily_run.session_overlay import week_open_trade_block
+
+            buy_block = week_open_trade_block(
+                settings,
+                str(report.get("code") or ""),
+                "buy",
+            )
         if buy_block:
             return TradeDecision(
                 action="hold",
@@ -1300,9 +1326,11 @@ def _decide_trade(
                 lookback_mss=lookback_mss,
                 lookback_detail=[],
                 trend=trend,
-                reasoning=f"已证伪策略阻断买入：{buy_block}{overlay_note}",
+                reasoning=f"已证伪策略阻断买入：{buy_block}{overlay_note}"
+                if "周日" not in buy_block
+                else f"{buy_block}{overlay_note}",
                 blocked=True,
-                block_kind="buy_rejected",
+                block_kind="buy_rejected" if "周日" not in buy_block else "week_open_plan",
                 friction_blocked=friction_blocked,
                 expected_return_pct=exp_ret,
             )
@@ -1492,61 +1520,95 @@ def _decide_trade(
             expected_return_pct=exp_ret,
         )
 
-    runtime = settings.get("harness_runtime") or {}
-    trade_signals = runtime.get("trade_signals") or {}
-    allow_defensive, defensive_block = evaluate_defensive_trim_sell(
-        settings,
-        lookback_mss=lookback_mss,
-        macro_veto=macro_veto,
-        trend=trend,
-        trade_signals=trade_signals,
-        report=report,
-        snapshot=snapshot,
-        prior_trades=prior_trades,
-    )
-    if allow_defensive:
-        if _decision_symbol_sellable(snapshot, settings, report.get("code")):
-            return TradeDecision(
-                action="sell",
-                trade_id=trade_id,
-                lookback_mss=lookback_mss,
-                lookback_detail=[],
-                trend=trend,
-                reasoning=(
-                    f"Harness MSS预测偏离/偏差信号 + 趋势 {trend}，"
-                    f"Lookback MSS {lookback_mss:.0f} ≥ 否决线 {macro_veto:.0f}，防御性减仓{overlay_note}"
-                ),
-                blocked=False,
-                friction_blocked=False,
-                expected_return_pct=exp_ret,
+    if _decision_symbol_has_holding(snapshot, report.get("code")):
+        runtime = settings.get("harness_runtime") or {}
+        trade_signals = runtime.get("trade_signals") or {}
+        allow_defensive, defensive_block = evaluate_defensive_trim_sell(
+            settings,
+            lookback_mss=lookback_mss,
+            macro_veto=macro_veto,
+            trend=trend,
+            trade_signals=trade_signals,
+            report=report,
+            snapshot=snapshot,
+            prior_trades=prior_trades,
+        )
+        from agent_reach.daily_run.hold_debounce_guards import touch_week_open_hold_debounce
+
+        hold_block: Optional[str] = None
+        hold_sell_ratio_cap: Optional[float] = None
+        if hold_debounce_strikes is not None:
+            hold_block, hold_sell_ratio_cap = touch_week_open_hold_debounce(
+                settings,
+                str(report.get("code") or ""),
+                allow_defensive=allow_defensive,
+                strikes=hold_debounce_strikes,
             )
-        deep_loss_reason = _deep_loss_sell_block_reason(snapshot, settings, report.get("code"))
-        if deep_loss_reason:
+
+        if allow_defensive:
+            if hold_block:
+                return TradeDecision(
+                    action="hold",
+                    trade_id=trade_id,
+                    lookback_mss=lookback_mss,
+                    lookback_detail=[],
+                    trend=trend,
+                    reasoning=f"{hold_block}{overlay_note}",
+                    blocked=True,
+                    block_kind="sell_week_open_hold_debounce",
+                    friction_blocked=False,
+                    expected_return_pct=exp_ret,
+                )
+            if _decision_symbol_sellable(snapshot, settings, report.get("code")):
+                return TradeDecision(
+                    action="sell",
+                    trade_id=trade_id,
+                    lookback_mss=lookback_mss,
+                    lookback_detail=[],
+                    trend=trend,
+                    reasoning=(
+                        f"Harness MSS预测偏离/偏差信号 + 趋势 {trend}，"
+                        f"Lookback MSS {lookback_mss:.0f} ≥ 否决线 {macro_veto:.0f}，防御性减仓{overlay_note}"
+                    ),
+                    blocked=False,
+                    friction_blocked=False,
+                    expected_return_pct=exp_ret,
+                    sell_kind="defensive_trim",
+                    sell_ratio_override=hold_sell_ratio_cap,
+                )
+            deep_loss_reason = _deep_loss_sell_block_reason(snapshot, settings, report.get("code"))
+            if deep_loss_reason:
+                return TradeDecision(
+                    action="hold",
+                    trade_id=trade_id,
+                    lookback_mss=lookback_mss,
+                    lookback_detail=[],
+                    trend=trend,
+                    reasoning=f"防御性减仓信号触发，但{deep_loss_reason}{overlay_note}",
+                    blocked=True,
+                    block_kind="sell_deep_loss",
+                    friction_blocked=False,
+                    expected_return_pct=exp_ret,
+                )
+        elif defensive_block:
             return TradeDecision(
                 action="hold",
                 trade_id=trade_id,
                 lookback_mss=lookback_mss,
                 lookback_detail=[],
                 trend=trend,
-                reasoning=f"防御性减仓信号触发，但{deep_loss_reason}{overlay_note}",
+                reasoning=f"{defensive_block}{overlay_note}",
                 blocked=True,
-                block_kind="sell_deep_loss",
+                block_kind="sell_defensive_trim",
                 friction_blocked=False,
                 expected_return_pct=exp_ret,
             )
-    elif defensive_block:
-        return TradeDecision(
-            action="hold",
-            trade_id=trade_id,
-            lookback_mss=lookback_mss,
-            lookback_detail=[],
-            trend=trend,
-            reasoning=f"{defensive_block}{overlay_note}",
-            blocked=True,
-            block_kind="sell_defensive_trim",
-            friction_blocked=False,
-            expected_return_pct=exp_ret,
-        )
+    elif hold_debounce_strikes is not None:
+        from agent_reach.daily_run.snapshot_builder import _normalize_code
+
+        norm = _normalize_code(str(report.get("code") or ""))
+        if norm:
+            hold_debounce_strikes[norm] = 0
 
     return TradeDecision(
         action="hold",
@@ -1562,7 +1624,9 @@ def _decide_trade(
 
 
 def _passes_friction(expected_return_pct: float, settings: dict[str, Any]) -> bool:
-    return expected_return_pct > effective_friction_hurdle(settings)
+    from agent_reach.daily_run.quant_calibration import friction_buy_blocked
+
+    return not friction_buy_blocked(expected_return_pct, settings)
 
 
 def _holding_locked(snapshot: dict[str, Any], settings: dict[str, Any]) -> bool:
@@ -1572,6 +1636,19 @@ def _holding_locked(snapshot: dict[str, Any], settings: dict[str, Any]) -> bool:
     if not holdings:
         return False
     return not any(holding_is_sellable(h, settings) for h in holdings)
+
+
+def _decision_symbol_has_holding(snapshot: dict[str, Any], code: Any) -> bool:
+    from agent_reach.daily_run.snapshot_builder import _normalize_code
+
+    target = _normalize_code(str(code or ""))
+    if not target:
+        return False
+    pf = snapshot.get("portfolio") or {}
+    for holding in pf.get("holdings") or []:
+        if _normalize_code(str(holding.get("code", ""))) == target:
+            return True
+    return False
 
 
 def _decision_symbol_sellable(

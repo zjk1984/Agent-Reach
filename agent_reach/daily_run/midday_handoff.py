@@ -122,6 +122,7 @@ def build_midday_handoff(
     morning_handoff: Optional[dict[str, Any]] = None,
     portfolio: Optional[dict[str, Any]] = None,
     enriched: Optional[dict[str, Any]] = None,
+    pm_session_overlay: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Serialize midday card outputs for close-card backtrack."""
     from agent_reach.daily_run.midday_cards import MIDDAY_DATA_CUTOFF
@@ -215,7 +216,7 @@ def build_midday_handoff(
             severity = "red" if "🔴" in text else "yellow"
             structured_anomalies.append({"severity": severity, "markdown": text})
 
-    return {
+    payload = {
         "midday_date": day.isoformat(),
         "source_morning_date": morning.get("morning_date") or day.isoformat(),
         "data_as_of": getattr(ctx, "data_as_of", None) or MIDDAY_DATA_CUTOFF,
@@ -230,6 +231,9 @@ def build_midday_handoff(
         "position_changes": position_changes,
         "morning_predictions": list(morning.get("morning_predictions") or []),
     }
+    if pm_session_overlay:
+        payload["pm_session_overlay"] = dict(pm_session_overlay)
+    return payload
 
 
 def save_midday_handoff(payload: dict[str, Any]) -> Path:
