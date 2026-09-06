@@ -6,11 +6,13 @@ from agent_reach.daily_run.close_cards import (
     CloseCardContext,
     close_card_layout_enabled,
     collect_harness_evolution_rows,
+    collect_holdings_ledger_rows,
     render_close_card_sections,
     render_close_summary_markdown,
     render_forecast_verify_markdown,
     render_harness_evolution_markdown,
     render_holdings_detail_markdown,
+    render_holdings_ledger_markdown,
     render_tomorrow_focus_markdown,
 )
 
@@ -19,22 +21,39 @@ PORTFOLIO_SUMMARY = {
     "daily_pnl": 1250.0,
     "daily_pnl_pct": 1.2,
     "cash_ratio": 0.42,
+    "cash": 42000.0,
+    "end_total": 100000.0,
+    "stock_mv": 58000.0,
+    "total_unrealized": -5000.0,
+    "watchlist_count": 2,
     "reason_lines": ["验证结论 **观察**，观察池 5 只"],
     "holdings": [
         {
             "code": "688008",
             "name": "澜起科技",
             "shares": 100,
+            "cost": 255.87,
             "price": 255.0,
+            "market_value": 25500.0,
+            "weight_pct": 25.5,
+            "day_pnl": 150.0,
+            "unrealized_pnl": -87.0,
             "change_pct": 1.5,
+            "days_held": 31,
             "sector": "半导体",
         },
         {
             "code": "002273",
             "name": "水晶光电",
             "shares": 300,
+            "cost": 34.5,
             "price": 34.0,
+            "market_value": 10200.0,
+            "weight_pct": 10.2,
+            "day_pnl": -80.0,
+            "unrealized_pnl": -150.0,
             "change_pct": -0.8,
+            "acquired_date": "2026-08-01",
             "sector": "光学",
         },
     ],
@@ -115,8 +134,33 @@ class TestCloseCardLayout:
         assert len(sections) == len(CLOSE_CARD_ORDER)
         assert [s.category for s in sections] == list(CLOSE_CARD_ORDER)
         assert sections[0].title.startswith("📊 收盘摘要 1/")
-        assert sections[2].title.startswith("🔮 预测验证")
-        assert sections[4].title.startswith("🧬 Harness 自进化")
+        assert sections[1].title.startswith("📒 持仓台账")
+        assert sections[3].title.startswith("🔮 预测验证")
+        assert sections[5].title.startswith("🧬 Harness 自进化")
+
+    def test_holdings_ledger_table(self):
+        rows = collect_holdings_ledger_rows(PORTFOLIO_SUMMARY)
+        assert len(rows) == 2
+        assert rows[0]["code"] == "688008"
+        md = render_holdings_ledger_markdown(
+            CloseCardContext(portfolio_summary=PORTFOLIO_SUMMARY, symbol_rows=SYMBOL_ROWS)
+        )
+        assert "| 澜起科技 | 688008 | 100 |" in md
+        assert "¥255.87" in md
+        assert "+¥150" in md
+        assert "31天" in md
+        assert "2026-08-01" in md
+        assert "持仓市值" in md
+        assert "观察池" in md
+        assert "兆易创新" not in md
+
+    def test_holdings_ledger_excludes_watchlist_only(self):
+        pf = {
+            **PORTFOLIO_SUMMARY,
+            "holdings": list(PORTFOLIO_SUMMARY["holdings"])
+            + [{"code": "603986", "name": "兆易创新", "shares": 0, "price": 380.0}],
+        }
+        assert len(collect_holdings_ledger_rows(pf)) == 2
 
     def test_harness_evolution_table(self):
         ctx = CloseCardContext(

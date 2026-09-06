@@ -20,6 +20,7 @@ from agent_reach.daily_run.weekly_card_metrics import (
 )
 from agent_reach.daily_run.weekly_report import (
     WeeklyReport,
+    _render_holdings_ledger_lines,
     _render_holdings_lines,
     _render_market_lines,
     _render_pnl_lines,
@@ -274,6 +275,44 @@ class TestWeeklyReportIntegration:
         md = render_weekly_markdown(report)
         assert "收益总览" in md or "总览" in md
         assert "持仓复盘" in md or "持仓周度复盘" in md
+        assert "📒 持仓台账" in md
+
+    def test_weekly_holdings_ledger_table(self):
+        report = WeeklyReport(
+            week_start=date(2026, 9, 1),
+            week_end=date(2026, 9, 5),
+            start_total=100000.0,
+            end_total=100000.0,
+            weekly_pnl=0.0,
+            weekly_pnl_pct=0.0,
+            end_stock_mv=58000.0,
+            end_cash=42000.0,
+            cash_ratio=0.42,
+            holdings_as_of="截至 2026-09-05 周五收盘",
+            holdings=[
+                {
+                    "code": "688008",
+                    "name": "澜起科技",
+                    "shares": 100,
+                    "cost": 255.87,
+                    "price": 198.0,
+                    "market_value": 19800.0,
+                    "week_chg_pct": -2.5,
+                    "week_chg": -500.0,
+                    "unrealized_pnl": -5787.0,
+                    "days_held": 31,
+                }
+            ],
+            watchlist=[{"code": "603986", "name": "兆易创新"}],
+            realized_pnl=0,
+        )
+        text = "\n".join(_render_holdings_ledger_lines(report))
+        assert "📒 持仓台账" in text
+        assert "| 澜起科技 | 688008 | 100 |" in text
+        assert "周涨跌" in text
+        assert "本周盈亏" in text
+        assert "周五净值" in text
+        assert "603986" not in text
 
     def test_render_pnl_lines_uses_new_sections(self):
         report = WeeklyReport(

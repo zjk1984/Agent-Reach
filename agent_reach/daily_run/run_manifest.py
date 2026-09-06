@@ -27,6 +27,73 @@ def runs_dir() -> Path:
     return Path.home() / ".agent-reach" / "daily_run" / "runs"
 
 
+def manifest_identity_key(record: dict[str, Any]) -> tuple[str, str, str]:
+    """Stable dedupe key: (day, job, manifest file stem)."""
+    day = str(record.get("_run_date") or record.get("date") or "")[:10]
+    job = str(record.get("job") or "")
+    path = str(record.get("_path") or record.get("source_path") or "")
+    stem = Path(path).stem if path else str(record.get("manifest_id") or record.get("started_at") or "")
+    return (day, job, stem)
+
+
+def merge_manifest_sources(
+    db_rows: list[dict[str, Any]],
+    file_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Union DB + on-disk manifests; file rows fill gaps when DB dual-write is incomplete."""
+    merged: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for row in db_rows:
+        merged[manifest_identity_key(row)] = row
+    for row in file_rows:
+        key = manifest_identity_key(row)
+        if key not in merged:
+            merged[key] = row
+    return sorted(
+        merged.values(),
+        key=lambda r: (
+            str(r.get("_run_date") or r.get("date") or ""),
+            str(r.get("job") or ""),
+            str(r.get("_path") or ""),
+        ),
+    )
+
+
+def backfill_job_run_manifests_from_files(
+    start: date,
+    end: date,
+    *,
+    settings: Optional[dict[str, Any]] = None,
+) -> int:
+    """Replay on-disk run manifests into storage (best-effort dual-write catch-up)."""
+    from agent_reach.daily_run.storage.hooks import on_job_run
+
+    count = 0
+    root = runs_dir()
+    if not root.exists():
+        return 0
+    for day_dir in sorted(root.iterdir()):
+        if not day_dir.is_dir():
+            continue
+        try:
+            day = date.fromisoformat(day_dir.name)
+        except ValueError:
+            continue
+        if not (start <= day <= end):
+            continue
+        for path in sorted(day_dir.glob("*.json")):
+            try:
+                record = json.loads(path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                continue
+            if not isinstance(record, dict) or not record.get("job"):
+                continue
+            record = dict(record)
+            record.setdefault("date", day.isoformat())
+            on_job_run(record, source_path=str(path))
+            count += 1
+    return count
+
+
 def has_job_manifest_today(job: str, *, require_feishu: bool = False) -> bool:
     """True if job already recorded under today's Shanghai date folder."""
     today = today_shanghai()
@@ -134,8 +201,28 @@ def load_run_manifests_for_range(
 
         if storage_db_reads_allowed(settings, file_path=runs_dir()):
             db_rows = read_job_run_manifests(start, end, settings=settings)
-            if db_rows:
-                return db_rows
+            file_rows: list[dict[str, Any]] = []
+            root = runs_dir()
+            if root.exists():
+                for day_dir in sorted(root.iterdir()):
+                    if not day_dir.is_dir():
+                        continue
+                    try:
+                        day = date.fromisoformat(day_dir.name)
+                    except ValueError:
+                        continue
+                    if not (start <= day <= end):
+                        continue
+                    for path in sorted(day_dir.glob("*.json")):
+                        try:
+                            record = json.loads(path.read_text(encoding="utf-8"))
+                        except (json.JSONDecodeError, OSError):
+                            continue
+                        record["_run_date"] = day.isoformat()
+                        record["_path"] = str(path)
+                        file_rows.append(record)
+            if db_rows or file_rows:
+                return merge_manifest_sources(db_rows, file_rows)
     except Exception:
         pass
 

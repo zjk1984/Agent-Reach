@@ -12,6 +12,7 @@ from agent_reach.daily_run.trade_calendar import today_shanghai
 
 CLOSE_CARD_ORDER: tuple[str, ...] = (
     "close_summary",
+    "holdings_ledger",
     "holdings_detail",
     "forecast_verify",
     "key_signals",
@@ -22,6 +23,7 @@ CLOSE_CARD_ORDER: tuple[str, ...] = (
 
 CLOSE_CARD_LABELS: dict[str, str] = {
     "close_summary": "📊 收盘摘要",
+    "holdings_ledger": "📒 持仓台账",
     "holdings_detail": "📈 持仓详情",
     "forecast_verify": "🔮 预测验证",
     "key_signals": "⚠️ 关键信号",
@@ -64,6 +66,81 @@ def _fmt_pct(value: Any) -> str:
     except (TypeError, ValueError):
         return "—"
     return f"{pct:+.2f}%"
+
+
+def _fmt_money(value: Any, *, signed: bool = False) -> str:
+    if value is None:
+        return "—"
+    try:
+        amount = float(value)
+    except (TypeError, ValueError):
+        return "—"
+    if signed:
+        sign = "+" if amount >= 0 else ""
+        return f"{sign}¥{amount:,.0f}"
+    return f"¥{amount:,.0f}"
+
+
+def _optional_float(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _fmt_price(value: Any) -> str:
+    v = _optional_float(value)
+    return f"¥{v:.2f}" if v is not None else "—"
+
+
+def _fmt_weight_pct(value: Any) -> str:
+    v = _optional_float(value)
+    return f"{v:.1f}%" if v is not None else "—"
+
+
+def collect_holdings_ledger_rows(portfolio_summary: dict[str, Any]) -> list[dict[str, Any]]:
+    """Actual holdings only (shares > 0), sorted by market value descending."""
+    rows: list[dict[str, Any]] = []
+    for raw in portfolio_summary.get("holdings") or []:
+        if not isinstance(raw, dict):
+            continue
+        shares = int(raw.get("shares") or 0)
+        if shares <= 0:
+            continue
+        code = _normalize_code(str(raw.get("code") or ""))
+        if not code:
+            continue
+        close_price = _optional_float(raw.get("price") or raw.get("week_end_price") or raw.get("close_price"))
+        market_value = _optional_float(raw.get("market_value"))
+        if market_value is None and close_price is not None:
+            market_value = round(shares * close_price, 2)
+        weight = _optional_float(raw.get("weight_pct"))
+        end_total = _optional_float(portfolio_summary.get("end_total"))
+        if weight is None and end_total and market_value:
+            weight = round(market_value / end_total * 100.0, 1)
+        change_pct = _optional_float(raw.get("change_pct") or raw.get("week_chg_pct"))
+        rows.append(
+            {
+                "code": code,
+                "name": str(raw.get("name") or code),
+                "shares": shares,
+                "cost": _optional_float(raw.get("cost")),
+                "close_price": close_price,
+                "market_value": market_value,
+                "weight_pct": weight,
+                "change_pct": change_pct,
+                "day_pnl": _optional_float(raw.get("day_pnl") or raw.get("week_chg")),
+                "unrealized_pnl": _optional_float(raw.get("unrealized_pnl")),
+                "unrealized_pct": _optional_float(raw.get("unrealized_pct")),
+                "sector": str(raw.get("sector") or raw.get("industry") or "").strip() or None,
+                "acquired_date": str(raw.get("acquired_date") or "").strip() or None,
+                "days_held": int(raw["days_held"]) if raw.get("days_held") is not None else None,
+            }
+        )
+    rows.sort(key=lambda row: row.get("market_value") or 0, reverse=True)
+    return rows
 
 
 def _benchmark_vs_portfolio(
@@ -315,6 +392,76 @@ def render_close_summary_markdown(ctx: CloseCardContext) -> str:
 
     lines.extend(["", f"**风控：** {_risk_summary(pf, ctx.technical_scenarios)}"])
     return "\n".join(lines).strip()
+
+
+def render_holdings_ledger_markdown_from_summary(
+    portfolio_summary: dict[str, Any],
+    *,
+    as_of: str = "",
+    change_col: str = "今日",
+    pnl_col: str = "当日盈亏",
+    total_label: str = "收盘净值",
+    watchlist_hint: str = "见「持仓详情」卡，非本台账",
+) -> str:
+    pf = portfolio_summary or {}
+    ledger_rows = collect_holdings_ledger_rows(pf)
+    lines: list[str] = []
+    if as_of:
+        lines.append(f"- **{as_of}**")
+
+    if not ledger_rows:
+        lines.append("当前无持仓。")
+    else:
+        lines.extend(
+            [
+                "",
+                f"| 标的 | 代码 | 股数 | 成本 | 收盘 | 市值 | 权重 | {change_col} | {pnl_col} | 浮盈 | 持有 |",
+                "|------|------|------|------|------|------|------|------|----------|------|------|",
+            ]
+        )
+        for row in ledger_rows:
+            held = "—"
+            if row.get("days_held") is not None:
+                held = f"{int(row['days_held'])}天"
+            elif row.get("acquired_date"):
+                held = str(row["acquired_date"])
+            lines.append(
+                f"| {row.get('name')} | {row.get('code')} | {row.get('shares')} "
+                f"| {_fmt_price(row.get('cost'))} | {_fmt_price(row.get('close_price'))} "
+                f"| {_fmt_money(row.get('market_value'))} | {_fmt_weight_pct(row.get('weight_pct'))} "
+                f"| {_fmt_pct(row.get('change_pct'))} | {_fmt_money(row.get('day_pnl'), signed=True)} "
+                f"| {_fmt_money(row.get('unrealized_pnl'), signed=True)} | {held} |"
+            )
+
+    footer: list[str] = []
+    stock_mv = _optional_float(pf.get("stock_mv"))
+    cash = _optional_float(pf.get("cash"))
+    end_total = _optional_float(pf.get("end_total"))
+    cash_ratio = _optional_float(pf.get("cash_ratio"))
+    total_unrealized = _optional_float(pf.get("total_unrealized"))
+    watchlist_count = int(pf.get("watchlist_count") or 0)
+
+    if stock_mv is not None:
+        footer.append(f"**持仓市值** {_fmt_money(stock_mv)}（{len(ledger_rows)} 只）")
+    if cash is not None:
+        cash_part = f"**现金** {_fmt_money(cash)}"
+        if cash_ratio is not None:
+            cash_part += f"（{cash_ratio:.0%}）"
+        footer.append(cash_part)
+    if end_total is not None:
+        footer.append(f"**{total_label}** {_fmt_money(end_total)}")
+    if total_unrealized is not None and ledger_rows:
+        footer.append(f"**累计浮盈** {_fmt_money(total_unrealized, signed=True)}")
+    if watchlist_count > 0:
+        footer.append(f"观察池 **{watchlist_count}** 只（{watchlist_hint}）")
+
+    if footer:
+        lines.extend(["", " · ".join(footer)])
+    return "\n".join(line for line in lines if line is not None).strip()
+
+
+def render_holdings_ledger_markdown(ctx: CloseCardContext) -> str:
+    return render_holdings_ledger_markdown_from_summary(ctx.portfolio_summary or {})
 
 
 def render_holdings_detail_markdown(ctx: CloseCardContext) -> str:
@@ -834,6 +981,7 @@ def render_tomorrow_focus_markdown(ctx: CloseCardContext) -> str:
 
 _CARD_RENDERERS = {
     "close_summary": render_close_summary_markdown,
+    "holdings_ledger": render_holdings_ledger_markdown,
     "holdings_detail": render_holdings_detail_markdown,
     "forecast_verify": render_forecast_verify_markdown,
     "key_signals": render_key_signals_markdown,

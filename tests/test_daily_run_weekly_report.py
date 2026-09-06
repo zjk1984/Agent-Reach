@@ -1057,3 +1057,22 @@ class TestWeeklyOverlayStatsSection:
         )
         labels = [s.label for s in render_weekly_sections(report)]
         assert "量化Overlay" not in labels
+
+
+class TestManifestMerge:
+    def test_merge_manifest_sources_fills_db_gaps_from_files(self):
+        from agent_reach.daily_run.run_manifest import merge_manifest_sources
+
+        db_rows = [
+            {"_run_date": "2026-09-01", "job": "morning", "_path": "/runs/2026-09-01/morning_a.json"},
+        ]
+        file_rows = [
+            {"_run_date": "2026-09-02", "job": "morning", "_path": "/runs/2026-09-02/morning_b.json"},
+            {"_run_date": "2026-09-01", "job": "close", "_path": "/runs/2026-09-01/close_c.json"},
+        ]
+        merged = merge_manifest_sources(db_rows, file_rows)
+        keys = {(r["_run_date"], r["job"]) for r in merged}
+        assert ("2026-09-01", "morning") in keys
+        assert ("2026-09-02", "morning") in keys
+        assert ("2026-09-01", "close") in keys
+        assert len(merged) == 3
