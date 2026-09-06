@@ -354,7 +354,7 @@ def generate_weekly_improvements(
                 "high",
                 f"缺失 {len(missing_morning)} 天早盘任务",
                 f"日期：{', '.join(missing_morning)}；无 morning manifest 会导致收盘 verify 缺基线",
-                action="检查 GHA cron 0 8 * * 1-5 与 Fork 是否 Enable scheduled workflows",
+                action="检查本地 cron（0 8 * * 1-5 morning）与 storage dual-write；缺失时可运行 manifest backfill",
             )
         )
     if missing_close:

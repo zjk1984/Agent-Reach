@@ -211,12 +211,16 @@ def build_close_handoff(ctx: Any) -> dict[str, Any]:
 
     day = today_shanghai()
     settings = getattr(ctx, "settings", None)
+    from agent_reach.daily_run.close_cards import collect_holdings_ledger_rows
+
+    pf = ctx.portfolio_summary or {}
     payload: dict[str, Any] = {
         "close_date": day.isoformat(),
         "tomorrow_focus": collect_tomorrow_focus_items(ctx),
         "watch_risks": collect_watch_risk_items(ctx),
         "positions": collect_close_positions(ctx),
-        "portfolio_total": _optional_float((ctx.portfolio_summary or {}).get("end_total")),
+        "holdings_ledger": collect_holdings_ledger_rows(pf),
+        "portfolio_total": _optional_float(pf.get("end_total")),
         "next_day_session_seed": build_next_day_session_seed(
             portfolio_summary=ctx.portfolio_summary,
             settings=settings,

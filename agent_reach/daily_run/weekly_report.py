@@ -487,6 +487,14 @@ def _mss_from_manifest(record: dict[str, Any]) -> Optional[float]:
     report = evaluation.get("report") or {}
     if report.get("mss_final") is not None:
         return float(report["mss_final"])
+    for sr in payload.get("symbol_results") or []:
+        inner = sr.get("result") or {}
+        snap = inner.get("snapshot") or {}
+        if snap.get("mss_final") is not None:
+            return float(snap["mss_final"])
+        verify = inner.get("verify") or {}
+        if verify.get("mss_current") is not None:
+            return float(verify["mss_current"])
     return None
 
 
@@ -557,24 +565,9 @@ def build_mss_trajectory(
 
 
 def _load_week_manifests(start: date, end: date) -> list[dict[str, Any]]:
-    try:
-        from agent_reach.daily_run.storage.config import storage_db_reads_allowed
-        from agent_reach.daily_run.storage.readers import read_job_run_manifests
+    from agent_reach.daily_run.run_manifest import load_run_manifests_for_range
 
-        if storage_db_reads_allowed(None, file_path=runs_dir()):
-            db_rows = read_job_run_manifests(start, end)
-            if db_rows:
-                return db_rows
-    except Exception:
-        pass
-    records: list[dict[str, Any]] = []
-    for day, path in _iter_manifest_files(start, end):
-        record = _load_manifest(path)
-        if record:
-            record["_run_date"] = day.isoformat()
-            record["_path"] = str(path)
-            records.append(record)
-    return records
+    return load_run_manifests_for_range(start, end)
 
 
 def _load_trade_ledger_range(start: date, end: date) -> list[dict[str, Any]]:
@@ -773,6 +766,8 @@ def _holding_pnl_rows(
                 "week_chg_pct": week_chg_pct,
                 "change_pct": row.get("change_pct"),
                 "sector": row.get("sector") or row.get("industry") or h.get("sector") or h.get("industry"),
+                "acquired_date": h.get("acquired_date"),
+                "days_held": h.get("days_held"),
             }
         )
     rows.sort(key=lambda x: x.get("market_value") or 0, reverse=True)
@@ -1871,6 +1866,32 @@ def _render_overview_lines(report: WeeklyReport) -> list[str]:
     return lines
 
 
+def _render_holdings_ledger_lines(report: WeeklyReport) -> list[str]:
+    from agent_reach.daily_run.close_cards import render_holdings_ledger_markdown_from_summary
+
+    total_unrealized = sum(float(h.get("unrealized_pnl") or 0) for h in (report.holdings or []))
+    summary = {
+        "holdings": list(report.holdings or []),
+        "stock_mv": report.end_stock_mv,
+        "cash": report.end_cash if report.end_cash is not None else report.cash,
+        "end_total": report.end_total,
+        "cash_ratio": report.cash_ratio,
+        "total_unrealized": total_unrealized,
+        "watchlist_count": len(report.watchlist or []),
+    }
+    body = render_holdings_ledger_markdown_from_summary(
+        summary,
+        as_of=report.holdings_as_of,
+        change_col="周涨跌",
+        pnl_col="本周盈亏",
+        total_label="周五净值",
+        watchlist_hint="见「观察池」卡，非本台账",
+    )
+    if not body:
+        return []
+    return ["## 📒 持仓台账", body, ""]
+
+
 def _render_holdings_review_lines(report: WeeklyReport) -> list[str]:
     from agent_reach.daily_run.weekly_content_scope import (
         render_holdings_stock_logic_markdown,
@@ -1879,6 +1900,7 @@ def _render_holdings_review_lines(report: WeeklyReport) -> list[str]:
     from agent_reach.daily_run.weekly_signals import render_holdings_contribution_markdown
 
     lines: list[str] = []
+    lines.extend(_render_holdings_ledger_lines(report))
     lines.extend(
         render_holdings_contribution_markdown(
             report.holdings_contribution,

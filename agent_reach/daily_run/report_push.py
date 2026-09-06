@@ -44,6 +44,7 @@ _CATEGORY_LABELS: dict[str, str] = {
     "code_review": "代码走读",
     "forecast_review": "预测回顾",
     "close_summary": "📊 收盘摘要",
+    "holdings_ledger": "📒 持仓台账",
     "holdings_detail": "📈 持仓详情",
     "forecast_verify": "🔮 预测验证",
     "key_signals": "⚠️ 关键信号",
