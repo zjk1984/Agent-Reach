@@ -2094,6 +2094,8 @@ def _apply_position_signal_evolution(
     *,
     settings: dict[str, Any],
 ) -> dict[str, float]:
+    from agent_reach.daily_run.session_regime import supportive_regime_active
+
     signals = resolve_harness_trade_signals(state, settings=settings)
     if signals.get("defensive_trim"):
         if evolution_mode(settings, "deploy_ratio") == "harness":
@@ -2153,6 +2155,13 @@ def _apply_position_signal_evolution(
             merged["deploy_ratio"] = min(float(merged.get("deploy_ratio", 1.0)), 0.45)
         if evolution_mode(settings, "max_position_pct") == "harness":
             merged["max_position_pct"] = min(float(merged.get("max_position_pct", 35.0)), 28.0)
+    supportive = supportive_regime_active(settings)
+    if supportive and not signals.get("pnl_target_miss"):
+        if evolution_mode(settings, "deploy_ratio") == "harness":
+            floor = 0.35 if signals.get("defensive_trim") else 0.5
+            merged["deploy_ratio"] = max(float(merged.get("deploy_ratio", 1.0)), floor)
+        if evolution_mode(settings, "max_position_pct") == "harness":
+            merged["max_position_pct"] = max(float(merged.get("max_position_pct", 35.0)), 30.0)
     return merged
 
 

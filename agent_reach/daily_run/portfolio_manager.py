@@ -478,6 +478,18 @@ def deep_loss_sell_analysis(
     deep = is_deep_loss_holding(holding, enriched, settings)
     loss_abs = abs(unrealized) if unrealized < -0.01 else 0.0
     cover_ratio = float(policy.get("cover_ratio", 1.0))
+    from agent_reach.daily_run.session_regime import supportive_regime_active
+
+    supportive_reallocation = False
+    if deep and supportive_regime_active(settings):
+        supportive_reallocation = True
+        reallocation_cover = float(
+            policy.get(
+                "supportive_reallocation_cover_ratio",
+                policy.get("supportive_cover_ratio", 0.35),
+            )
+        )
+        cover_ratio = min(cover_ratio, max(0.0, reallocation_cover))
     coverable = portfolio_coverable_gains(
         pf,
         enriched,
@@ -496,6 +508,13 @@ def deep_loss_sell_analysis(
     )
     ratio_key = "sell_ratio" if deep else "non_deep_loss_sell_ratio"
     effective_sell_ratio = float(policy.get(ratio_key, deep_loss_policy_default(settings, ratio_key)))
+    if supportive_reallocation:
+        reallocation_sell = float(policy.get("supportive_reallocation_sell_ratio", 0.1))
+        if reallocation_sell > 0:
+            effective_sell_ratio = max(
+                effective_sell_ratio,
+                min(1.0, reallocation_sell),
+            )
     runtime = settings.get("harness_runtime") or {}
     if runtime.get("trade_signals", {}).get("defensive_trim"):
         from agent_reach.daily_run.defensive_trim_guards import defensive_trim_effective_sell_ratio
@@ -706,6 +725,11 @@ def apply_auto_adjust(
         )
     if action == "buy":
         prefer_code = _normalize_code(str(snapshot.get("code") or ""))
+        max_position_pct_override = (
+            getattr(decision, "max_position_pct_override", None)
+            if not isinstance(decision, dict)
+            else decision.get("max_position_pct_override")
+        )
         return _apply_buy(
             pf,
             enriched,
@@ -713,6 +737,7 @@ def apply_auto_adjust(
             allow_watchlist_changes=allow_watchlist_changes,
             prefer_code=prefer_code or None,
             cash_limit_bypass=cash_limit_bypass,
+            max_position_pct_override=max_position_pct_override,
         )
 
     return ApplyResult(applied=False, portfolio=portfolio, message=f"未知决策 {action}")
@@ -896,6 +921,7 @@ def _apply_buy(
     allow_watchlist_changes: bool = False,
     prefer_code: Optional[str] = None,
     cash_limit_bypass: bool = False,
+    max_position_pct_override: Optional[float] = None,
 ) -> ApplyResult:
     holdings = list(pf.get("holdings") or [])
     held_codes = {_normalize_code(str(h.get("code", ""))) for h in holdings}
@@ -963,6 +989,8 @@ def _apply_buy(
             "deploy_ratio_override": 1.0,
             "max_position_pct_override": 100.0,
         }
+    elif max_position_pct_override is not None:
+        budget_kwargs["max_position_pct_override"] = float(max_position_pct_override)
     budget_gross = harness_buy_budget(
         total=total,
         deployable=deployable,
@@ -1043,6 +1071,7 @@ def simulate_buy_analysis(
     *,
     prefer_code: Optional[str] = None,
     cash_limit_bypass: bool = False,
+    max_position_pct_override: Optional[float] = None,
 ) -> dict[str, Any]:
     """Dry-run buy sizing under current harness rules (no portfolio mutation)."""
     from agent_reach.daily_run.harness_policy import _position_policy
@@ -1126,6 +1155,8 @@ def simulate_buy_analysis(
             "deploy_ratio_override": 1.0,
             "max_position_pct_override": 100.0,
         }
+    elif max_position_pct_override is not None:
+        budget_kwargs["max_position_pct_override"] = float(max_position_pct_override)
     budget_gross = harness_buy_budget(
         total=total,
         deployable=deployable,
@@ -1259,6 +1290,7 @@ def buy_budget_precheck_reason(
     *,
     prefer_code: str,
     cash_limit_bypass: bool = False,
+    max_position_pct_override: Optional[float] = None,
 ) -> Optional[str]:
     """Return a block reason when the decision symbol cannot afford one lot."""
     analysis = simulate_buy_analysis(
@@ -1267,6 +1299,7 @@ def buy_budget_precheck_reason(
         settings,
         prefer_code=prefer_code,
         cash_limit_bypass=cash_limit_bypass,
+        max_position_pct_override=max_position_pct_override,
     )
     if analysis.get("allowed"):
         return None

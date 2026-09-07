@@ -225,6 +225,8 @@ class TradeDecision:
     evaluation: Optional[dict[str, Any]] = None
     sell_kind: Optional[str] = None
     sell_ratio_override: Optional[float] = None
+    max_position_pct_override: Optional[float] = None
+    watchlist_breakout: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         payload = {
@@ -244,6 +246,10 @@ class TradeDecision:
             payload["sell_kind"] = self.sell_kind
         if self.sell_ratio_override is not None:
             payload["sell_ratio_override"] = self.sell_ratio_override
+        if self.max_position_pct_override is not None:
+            payload["max_position_pct_override"] = self.max_position_pct_override
+        if self.watchlist_breakout:
+            payload["watchlist_breakout"] = True
         return payload
 
 
@@ -1256,6 +1262,25 @@ def _decide_trade(
     friction_blocked = not _passes_friction(exp_ret, settings)
     blocked = verdict.blocked or report.get("blocked", False)
 
+    from agent_reach.daily_run.watchlist_breakout import evaluate_watchlist_breakout_buy
+
+    breakout = evaluate_watchlist_breakout_buy(
+        snapshot=snapshot,
+        report=report,
+        settings=settings,
+        lookback_mss=lookback_mss,
+        trend=trend,
+        aggressive_entry=aggressive,
+    )
+    if breakout.eligible:
+        from agent_reach.daily_run.watchlist_breakout import _symbol_change_pct
+
+        chg = _symbol_change_pct(snapshot, str(report.get("code") or ""))
+        if chg is not None:
+            breakout_exp = max(0.0, float(chg) / 100.0 * 0.35)
+            exp_ret = max(float(exp_ret or 0.0), breakout_exp)
+            friction_blocked = not _passes_friction(exp_ret, settings)
+
     audit_block = intraday_audit_block_reason(settings, report)
     if audit_block:
         return TradeDecision(
@@ -1286,7 +1311,7 @@ def _decide_trade(
             expected_return_pct=exp_ret,
         )
 
-    if blocked:
+    if blocked and not breakout.eligible:
         return TradeDecision(
             action="hold",
             trade_id=trade_id,
@@ -1300,7 +1325,8 @@ def _decide_trade(
             expected_return_pct=exp_ret,
         )
 
-    if lookback_mss >= aggressive and trend_allows_buy(settings, trend):
+    standard_buy = lookback_mss >= aggressive and trend_allows_buy(settings, trend)
+    if breakout.eligible or standard_buy:
         buy_block = None
         from agent_reach.daily_run.skill_rejected import trade_blocked_by_rejected
 
@@ -1394,18 +1420,6 @@ def _decide_trade(
                 friction_blocked=friction_blocked,
                 expected_return_pct=exp_ret,
             )
-        if friction_blocked:
-            return TradeDecision(
-                action="hold",
-                trade_id=trade_id,
-                lookback_mss=lookback_mss,
-                lookback_detail=[],
-                trend=trend,
-                reasoning=f"MSS 达 {lookback_mss:.0f} 但预期收益 {exp_ret:.2%} 不足以覆盖摩擦成本",
-                blocked=False,
-                friction_blocked=True,
-                expected_return_pct=exp_ret,
-            )
         deep_loss_block = deep_loss_buy_block_reason(
             prior_trades,
             symbol_code,
@@ -1435,12 +1449,14 @@ def _decide_trade(
             current_action="buy",
             settings=settings,
         )
+        max_pos_override = breakout.max_position_pct if breakout.eligible else None
         budget_block = buy_budget_precheck_reason(
             portfolio,
             build_enriched_symbols(snapshot),
             settings,
             prefer_code=symbol_code,
             cash_limit_bypass=cash_limit_bypass,
+            max_position_pct_override=max_pos_override,
         )
         if budget_block:
             bypass_note = "；连续买入建议，临时突破 deploy/现金限制" if cash_limit_bypass else ""
@@ -1455,17 +1471,41 @@ def _decide_trade(
                 block_kind="buy_budget",
                 friction_blocked=False,
                 expected_return_pct=exp_ret,
+                max_position_pct_override=max_pos_override,
+                watchlist_breakout=breakout.eligible,
             )
+        if friction_blocked and not breakout.eligible:
+            return TradeDecision(
+                action="hold",
+                trade_id=trade_id,
+                lookback_mss=lookback_mss,
+                lookback_detail=[],
+                trend=trend,
+                reasoning=(
+                    f"MSS 达 {lookback_mss:.0f} 但预期收益 {exp_ret:.2%} 不足以覆盖摩擦成本"
+                    f"{overlay_note}"
+                ),
+                blocked=False,
+                friction_blocked=True,
+                expected_return_pct=exp_ret,
+            )
+        buy_reason = (
+            f"{breakout.reason}{overlay_note}"
+            if breakout.eligible
+            else f"Lookback MSS {lookback_mss:.0f} ≥ {aggressive:.0f} 且趋势 {trend}，条件性建仓{overlay_note}"
+        )
         return TradeDecision(
             action="buy",
             trade_id=trade_id,
             lookback_mss=lookback_mss,
             lookback_detail=[],
             trend=trend,
-            reasoning=f"Lookback MSS {lookback_mss:.0f} ≥ {aggressive:.0f} 且趋势 {trend}，条件性建仓{overlay_note}",
+            reasoning=buy_reason,
             blocked=False,
             friction_blocked=False,
             expected_return_pct=exp_ret,
+            max_position_pct_override=max_pos_override,
+            watchlist_breakout=breakout.eligible,
         )
 
     from agent_reach.daily_run.profit_lock import evaluate_profit_lock_sell

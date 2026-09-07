@@ -9,7 +9,7 @@ from agent_reach.daily_run.snapshot_builder import _normalize_code
 
 _DEFENSIVE_TRIM_NEUTRAL: dict[str, Any] = {
     "enabled": True,
-    "max_symbol_change_pct": 1.0,
+    "max_symbol_change_pct": 3.0,
     "require_mss_pullback_pts": 2.0,
     "memory_sell_ratio": 0.35,
     "short_hold_sell_ratio": 0.25,
