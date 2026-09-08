@@ -79,6 +79,7 @@ def compute_verdict(snapshot: dict[str, Any], settings: dict[str, Any]) -> Verdi
     position_20d = _optional_float(snapshot.get("position_20d"))
     volume_ratio = _optional_float(snapshot.get("volume_ratio"))
     vwap_deviation = _optional_float(snapshot.get("vwap_deviation_pct"))
+    change_pct = _optional_float(snapshot.get("change_pct"))
 
     downgrade: list[str] = []
     label_key = "watch"
@@ -114,9 +115,17 @@ def compute_verdict(snapshot: dict[str, Any], settings: dict[str, Any]) -> Verdi
         if confidence == "高":
             confidence = "中"
         downgrade.append("缺少量比 volume_ratio")
-    elif volume_ratio < min_vol_ratio and label_key == "buy":
-        label_key = "watch"
-        downgrade.append(f"量比 {volume_ratio:.2f} < {min_vol_ratio}")
+    elif volume_ratio < min_vol_ratio:
+        from agent_reach.daily_run.session_verdict_guards import format_volume_ratio_note
+
+        note = format_volume_ratio_note(volume_ratio, change_pct, min_vol_ratio)
+        if change_pct is not None and change_pct > 0:
+            downgrade.append(note)
+        elif label_key == "buy":
+            label_key = "watch"
+            downgrade.append(note)
+        else:
+            downgrade.append(note)
 
     if vwap_deviation is not None and abs(vwap_deviation) >= max_vwap_dev:
         if volume_ratio is not None and volume_ratio < min_vol_ratio:

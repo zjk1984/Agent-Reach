@@ -365,6 +365,62 @@ def test_render_prune_markdown_and_forecast_hook(storage_env):
     assert "周日存储维护" in md
     assert "安全策略" in md
     assert "trade" in md
+    assert "pip cache" in md
+    assert "磁盘空间" in md
+
+
+def test_collect_storage_space_snapshot(storage_env):
+    from agent_reach.daily_run.storage.prune import collect_storage_space_snapshot, format_storage_bytes
+
+    root = storage_env["root"]
+    db_path = storage_env["db_path"]
+    db_path.write_bytes(b"x" * 1024)
+    (root / "runs").mkdir(exist_ok=True)
+    (root / "runs" / "2026-09-08").mkdir()
+    (root / "runs" / "2026-09-08" / "a.json").write_text("{}", encoding="utf-8")
+
+    snap = collect_storage_space_snapshot(settings=storage_env["settings"], root=root)
+    assert snap["daily_run_db_bytes"] == 1024
+    assert snap["runs_bytes"] > 0
+    assert snap["daily_run_bytes"] >= snap["runs_bytes"]
+    assert "used_pct" in snap["disk"]
+    assert format_storage_bytes(1024) == "1 KB"
+
+
+def test_purge_pip_cache_dry_run(tmp_path):
+    from agent_reach.daily_run.storage.prune import purge_pip_cache
+
+    cache = tmp_path / "pip"
+    cache.mkdir()
+    (cache / "wheel.bin").write_bytes(b"x" * 2048)
+    result = purge_pip_cache(dry_run=True, cache_dir=cache)
+    assert result["bytes_freed"] == 2048
+    assert result["mb_freed"] == 0.0
+    assert (cache / "wheel.bin").exists()
+
+
+def test_run_scheduled_prune_calls_pip_cache(storage_env, monkeypatch):
+    from agent_reach.daily_run.storage.prune import run_scheduled_prune
+
+    settings = storage_env["settings"]
+    settings = dict(settings)
+    settings["storage"] = dict(settings["storage"])
+    settings["storage"]["prune"] = {
+        "enabled": True,
+        "vacuum": False,
+        "auto_distill_before_prune": False,
+        "auto_repair_quant_before_prune": False,
+    }
+    called = {"ok": False}
+
+    def _fake_purge(**kwargs):
+        called["ok"] = True
+        return {"ok": True, "mb_freed": 1.5, "bytes_freed": 1572864}
+
+    monkeypatch.setattr("agent_reach.daily_run.storage.prune.purge_pip_cache", _fake_purge)
+    result = run_scheduled_prune(settings=settings, root=storage_env["root"], dry_run=True)
+    assert called["ok"] is True
+    assert result["pip_cache"]["mb_freed"] == 1.5
 
 
 def test_run_forecast_runs_storage_prune(monkeypatch):

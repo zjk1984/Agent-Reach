@@ -33,6 +33,131 @@ def _iso_cutoff(days: int) -> str:
     return dt.replace(microsecond=0).isoformat()
 
 
+def default_pip_cache_dir() -> Path:
+    return Path.home() / ".cache" / "pip"
+
+
+def purge_pip_cache(*, dry_run: bool = False, cache_dir: Optional[Path] = None) -> dict[str, Any]:
+    """Run ``python -m pip cache purge``; safe for Sunday forecast maintenance."""
+    import subprocess
+    import sys
+
+    target = Path(cache_dir or default_pip_cache_dir()).expanduser()
+    bytes_before = _dir_size(target)
+    if bytes_before <= 0 and not target.exists():
+        return {
+            "skipped": True,
+            "reason": "pip_cache_empty",
+            "cache_dir": str(target),
+            "bytes_before": 0,
+            "bytes_freed": 0,
+            "mb_freed": 0.0,
+            "dry_run": dry_run,
+        }
+    if dry_run:
+        return {
+            "dry_run": True,
+            "cache_dir": str(target),
+            "bytes_before": bytes_before,
+            "bytes_freed": bytes_before,
+            "mb_freed": round(bytes_before / 1024 / 1024, 2),
+        }
+
+    proc = subprocess.run(
+        [sys.executable, "-m", "pip", "cache", "purge"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    bytes_after = _dir_size(target)
+    bytes_freed = max(0, bytes_before - bytes_after)
+    stdout = (proc.stdout or "").strip()
+    return {
+        "dry_run": False,
+        "cache_dir": str(target),
+        "bytes_before": bytes_before,
+        "bytes_after": bytes_after,
+        "bytes_freed": bytes_freed,
+        "mb_freed": round(bytes_freed / 1024 / 1024, 2),
+        "stdout": stdout,
+        "stderr": (proc.stderr or "").strip(),
+        "returncode": proc.returncode,
+        "ok": proc.returncode == 0,
+    }
+
+
+def format_storage_bytes(num_bytes: int) -> str:
+    n = max(0, int(num_bytes))
+    if n >= 1024**3:
+        return f"{n / 1024**3:.1f} GB"
+    if n >= 1024**2:
+        return f"{n / 1024**2:.0f} MB"
+    if n >= 1024:
+        return f"{n / 1024:.0f} KB"
+    return f"{n} B"
+
+
+def collect_storage_space_snapshot(
+    *,
+    settings: Optional[dict[str, Any]] = None,
+    root: Optional[Path] = None,
+) -> dict[str, Any]:
+    """Current disk + daily_run footprint (post-prune when called from scheduled prune)."""
+    from agent_reach.daily_run.storage.config import sqlite_db_path
+
+    daily_root = _daily_run_root(root)
+    anchor = daily_root if daily_root.exists() else Path.home()
+    try:
+        usage = shutil.disk_usage(anchor)
+        disk = {
+            "mount": str(anchor),
+            "total_bytes": usage.total,
+            "used_bytes": usage.used,
+            "free_bytes": usage.free,
+            "used_pct": round(usage.used / usage.total * 100, 1) if usage.total else 0.0,
+        }
+    except OSError as exc:
+        disk = {"error": str(exc)}
+
+    db_path = sqlite_db_path(settings)
+    runs_path = daily_root / "runs"
+    harness_path = daily_root / "harness"
+    pip_path = default_pip_cache_dir()
+
+    return {
+        "disk": disk,
+        "daily_run_root": str(daily_root),
+        "daily_run_bytes": _dir_size(daily_root),
+        "daily_run_db_bytes": db_path.stat().st_size if db_path.is_file() else 0,
+        "runs_bytes": _dir_size(runs_path) if runs_path.exists() else 0,
+        "harness_bytes": _dir_size(harness_path) if harness_path.exists() else 0,
+        "pip_cache_bytes": _dir_size(pip_path),
+    }
+
+
+def render_storage_space_lines(snapshot: dict[str, Any]) -> list[str]:
+    lines = ["**磁盘空间（清理后）**", ""]
+    disk = snapshot.get("disk") or {}
+    if disk.get("error"):
+        lines.append(f"- 分区：不可用（{disk['error']}）")
+    else:
+        used_pct = disk.get("used_pct", "?")
+        total = format_storage_bytes(int(disk.get("total_bytes") or 0))
+        free = format_storage_bytes(int(disk.get("free_bytes") or 0))
+        warn = " ⚠️" if float(disk.get("used_pct") or 0) >= 85 else ""
+        lines.append(f"- 根分区：已用 **{used_pct}%**{warn} · 总量 {total} · 可用 **{free}**")
+
+    dr = format_storage_bytes(int(snapshot.get("daily_run_bytes") or 0))
+    db = format_storage_bytes(int(snapshot.get("daily_run_db_bytes") or 0))
+    runs = format_storage_bytes(int(snapshot.get("runs_bytes") or 0))
+    harness = format_storage_bytes(int(snapshot.get("harness_bytes") or 0))
+    pip = format_storage_bytes(int(snapshot.get("pip_cache_bytes") or 0))
+    lines.append(f"- `~/.agent-reach/daily_run`：**{dr}**（db {db} · runs {runs} · harness {harness}）")
+    lines.append(f"- pip cache：**{pip}**")
+    lines.append("")
+    return lines
+
+
 def _daily_run_root(root: Optional[Path] = None) -> Path:
     return Path(root or Path.home() / ".agent-reach" / "daily_run").expanduser()
 
@@ -370,7 +495,7 @@ def run_scheduled_prune(
     if not cfg.get("enabled", True):
         return {"skipped": True, "reason": "prune_disabled", "settings": cfg}
 
-    return run_prune(
+    result = run_prune(
         settings=settings,
         root=root,
         runs_keep_days=int(cfg["runs_keep_days"]),
@@ -387,11 +512,17 @@ def run_scheduled_prune(
         distill_max_rounds=int(cfg["distill_max_rounds"]),
         repair_quant_first=bool(cfg.get("auto_repair_quant_before_prune")),
     )
+    if cfg.get("pip_cache_on_forecast", True) is not False:
+        result["pip_cache"] = purge_pip_cache(dry_run=dry_run)
+    else:
+        result["pip_cache"] = {"skipped": True, "reason": "pip_cache_disabled"}
+    result["storage_space"] = collect_storage_space_snapshot(settings=settings, root=root)
+    return result
 
 
 def render_prune_markdown(result: dict[str, Any], *, settings: Optional[dict[str, Any]] = None) -> str:
     from agent_reach.daily_run.storage.config import prune_settings
-    from agent_reach.daily_run.storage.prune_policy import PROTECTED_L0_KINDS, PROTECTED_L1_KINDS
+    from agent_reach.daily_run.storage.prune_policy import PROTECTED_L0_KINDS
 
     if result.get("skipped"):
         return f"存储清理已跳过：{result.get('reason') or 'disabled'}"
@@ -399,6 +530,7 @@ def render_prune_markdown(result: dict[str, Any], *, settings: Optional[dict[str
     cfg = prune_settings(settings)
     files = result.get("files") or {}
     db = result.get("database") or {}
+    pip_cache = result.get("pip_cache") or {}
     distill = result.get("distill") or {}
     repair = result.get("repair") or {}
     deleted = list(files.get("deleted") or [])
@@ -413,6 +545,17 @@ def render_prune_markdown(result: dict[str, Any], *, settings: Optional[dict[str
     lines = [
         "## 🧹 周日存储维护",
         "",
+    ]
+    space = result.get("storage_space")
+    if not space:
+        files_root = files.get("root")
+        space = collect_storage_space_snapshot(
+            settings=settings,
+            root=Path(files_root) if files_root else None,
+        )
+    lines.extend(render_storage_space_lines(space))
+    lines.extend(
+        [
         "**安全策略（daily_run.db）**",
         "- **永不删除 L0**：" + "、".join(PROTECTED_L0_KINDS),
         "- **可删 L0**：已蒸馏且超过 "
@@ -425,7 +568,11 @@ def render_prune_markdown(result: dict[str, Any], *, settings: Optional[dict[str
         f"- runs {cfg['runs_keep_days']}d · cache {cfg['cache_keep_days']}d · overlay_log {cfg['overlay_log_keep_days']}d",
         f"- handoff morning/midday {cfg['handoff_intraday_keep_days']}d（close/week_open 保留）",
         "",
-    ]
+        "**环境清理**",
+        "- 周日 forecast 自动执行 `pip cache purge`（可通过 `storage.prune.pip_cache_on_forecast=false` 关闭）",
+        "",
+        ]
+    )
 
     if repair and not repair.get("error"):
         wo = (repair.get("week_open") or {})
@@ -467,6 +614,20 @@ def render_prune_markdown(result: dict[str, Any], *, settings: Optional[dict[str
         label = phase_labels.get(phase, f"Phase {phase}")
         lines.append(f"- {label}：{int(bucket['items'])} 项 · {bucket['bytes'] / 1024 / 1024:.2f} MB")
 
+    if pip_cache and not pip_cache.get("skipped"):
+        if pip_cache.get("dry_run"):
+            lines.append(
+                f"- pip cache（预览）：约 **{pip_cache.get('mb_freed', 0)} MB** · `{pip_cache.get('cache_dir', '')}`"
+            )
+        elif pip_cache.get("ok") is not False:
+            lines.append(
+                f"- pip cache：释放 **{pip_cache.get('mb_freed', 0)} MB** · `{pip_cache.get('cache_dir', '')}`"
+            )
+        else:
+            lines.append(f"- pip cache：失败（returncode={pip_cache.get('returncode')}）")
+    elif pip_cache.get("skipped"):
+        lines.append(f"- pip cache：跳过（{pip_cache.get('reason') or 'disabled'}）")
+
     lines.extend(["", "**数据库**"])
     before_mb = 0.0
     after_mb = 0.0
@@ -489,6 +650,8 @@ def render_prune_markdown(result: dict[str, Any], *, settings: Optional[dict[str
             lines.append(f"- VACUUM 释放：**{db['vacuum_bytes_freed'] / 1024 / 1024:.2f} MB**")
 
     total_mb = float(files.get("mb_freed") or 0)
+    if pip_cache and not pip_cache.get("skipped"):
+        total_mb += float(pip_cache.get("mb_freed") or 0)
     if db.get("vacuum_bytes_freed"):
         total_mb += float(db["vacuum_bytes_freed"]) / 1024 / 1024
     if before_mb > 0 and after_mb > 0:

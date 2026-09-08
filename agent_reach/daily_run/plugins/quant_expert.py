@@ -31,7 +31,10 @@ class QuantExpert(ExpertPlugin):
             if vol >= 1.2:
                 notes.append(f"量比 {vol:.2f} 放量")
             elif vol < 0.8:
-                notes.append(f"量比 {vol:.2f} 缩量")
+                if change is not None and change > 0:
+                    notes.append(f"量比 {vol:.2f} 缩量上行，筹码稳定")
+                else:
+                    notes.append(f"量比 {vol:.2f} 缩量")
             else:
                 notes.append(f"量比 {vol:.2f}")
 

@@ -155,6 +155,7 @@ def prune_settings(settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         "vacuum": block.get("vacuum", True) is not False,
         "push_card": block.get("push_card", True) is not False,
         "include_in_forecast_markdown": block.get("include_in_forecast_markdown", True) is not False,
+        "pip_cache_on_forecast": block.get("pip_cache_on_forecast", True) is not False,
         "protected_l0_kinds": list(block.get("protected_l0_kinds") or PROTECTED_L0_KINDS),
         "prune_l0_kinds": list(block.get("prune_l0_kinds") or DEFAULT_PRUNE_L0_KINDS),
         "protected_l1_kinds": list(block.get("protected_l1_kinds") or PROTECTED_L1_KINDS),

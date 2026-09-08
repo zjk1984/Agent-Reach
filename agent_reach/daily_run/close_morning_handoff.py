@@ -160,7 +160,11 @@ def collect_watch_risk_items(ctx: Any) -> list[dict[str, Any]]:
                 kind="technical",
             )
         elif scenario_type == "liquidity_shrink":
-            _add("缩量回调，警惕流动性萎缩", code=code, name=name, kind="technical")
+            chg = _optional_float(sc.get("change_pct"))
+            if chg is None or chg <= 0:
+                _add("缩量回调，警惕流动性萎缩", code=code, name=name, kind="technical")
+            else:
+                _add("缩量上行，筹码稳定", code=code, name=name, kind="technical")
         bear = (sc.get("bearish") or {}).get("label")
         if bear:
             _add(str(bear), code=code, name=name, kind="bearish")
