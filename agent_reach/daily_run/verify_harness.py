@@ -27,6 +27,32 @@ def verify_to_harness_evidence(verify: dict[str, Any]) -> dict[str, Any]:
         if "MSS" in text and ("预测" in text or "低于" in text or "高于" in text):
             memory.append("MSS 预测偏离：下日调低进攻阈值或缩窄仓位")
             playbook.append("增大 mss_forecast.base_spread 或运行 daily-run optimize")
+        if "冲高回落" in text or ("可做" in text and "观察" in text):
+            from agent_reach.daily_run.session_verdict_guard_policy import format_session_verdict_policy_line
+
+            policy.append(
+                format_session_verdict_policy_line(
+                    {
+                        "price_pullback_pct": 1.9,
+                        "mss_pullback_pts": 1.9,
+                    },
+                    rationale="verify 偏差：早盘可做后回落",
+                )
+            )
+            memory.append("冲高回落偏差：session_verdict_guards 收紧 price_pullback / mss_pullback")
+        if "跌幅" in text and ("无预警" in text or "暴跌" in text or "哨兵" in text):
+            from agent_reach.daily_run.session_verdict_guard_policy import format_watchlist_drawdown_policy_line
+
+            policy.append(
+                format_watchlist_drawdown_policy_line(
+                    {"yellow_pct": -2.5, "red_pct": -4.0},
+                    rationale="verify 偏差：观察池跌幅预警不足",
+                )
+            )
+            memory.append("观察池跌幅偏差：watchlist_drawdown 收紧 yellow/red 阈值")
+        if "观望正确" in text or ("观望" in text and "正确" in text):
+            memory.append("观望正确：session_verdict 维持或略收紧冲高回落阈值")
+            playbook.append("session_verdict：正样本观望，保留 S4+ 降级 guard")
 
     if verify.get("mss_within_prediction") is False:
         memory.append("MSS 预测偏离：下日调低进攻阈值或缩窄仓位")

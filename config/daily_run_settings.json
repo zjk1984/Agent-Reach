@@ -160,6 +160,19 @@
         "rebound_mss_level": 55.0
       }
     },
+    "session_verdict_guards": {
+      "mode": "harness",
+      "enabled": true,
+      "min_scan_num": 4,
+      "price_pullback_pct": 2.0,
+      "mss_pullback_pts": 2.0
+    },
+    "watchlist_drawdown": {
+      "mode": "harness",
+      "enabled": true,
+      "yellow_pct": -3.0,
+      "red_pct": -5.0
+    },
     "rebound": {
       "mode": "harness",
       "enabled": true,

@@ -29,6 +29,7 @@ def test_pullback_downgrade_可做_to_观察():
         "thresholds": {"macro_veto": 35, "aggressive_entry": 50, "min_volume_ratio": 1.0},
         "intraday": {
             "session_verdict_guards": {
+                "mode": "fixed",
                 "enabled": True,
                 "min_scan_num": 4,
                 "price_pullback_pct": 2.0,
@@ -87,10 +88,12 @@ def test_watchlist_drawdown_alerts_red_and_yellow():
     }
     alerts = collect_watchlist_drawdown_alerts(
         portfolio,
-        settings={"intraday": {"watchlist_drawdown": {"yellow_pct": -3.0, "red_pct": -5.0}}},
+        settings={"intraday": {"watchlist_drawdown": {"mode": "fixed", "yellow_pct": -3.0, "red_pct": -5.0}}},
     )
     assert any(a["code"] == "002415" and a["severity"] == "red" for a in alerts)
-    md = render_watchlist_drawdown_markdown(portfolio, settings={"intraday": {"watchlist_drawdown": {}}})
+    md = render_watchlist_drawdown_markdown(
+        portfolio, settings={"intraday": {"watchlist_drawdown": {"mode": "fixed"}}}
+    )
     assert "观察池跌幅哨兵" in md
     assert "海康威视" in md
 

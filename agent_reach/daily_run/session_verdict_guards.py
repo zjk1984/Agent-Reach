@@ -18,22 +18,15 @@ def _optional_float(value: Any) -> Optional[float]:
 
 
 def session_verdict_guard_cfg(settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:
-    block = dict(((settings or {}).get("intraday") or {}).get("session_verdict_guards") or {})
-    return {
-        "enabled": block.get("enabled", True) is not False,
-        "min_scan_num": max(2, int(block.get("min_scan_num", 4))),
-        "price_pullback_pct": float(block.get("price_pullback_pct", 2.0)),
-        "mss_pullback_pts": float(block.get("mss_pullback_pts", 2.0)),
-    }
+    from agent_reach.daily_run.session_verdict_guard_policy import session_verdict_guard_effective_cfg
+
+    return session_verdict_guard_effective_cfg(settings)
 
 
 def watchlist_drawdown_cfg(settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:
-    block = dict(((settings or {}).get("intraday") or {}).get("watchlist_drawdown") or {})
-    return {
-        "enabled": block.get("enabled", True) is not False,
-        "yellow_pct": float(block.get("yellow_pct", -3.0)),
-        "red_pct": float(block.get("red_pct", -5.0)),
-    }
+    from agent_reach.daily_run.session_verdict_guard_policy import watchlist_drawdown_effective_cfg
+
+    return watchlist_drawdown_effective_cfg(settings)
 
 
 def format_volume_ratio_note(

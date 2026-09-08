@@ -192,6 +192,29 @@ def intraday_to_harness_evidence(
     )
 
     if settings:
+        from agent_reach.daily_run.session_verdict_guard_policy import session_verdict_harness_evidence
+
+        report = {}
+        if isinstance(scan_block, dict):
+            report = scan_block.get("report") or scan_block.get("evaluation", {}).get("report") or {}
+        if not report and isinstance(payload.get("evaluation"), dict):
+            report = payload["evaluation"].get("report") or {}
+        pf = (payload.get("enriched") or payload.get("snapshot") or {}).get("portfolio") or {}
+        alerts = []
+        if pf.get("watchlist"):
+            from agent_reach.daily_run.session_verdict_guards import collect_watchlist_drawdown_alerts
+
+            alerts = collect_watchlist_drawdown_alerts(pf, settings=settings)
+        guard_lines = session_verdict_harness_evidence(
+            report=report if isinstance(report, dict) else {},
+            alerts=alerts,
+            settings=settings,
+        )
+        memory.extend(guard_lines.get("memory") or [])
+        policy.extend(guard_lines.get("policy") or [])
+        playbook.extend(guard_lines.get("playbook") or [])
+
+    if settings:
         from agent_reach.daily_run.technical_scenario_watch import (
             evaluate_active_scenarios,
             maybe_register_upper_shadow_from_session,

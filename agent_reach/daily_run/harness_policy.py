@@ -1827,6 +1827,45 @@ def apply_harness_policy_overlay(settings: dict[str, Any]) -> dict[str, Any]:
     rebound_block.update(rebound_effective_cfg({**cfg, "harness_runtime": harness_meta}))
     intraday["rebound"] = rebound_block
     cfg["intraday"] = intraday
+    from agent_reach.daily_run.session_verdict_guard_policy import (
+        harness_session_verdict_overlay_meta,
+        harness_watchlist_drawdown_overlay_meta,
+        resolve_harness_session_verdict_policy,
+        resolve_harness_watchlist_drawdown_policy,
+        session_verdict_guard_effective_cfg,
+        session_verdict_policy_base,
+        watchlist_drawdown_effective_cfg,
+        watchlist_drawdown_policy_base,
+    )
+
+    base_session_verdict = session_verdict_policy_base(cfg)
+    effective_session_verdict = resolve_harness_session_verdict_policy(state, settings=cfg)
+    harness_meta["session_verdict_policy"] = effective_session_verdict
+    session_verdict_meta = harness_session_verdict_overlay_meta(
+        base_session_verdict, effective_session_verdict
+    )
+    if session_verdict_meta:
+        harness_meta["session_verdict_overlay"] = session_verdict_meta
+    base_watchlist_drawdown = watchlist_drawdown_policy_base(cfg)
+    effective_watchlist_drawdown = resolve_harness_watchlist_drawdown_policy(state, settings=cfg)
+    harness_meta["watchlist_drawdown_policy"] = effective_watchlist_drawdown
+    watchlist_drawdown_meta = harness_watchlist_drawdown_overlay_meta(
+        base_watchlist_drawdown, effective_watchlist_drawdown
+    )
+    if watchlist_drawdown_meta:
+        harness_meta["watchlist_drawdown_overlay"] = watchlist_drawdown_meta
+    intraday = dict(cfg.get("intraday") or {})
+    session_verdict_block = dict(intraday.get("session_verdict_guards") or {})
+    session_verdict_block.update(
+        session_verdict_guard_effective_cfg({**cfg, "harness_runtime": harness_meta})
+    )
+    intraday["session_verdict_guards"] = session_verdict_block
+    watchlist_drawdown_block = dict(intraday.get("watchlist_drawdown") or {})
+    watchlist_drawdown_block.update(
+        watchlist_drawdown_effective_cfg({**cfg, "harness_runtime": harness_meta})
+    )
+    intraday["watchlist_drawdown"] = watchlist_drawdown_block
+    cfg["intraday"] = intraday
     audit_block = effective_intraday_audit.get("intraday_block_on_audit_fail", 0.0) > 0.5
     data_audit = dict(cfg.get("data_audit") or {})
     data_audit["intraday_block_on_audit_fail"] = audit_block
