@@ -1542,17 +1542,11 @@ def scheduled_start_context(job: str, settings: dict[str, Any]) -> dict[str, Any
         symbol_count = len(targets) or 1
 
     if job in ("intraday", "midday"):
-        from agent_reach.daily_run.intraday import load_state
-        from agent_reach.daily_run.schedule import INTRADAY_MAX_SCANS
+        from agent_reach.daily_run.intraday import next_scan_id_for_codes
 
-        first_code = targets[0] if targets else None
-        if first_code in (None, "MARKET"):
-            state = load_state()
-        else:
-            state = load_state(code=first_code)
-        if len(state.scans) >= INTRADAY_MAX_SCANS:
+        scan_id, at_limit = next_scan_id_for_codes(targets or None)
+        if at_limit:
             return {"skip": True}
-        scan_id = f"S{len(state.scans) + 1}"
 
     return {"symbol_count": symbol_count, "scan_id": scan_id}
 

@@ -499,3 +499,77 @@ class TestIntradayParallel:
         assert result["intraday_parallel"] is True
         assert len(result["symbol_results"]) == 2
         assert mock_run_intraday.call_count == 2
+
+    @patch("agent_reach.integrations.feishu.send_card", return_value={"code": 0})
+    @patch("agent_reach.daily_run.report_narrative.push_intraday_narrative_card", return_value=None)
+    @patch("agent_reach.daily_run.macro_collector.fetch_intraday_xueqiu_cross_alerts", return_value=[])
+    @patch("agent_reach.daily_run.symbol_runner.ThreadPoolExecutor")
+    @patch("agent_reach.daily_run.symbol_runner.build_and_save")
+    @patch("agent_reach.daily_run.symbol_runner.load_portfolio")
+    @patch("agent_reach.daily_run.intraday.run_intraday")
+    @patch("agent_reach.daily_run.intraday.load_state")
+    @patch("agent_reach.daily_run.intraday.should_evaluate_trade")
+    def test_run_intraday_merge_title_uses_max_scan_id(
+        self,
+        mock_should_trade,
+        mock_load_state,
+        mock_run_intraday,
+        mock_load_portfolio,
+        mock_build,
+        mock_executor,
+        _mock_xueqiu,
+        _mock_narrative,
+        mock_send_card,
+    ):
+        from agent_reach.daily_run.intraday import IntradayState
+        from agent_reach.daily_run.symbol_runner import run_intraday_for_symbols
+
+        mock_load_portfolio.return_value = PORTFOLIO
+        mock_load_state.return_value = IntradayState(date="2026-08-22", scans=[], trades=[])
+        mock_should_trade.return_value = False
+        mock_build.return_value = ({"code": "688008", "portfolio": PORTFOLIO}, "/tmp/snap.json")
+
+        def _run_side_effect(*args, **kwargs):
+            code = kwargs.get("state_path")
+            scan_num = 12 if code and "688008" in str(code) else 11
+            return {
+                "scan": {"scan": {"scan_id": f"S{scan_num}"}, "markdown": f"md{scan_num}"},
+                "feishu": None,
+            }
+
+        mock_run_intraday.side_effect = _run_side_effect
+
+        class _ImmediateExecutor:
+            def __init__(self, max_workers=None):
+                self.max_workers = max_workers
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def submit(self, fn, idx, code):
+                from concurrent.futures import Future
+
+                fut = Future()
+                fut.set_result(fn(idx, code))
+                return fut
+
+        mock_executor.side_effect = _ImmediateExecutor
+
+        cfg = load_settings()
+        cfg = {
+            **cfg,
+            "schedule": {
+                **(cfg.get("schedule") or {}),
+                "symbols_mode": "all",
+                "intraday_parallel": True,
+                "intraday_parallel_workers": 10,
+                "symbol_push_mode": "merge_by_category",
+            },
+        }
+        run_intraday_for_symbols(settings=cfg, push=True, symbols=["688008", "002273"])
+        title = mock_send_card.call_args[0][1]
+        assert "S12" in title
+        assert "S11" not in title.replace("S12", "")

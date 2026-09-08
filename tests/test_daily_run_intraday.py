@@ -765,3 +765,34 @@ class TestDeepLossConsecutiveBuy:
         assert bypassed.applied is True
         assert bypassed.actions[0].shares == 100
         assert "突破现金限制" in bypassed.actions[0].reasoning
+
+
+class TestBatchScanId:
+    def test_pick_batch_scan_id_uses_highest(self):
+        from agent_reach.daily_run.intraday import pick_batch_scan_id
+
+        assert pick_batch_scan_id(["S11", "S12", "S10"]) == "S12"
+        assert pick_batch_scan_id([]) is None
+
+    @patch("agent_reach.daily_run.intraday.load_state")
+    def test_next_scan_id_for_codes_uses_max_eligible(self, mock_load_state):
+        from agent_reach.daily_run.intraday import next_scan_id_for_codes
+
+        mock_load_state.side_effect = [
+            IntradayState(date="2026-09-08", scans=[{}] * 11),
+            IntradayState(date="2026-09-08", scans=[{}] * 10),
+        ]
+        scan_id, at_limit = next_scan_id_for_codes(["688008", "002273"])
+        assert scan_id == "S12"
+        assert at_limit is False
+
+    @patch("agent_reach.daily_run.intraday.load_state")
+    def test_next_scan_id_for_codes_skips_when_all_at_limit(self, mock_load_state):
+        from agent_reach.daily_run.intraday import next_scan_id_for_codes
+        from agent_reach.daily_run.schedule import INTRADAY_MAX_SCANS
+
+        full = IntradayState(date="2026-09-08", scans=[{}] * INTRADAY_MAX_SCANS)
+        mock_load_state.return_value = full
+        scan_id, at_limit = next_scan_id_for_codes(["688008", "002273"])
+        assert scan_id is None
+        assert at_limit is True

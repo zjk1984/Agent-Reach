@@ -341,6 +341,7 @@ def run_intraday_for_symbols(
     from agent_reach.daily_run.intraday import (
         default_state_path,
         load_state,
+        pick_batch_scan_id,
         run_intraday,
         should_evaluate_trade,
     )
@@ -357,7 +358,7 @@ def run_intraday_for_symbols(
     use_parallel = intraday_parallel_workers(cfg, len(targets)) > 1
     symbol_results: list[Optional[dict[str, Any]]] = [None] * len(targets)
     scan_body_rows: list[tuple[int, str, str]] = []
-    scan_id: Optional[str] = None
+    scan_ids: list[Optional[str]] = []
     errors: list[str] = []
 
     def _run_one(idx: int, code: str) -> dict[str, Any]:
@@ -437,7 +438,7 @@ def run_intraday_for_symbols(
                 if merge_push and row.get("body"):
                     scan_body_rows.append((row["idx"], row["name"], row["body"]))
                 if row.get("scan_id"):
-                    scan_id = row["scan_id"]
+                    scan_ids.append(row["scan_id"])
                 if gc_between:
                     gc.collect()
     else:
@@ -453,9 +454,11 @@ def run_intraday_for_symbols(
             if merge_push and row.get("body"):
                 scan_body_rows.append((row["idx"], row["name"], row["body"]))
             if row.get("scan_id"):
-                scan_id = row["scan_id"]
+                scan_ids.append(row["scan_id"])
             if gc_between:
                 gc.collect()
+
+    scan_id = pick_batch_scan_id(scan_ids)
 
     ordered_results = [row for row in symbol_results if row is not None]
     scan_bodies = [(name, body) for _, name, body in sorted(scan_body_rows, key=lambda x: x[0])]
@@ -469,6 +472,11 @@ def run_intraday_for_symbols(
         from agent_reach.config import Config
 
         body = "\n\n---\n\n".join(f"## {name}\n\n{content}" for name, content in scan_bodies)
+        from agent_reach.daily_run.session_verdict_guards import render_watchlist_drawdown_markdown
+
+        watchlist_md = render_watchlist_drawdown_markdown(pf, settings=cfg)
+        if watchlist_md:
+            body = watchlist_md + "\n\n---\n\n" + body
         title = merged_category_title(
             report_kind="intraday",
             category="scan",
@@ -517,7 +525,7 @@ def run_midday_for_symbols(
     symbols: Optional[list[str]] = None,
 ) -> dict[str, Any]:
     """Per-symbol midday refresh (mirrors run_intraday_for_symbols: single merged card, no split sections)."""
-    from agent_reach.daily_run.intraday import default_state_path, load_state
+    from agent_reach.daily_run.intraday import default_state_path, load_state, pick_batch_scan_id
     from agent_reach.daily_run.midday import midday_cfg, run_midday
     from agent_reach.daily_run.schedule import INTRADAY_MAX_SCANS
 
@@ -530,7 +538,7 @@ def run_midday_for_symbols(
     merge_push = _should_merge_push(cfg)
     symbol_results: list[dict[str, Any]] = []
     body_rows: list[tuple[str, str]] = []
-    scan_id: Optional[str] = None
+    scan_ids: list[Optional[str]] = []
     errors: list[str] = []
 
     for i, code in enumerate(targets):
@@ -566,7 +574,7 @@ def run_midday_for_symbols(
             body = str(run_result.get("markdown") or "").strip()
             scan = run_result.get("scan") or {}
             if scan.get("scan_id"):
-                scan_id = scan.get("scan_id")
+                scan_ids.append(scan.get("scan_id"))
             if merge_push and body:
                 body_rows.append((name, body))
             symbol_results.append(
@@ -584,6 +592,7 @@ def run_midday_for_symbols(
     if errors and not symbol_results:
         raise RuntimeError(errors[0])
 
+    scan_id = pick_batch_scan_id(scan_ids)
     feishu_result = None
     if push and merge_push and body_rows:
         from agent_reach.config import Config

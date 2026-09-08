@@ -307,6 +307,44 @@ def load_state(path: Optional[Path] = None, *, code: Optional[str] = None) -> In
     return state
 
 
+def scan_id_number(scan_id: Optional[str]) -> int:
+    """Parse S_n → n; unknown labels → 0."""
+    if not scan_id:
+        return 0
+    label = str(scan_id).strip().upper()
+    if label.startswith("S") and label[1:].isdigit():
+        return int(label[1:])
+    return 0
+
+
+def pick_batch_scan_id(scan_ids: list[Optional[str]]) -> Optional[str]:
+    """Merged intraday cards should use the highest S_n produced in the batch."""
+    nums = [scan_id_number(s) for s in scan_ids if s]
+    if not nums:
+        return None
+    return f"S{max(nums)}"
+
+
+def next_scan_id_for_codes(codes: Optional[list[str]] = None) -> tuple[Optional[str], bool]:
+    """Next batch scan label from per-symbol states (max eligible count + 1)."""
+    if not codes:
+        count = len(load_state().scans)
+        at_limit = count >= MAX_SCANS
+        return (None if at_limit else f"S{count + 1}", at_limit)
+
+    counts: list[int] = []
+    for code in codes:
+        if code in (None, "MARKET"):
+            counts.append(len(load_state().scans))
+        else:
+            counts.append(len(load_state(code=code).scans))
+
+    eligible = [c for c in counts if c < MAX_SCANS]
+    if not eligible:
+        return None, True
+    return f"S{max(eligible) + 1}", False
+
+
 def save_state(state: IntradayState, path: Optional[Path] = None) -> Path:
     p = path or default_state_path()
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -370,6 +408,15 @@ def record_scan(
     enriched.setdefault("as_of", datetime.now(timezone.utc).isoformat())
 
     evaluation = evaluate_snapshot(enriched, cfg, doctor_channels=doctor_channels)
+    from agent_reach.daily_run.session_verdict_guards import apply_session_pullback_verdict_downgrade
+
+    apply_session_pullback_verdict_downgrade(
+        evaluation,
+        enriched,
+        st.scans,
+        cfg,
+        pending_scan_num=len(st.scans) + 1,
+    )
     report = evaluation["report"]
     scan_id = f"S{len(st.scans) + 1}"
 
@@ -470,6 +517,15 @@ def record_scan_from_evaluation(
     if len(st.scans) >= MAX_SCANS:
         raise RuntimeError(f"今日扫描已达上限 {MAX_SCANS} 次（S1-S{MAX_SCANS}）")
 
+    from agent_reach.daily_run.session_verdict_guards import apply_session_pullback_verdict_downgrade
+
+    apply_session_pullback_verdict_downgrade(
+        evaluation,
+        enriched,
+        st.scans,
+        cfg,
+        pending_scan_num=len(st.scans) + 1,
+    )
     report = evaluation["report"]
     scan_id = f"S{len(st.scans) + 1}"
 
@@ -1029,6 +1085,18 @@ def render_intraday_scan_markdown(
         f"**即时 MSS：** {scan.get('mss_final')} 分 · **标签：** {scan.get('verdict')}",
         f"**Lookback MSS：** {lookback_mss} 分 · **趋势：** {trend_map.get(trend, trend)}",
     ]
+    from agent_reach.daily_run.session_verdict_guards import (
+        render_session_pullback_markdown,
+        render_watchlist_drawdown_markdown,
+    )
+
+    pullback_md = render_session_pullback_markdown(report)
+    if pullback_md:
+        lines.extend(["", pullback_md])
+    pf = (enriched or {}).get("portfolio") or {}
+    watchlist_md = render_watchlist_drawdown_markdown(pf, settings=settings)
+    if watchlist_md:
+        lines.extend(["", watchlist_md])
     from agent_reach.daily_run.xueqiu_hot_display import render_intraday_xueqiu_alert_markdown
 
     alert_md = render_intraday_xueqiu_alert_markdown(macro_signals)
