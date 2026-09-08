@@ -145,6 +145,16 @@ def main():
     p_dr_plugins.add_argument("plugins_action", nargs="?", choices=["list", "run"], default="list")
     p_dr_plugins.add_argument("--input", "-i", default="", help="Snapshot JSON for plugins run")
     p_dr_plugins.add_argument("--names", default="", help="Comma-separated plugin names")
+    p_dr_repl = p_daily_sub.add_parser(
+        "repl",
+        help="Interactive ad-hoc research REPL (dry-run, no Feishu/portfolio writes)",
+    )
+    p_dr_repl.add_argument(
+        "--task",
+        default="",
+        help="Run one task non-interactively instead of interactive REPL",
+    )
+    p_dr_repl.add_argument("--json", action="store_true", help="JSON output (with --task)")
     p_dr_morning = p_daily_sub.add_parser("morning", help="One-click: experts → evaluate → Feishu push")
     p_dr_morning.add_argument("--input", "-i", required=True, help="Morning snapshot JSON")
     p_dr_morning.add_argument("--code", default="", help="Optional A-share code for AKShare enrich")
@@ -1724,6 +1734,26 @@ def _cmd_daily_run(args):
             indent=2,
         ))
         return
+
+    if args.daily_action == "repl":
+        from agent_reach.daily_run.repl import run_repl, run_repl_task
+
+        if getattr(args, "task", ""):
+            result = run_repl_task(str(args.task), dry_run=True)
+            if getattr(args, "json", False):
+                import json as _json
+
+                print(_json.dumps(result, ensure_ascii=False, indent=2))
+            else:
+                from agent_reach.daily_run.repl import _format_result
+
+                print(_format_result(result))
+            return
+        try:
+            from agent_reach import __version__ as dr_version
+        except Exception:
+            dr_version = ""
+        raise SystemExit(run_repl(version=str(dr_version)))
 
     if args.daily_action == "morning":
         from agent_reach.config import Config

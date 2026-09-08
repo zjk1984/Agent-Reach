@@ -242,6 +242,11 @@ def run_morning(
     if not gate.passed:
         raise RuntimeError(f"质量门禁未通过：{gate.summary()}")
 
+    from agent_reach.daily_run.agent_pipeline import build_agent_trace, build_pipeline_handoff
+
+    pipeline_handoff = build_pipeline_handoff(enriched, evaluation, workflow="morning")
+    agent_trace = build_agent_trace(enriched, evaluation, workflow="morning")
+
     plan_close: dict[str, Any] = {}
     if datetime.now().weekday() == 0:
         from agent_reach.daily_run.harness import close_open_plans
@@ -325,6 +330,8 @@ def run_morning(
                     morning_ctx,
                     build_action_checklist_rows(morning_ctx),
                     am_open_overlay=am_overlay,
+                    pipeline_handoff=pipeline_handoff,
+                    agent_trace=agent_trace,
                 )
             )
             steps.append("am_open_overlay")
@@ -377,6 +384,8 @@ def run_morning(
         "steps": steps,
         "snapshot": enriched,
         "evaluation": evaluation,
+        "pipeline_handoff": pipeline_handoff,
+        "agent_trace": agent_trace,
         "markdown": team_md + "\n\n---\n\n" + report_md,
         "team_markdown": team_md,
         "report_markdown": report_md,

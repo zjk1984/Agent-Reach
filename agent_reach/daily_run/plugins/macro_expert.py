@@ -27,6 +27,7 @@ class MacroExpert(ExpertPlugin):
             exa = search_exa_snippet(
                 f"China A-share macro northbound flow policy {code} 2026",
                 settings,
+                expert_name=self.name,
             )
             if exa:
                 channel_note = exa

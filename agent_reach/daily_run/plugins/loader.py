@@ -59,9 +59,19 @@ _BY_NAME: dict[str, ExpertPlugin] = {p.name: p for p in _BUILTIN}
 
 
 def list_plugins() -> list[dict[str, str]]:
+    from agent_reach.daily_run.expert_tool_registry import list_expert_channels
     from agent_reach.daily_run.plugins.pipeline import list_filter_plugins, list_transform_plugins
 
-    rows = [{"name": p.name, "description": p.description, "kind": "expert"} for p in _BUILTIN]
+    rows = []
+    for p in _BUILTIN:
+        rows.append(
+            {
+                "name": p.name,
+                "description": p.description,
+                "kind": "expert",
+                "channels": ",".join(list_expert_channels(p.name)),
+            }
+        )
     rows.extend({**row, "kind": "filter"} for row in list_filter_plugins())
     rows.extend({**row, "kind": "transform"} for row in list_transform_plugins())
     return rows
@@ -134,6 +144,9 @@ def run_experts(
         merged["expert_pipeline_notes"] = pipeline_notes
     merged["expert_scores"] = expert_scores
     merged["expert_results"] = [r.to_dict() for r in results]
+    from agent_reach.daily_run.agent_pipeline import build_expert_agent_trace
+
+    merged["agent_trace"] = build_expert_agent_trace(results, workflow=str(cfg.get("_workflow") or ""))
 
     breakdown = dict(merged.get("mss_breakdown") or {})
     if "global" not in breakdown and "macro" in expert_scores:

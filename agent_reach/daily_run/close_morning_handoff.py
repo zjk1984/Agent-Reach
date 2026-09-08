@@ -350,6 +350,8 @@ def build_morning_handoff(
     action_rows: list[dict[str, Any]],
     *,
     am_open_overlay: Optional[dict[str, Any]] = None,
+    pipeline_handoff: Optional[dict[str, Any]] = None,
+    agent_trace: Optional[list[dict[str, Any]]] = None,
 ) -> dict[str, Any]:
     from agent_reach.daily_run.trade_calendar import today_shanghai
 
@@ -372,6 +374,10 @@ def build_morning_handoff(
     }
     if am_open_overlay:
         payload["am_open_overlay"] = dict(am_open_overlay)
+    if pipeline_handoff:
+        payload["pipeline_handoff"] = dict(pipeline_handoff)
+    if agent_trace:
+        payload["agent_trace"] = list(agent_trace)
     return payload
 
 

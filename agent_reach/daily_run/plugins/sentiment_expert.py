@@ -35,23 +35,27 @@ class SentimentExpert(ExpertPlugin):
                 parts.append(str(item))
 
         channel_note = ""
-        hot = hot_news_summary_from_snapshot(snap)
+        hot = hot_news_summary_from_snapshot(snap, expert_name=self.name)
         if hot:
             channel_note = hot.split("\n")[0][:120]
             score = round((score + score_from_text(hot, score)) / 2, 1)
         elif settings.get("plugins", {}).get("channel_enrich", True):
-            em = fetch_eastmoney_intent_snippet(snap, settings)
+            em = fetch_eastmoney_intent_snippet(snap, settings, expert_name=self.name)
             if em:
                 channel_note = em
                 score = round((score + score_from_text(em, score)) / 2, 1)
             else:
-                xq = fetch_xueqiu_hot_summary(limit=3)
+                xq = fetch_xueqiu_hot_summary(limit=3, expert_name=self.name)
                 if xq:
                     channel_note = xq
                     score = round((score + score_from_text(xq, score)) / 2, 1)
                 else:
                     name = snap.get("name") or snap.get("code") or "A股"
-                    exa = search_exa_snippet(f"{name} stock sentiment news China 2026", settings)
+                    exa = search_exa_snippet(
+                        f"{name} stock sentiment news China 2026",
+                        settings,
+                        expert_name=self.name,
+                    )
                     if exa:
                         channel_note = exa
                         score = round((score + score_from_text(exa, score)) / 2, 1)

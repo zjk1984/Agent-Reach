@@ -254,7 +254,9 @@ def _narrative_system_prompt(job: str, *, limits: dict[str, int]) -> str:
             '若有 trade_operations 输入，summary 须概括当日买卖与已实现盈亏；'
             'focus_points 可含明日建议；禁止编造未提供的成交价/股数。'
         )
-    return (
+    from agent_reach.daily_run.agent_pipeline import llm_system_suffix
+
+    base = (
         f"你是 A 股量化助手 {label} AI 解读员。基于已给数据输出 JSON："
         '{"summary":"...","focus_points":["..."],'
         '"divergence_notes":[],"risk_alerts":[]}。'
@@ -266,6 +268,7 @@ def _narrative_system_prompt(job: str, *, limits: dict[str, int]) -> str:
         f"{DEEPSEEK_NARRATIVE_RULE}"
         "禁止编造未提供数字；禁止复述输入；省略废话；中文。"
     )
+    return base + llm_system_suffix()
 
 
 def _narrative_cfg(settings: Optional[dict[str, Any]], job: str) -> dict[str, Any]:

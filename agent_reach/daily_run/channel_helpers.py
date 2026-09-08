@@ -6,7 +6,16 @@ from __future__ import annotations
 from typing import Any, Optional
 
 
-def search_exa_snippet(query: str, settings: dict[str, Any]) -> Optional[str]:
+def search_exa_snippet(
+    query: str,
+    settings: dict[str, Any],
+    *,
+    expert_name: str = "",
+) -> Optional[str]:
+    from agent_reach.daily_run.expert_tool_registry import channel_allowed
+
+    if expert_name and not channel_allowed(expert_name, "exa"):
+        return None
     cfg = settings.get("plugins", {})
     if not cfg.get("channel_enrich", True):
         return None
@@ -42,7 +51,11 @@ def search_exa_snippet(query: str, settings: dict[str, Any]) -> Optional[str]:
         return None
 
 
-def fetch_xueqiu_hot_summary(limit: int = 3) -> Optional[str]:
+def fetch_xueqiu_hot_summary(limit: int = 3, *, expert_name: str = "") -> Optional[str]:
+    from agent_reach.daily_run.expert_tool_registry import channel_allowed
+
+    if expert_name and not channel_allowed(expert_name, "xueqiu"):
+        return None
     try:
         from agent_reach.channels import xueqiu as xq_mod
 
@@ -57,7 +70,15 @@ def fetch_xueqiu_hot_summary(limit: int = 3) -> Optional[str]:
         return None
 
 
-def hot_news_summary_from_snapshot(snapshot: dict[str, Any]) -> Optional[str]:
+def hot_news_summary_from_snapshot(
+    snapshot: dict[str, Any],
+    *,
+    expert_name: str = "",
+) -> Optional[str]:
+    from agent_reach.daily_run.expert_tool_registry import channel_allowed
+
+    if expert_name and not channel_allowed(expert_name, "hot_news"):
+        return None
     """Return pre-collected hot news text from snapshot sources (no network)."""
     sources = snapshot.get("sources") or {}
     hot = sources.get("hot_news")
@@ -70,7 +91,13 @@ def hot_news_summary_from_snapshot(snapshot: dict[str, Any]) -> Optional[str]:
 def fetch_eastmoney_intent_snippet(
     snapshot: dict[str, Any],
     settings: dict[str, Any],
+    *,
+    expert_name: str = "",
 ) -> Optional[str]:
+    from agent_reach.daily_run.expert_tool_registry import channel_allowed
+
+    if expert_name and not channel_allowed(expert_name, "eastmoney"):
+        return None
     from agent_reach.daily_run.eastmoney_intent import (
         format_eastmoney_intent_summary,
         route_eastmoney_intent,
