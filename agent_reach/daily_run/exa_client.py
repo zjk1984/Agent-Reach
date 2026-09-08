@@ -12,7 +12,9 @@ from typing import Any, Optional
 from agent_reach.utils.process import (
     EXA_MCP_URL,
     bundled_mcporter_config_path,
+    exa_mcp_url,
     mcporter_cli_prefix,
+    resolve_exa_api_key,
 )
 
 
@@ -73,19 +75,17 @@ def web_search_exa(
         raise ExaError("mcporter 未安装")
 
     safe_query = query.replace('"', "'").replace("\\", " ")
-    cfg = bundled_mcporter_config_path()
-    if cfg is not None:
-        call_expr = f'exa.web_search_exa(query: "{safe_query}", numResults: {num_results})'
-        cmd = mcporter_cli_prefix() + ["call", call_expr]
+    call_expr = f'web_search_exa(query: "{safe_query}", numResults: {num_results})'
+    api_key = resolve_exa_api_key()
+    if api_key:
+        cmd = mcporter_cli_prefix() + ["call", "--http-url", exa_mcp_url(api_key=api_key), call_expr]
     else:
-        call_expr = f'web_search_exa(query: "{safe_query}", numResults: {num_results})'
-        cmd = [
-            "mcporter",
-            "call",
-            "--http-url",
-            EXA_MCP_URL,
-            call_expr,
-        ]
+        cfg = bundled_mcporter_config_path()
+        if cfg is not None:
+            named_call = f'exa.web_search_exa(query: "{safe_query}", numResults: {num_results})'
+            cmd = mcporter_cli_prefix() + ["call", named_call]
+        else:
+            cmd = ["mcporter", "call", "--http-url", EXA_MCP_URL, call_expr]
 
     try:
         proc = subprocess.run(

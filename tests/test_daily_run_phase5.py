@@ -32,11 +32,16 @@ class TestExaClient:
         assert "file://" not in msg
         assert "Exa 未配置" in msg or "Ad-hoc" not in msg
 
+    @patch("agent_reach.daily_run.exa_client.resolve_exa_api_key", return_value=None)
     @patch("agent_reach.daily_run.exa_client.subprocess.run")
     @patch("agent_reach.daily_run.exa_client.shutil.which", return_value="/usr/bin/mcporter")
+    @patch("agent_reach.daily_run.exa_client.bundled_mcporter_config_path")
     @patch("agent_reach.daily_run.exa_client.mcporter_cli_prefix")
-    def test_web_search_uses_config_flag(self, mock_prefix, mock_which, mock_run, tmp_path):
+    def test_web_search_uses_config_flag(
+        self, mock_prefix, mock_cfg_path, mock_which, mock_run, _mock_key, tmp_path
+    ):
         cfg = tmp_path / "mcporter.json"
+        mock_cfg_path.return_value = cfg
         mock_prefix.return_value = ["mcporter", "--config", str(cfg)]
         mock_run.return_value = type(
             "R", (), {"returncode": 0, "stdout": '[{"title":"Hit","url":"https://x.com"}]', "stderr": ""}
@@ -51,8 +56,32 @@ class TestExaClient:
         assert str(cfg) in cmd
         assert "--env" not in cmd
 
+    @patch("agent_reach.daily_run.exa_client.resolve_exa_api_key", return_value="test-exa-key")
+    @patch("agent_reach.daily_run.exa_client.subprocess.run")
+    @patch("agent_reach.daily_run.exa_client.shutil.which", return_value="/usr/bin/mcporter")
+    @patch("agent_reach.daily_run.exa_client.mcporter_cli_prefix", return_value=["mcporter"])
+    def test_web_search_uses_authenticated_http_url(self, _mock_prefix, mock_which, mock_run, _mock_key):
+        mock_run.return_value = type(
+            "R", (), {"returncode": 0, "stdout": '[{"title":"AuthHit","url":"https://x.com"}]', "stderr": ""}
+        )()
 
-class TestTradeCalendar:
+        from agent_reach.daily_run.exa_client import web_search_exa
+
+        hits = web_search_exa("auth query", num_results=1, timeout=5)
+        assert hits[0]["title"] == "AuthHit"
+        cmd = mock_run.call_args[0][0]
+        assert "--http-url" in cmd
+        assert "exaApiKey=test-exa-key" in " ".join(cmd)
+        assert "exa.web_search_exa" not in " ".join(cmd)
+
+
+class TestExaMcpUrl:
+    def test_exa_mcp_url_appends_key(self):
+        from agent_reach.utils.process import exa_mcp_url
+
+        url = exa_mcp_url(api_key="abc-123")
+        assert url.startswith("https://mcp.exa.ai/mcp?exaApiKey=")
+        assert "abc-123" in url
     def test_weekend(self):
         assert is_weekend(date(2026, 7, 11))  # Saturday
 
