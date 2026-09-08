@@ -82,6 +82,9 @@ class TestExaMcpUrl:
         url = exa_mcp_url(api_key="abc-123")
         assert url.startswith("https://mcp.exa.ai/mcp?exaApiKey=")
         assert "abc-123" in url
+
+
+class TestTradeCalendar:
     def test_weekend(self):
         assert is_weekend(date(2026, 7, 11))  # Saturday
 
