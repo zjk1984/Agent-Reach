@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Any, Optional
 
@@ -1226,6 +1227,44 @@ def _harness_overlay_note(settings: dict[str, Any]) -> str:
     return f"（harness: {', '.join(parts)}）"
 
 
+def _intraday_shanghai_now(
+    snapshot: dict[str, Any],
+    report: dict[str, Any],
+    session_scans: Optional[list[dict[str, Any]]] = None,
+) -> Optional[datetime]:
+    """Prefer snapshot/report scan time over wall clock for intraday gates."""
+    sh = ZoneInfo("Asia/Shanghai")
+    for src in (report, snapshot):
+        if not isinstance(src, dict):
+            continue
+        raw = src.get("as_of") or src.get("generated_at")
+        if not raw:
+            continue
+        try:
+            text = str(raw).replace("Z", "+00:00")
+            dt = datetime.fromisoformat(text)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone(sh)
+        except ValueError:
+            continue
+    for scan in reversed(session_scans or []):
+        if not isinstance(scan, dict):
+            continue
+        raw = scan.get("as_of") or scan.get("at")
+        if not raw:
+            continue
+        try:
+            text = str(raw).replace("Z", "+00:00")
+            dt = datetime.fromisoformat(text)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone(sh)
+        except ValueError:
+            continue
+    return None
+
+
 def _decide_trade(
     *,
     lookback_mss: float,
@@ -1271,6 +1310,7 @@ def _decide_trade(
         lookback_mss=lookback_mss,
         trend=trend,
         aggressive_entry=aggressive,
+        now=_intraday_shanghai_now(snapshot, report, session_scans),
     )
     if breakout.eligible:
         from agent_reach.daily_run.watchlist_breakout import _symbol_change_pct

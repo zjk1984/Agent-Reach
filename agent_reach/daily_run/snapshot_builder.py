@@ -81,7 +81,7 @@ def load_portfolio(path: Optional[Path] = None, *, settings: Optional[dict[str, 
         data = json.loads(p.read_text(encoding="utf-8"))
         if not _portfolio_is_empty(data):
             return _finalize_portfolio(data)
-        if os.environ.get("PYTEST_CURRENT_TEST"):
+        if os.environ.get("PYTEST_CURRENT_TEST") and path is None:
             return _finalize_portfolio(data)
 
     for fallback in (repo_portfolio_path(), example_portfolio_path()):
@@ -196,7 +196,7 @@ def _repair_portfolio_db_snapshot(
 
         if not storage_enabled(settings):
             return
-        on_portfolio_save(_strip_portfolio_storage_metadata(portfolio), source="repair")
+        on_portfolio_save(_strip_portfolio_storage_metadata(portfolio), source="repair", settings=settings)
     except Exception:
         pass
 

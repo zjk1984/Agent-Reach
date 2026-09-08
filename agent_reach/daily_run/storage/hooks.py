@@ -43,17 +43,22 @@ def _allow_storage_write(
     return True
 
 
-def on_trade_ledger(entry: dict[str, Any], *, source_path: str = "") -> None:
+def on_trade_ledger(
+    entry: dict[str, Any],
+    *,
+    source_path: str = "",
+    settings: Optional[dict[str, Any]] = None,
+) -> None:
     from agent_reach.daily_run.storage import get_store
 
-    if not _allow_storage_write(kind="trade", payload=entry):
+    if not _allow_storage_write(kind="trade", payload=entry, settings=settings):
         return
     at = str(entry.get("at") or "")
     trade_id = str(entry.get("trade_id") or "")
     dedupe = f"trade:{at}:{trade_id}" if at and trade_id else f"trade:{at or 'unknown'}"
 
     def _write() -> None:
-        store = get_store()
+        store = get_store(settings)
         store.append_l0_event(
             "trade",
             entry,
@@ -65,14 +70,24 @@ def on_trade_ledger(entry: dict[str, Any], *, source_path: str = "") -> None:
     _safe("trade", _write)
 
 
-def on_portfolio_save(portfolio: dict[str, Any], *, source: str = "save") -> None:
+def on_portfolio_save(
+    portfolio: dict[str, Any],
+    *,
+    source: str = "save",
+    settings: Optional[dict[str, Any]] = None,
+) -> None:
     from agent_reach.daily_run.storage import get_store
 
-    if not _allow_storage_write(kind="portfolio", payload=portfolio, source=source):
+    if not _allow_storage_write(
+        kind="portfolio",
+        payload=portfolio,
+        source=source,
+        settings=settings,
+    ):
         return
 
     def _write() -> None:
-        store = get_store()
+        store = get_store(settings)
         snap_id = store.upsert_portfolio(portfolio, source=source)
         store.append_l0_event(
             "portfolio",
@@ -238,14 +253,21 @@ def on_l0_event(
     _safe(kind, _write)
 
 
-def on_l1_state(state_key: str, kind: str, payload: dict[str, Any], *, at: str = "") -> None:
+def on_l1_state(
+    state_key: str,
+    kind: str,
+    payload: dict[str, Any],
+    *,
+    at: str = "",
+    settings: Optional[dict[str, Any]] = None,
+) -> None:
     from agent_reach.daily_run.storage import get_store
 
-    if not _allow_storage_write(kind=kind, payload=payload):
+    if not _allow_storage_write(kind=kind, payload=payload, settings=settings):
         return
 
     def _write() -> None:
-        get_store().upsert_l1_state(state_key, kind, payload, at=at)
+        get_store(settings).upsert_l1_state(state_key, kind, payload, at=at)
 
     _safe(f"l1_state:{kind}", _write)
 
@@ -261,14 +283,15 @@ def on_l2_scenario(
     content: str = "",
     source_path: str = "",
     dedupe_key: str = "",
+    settings: Optional[dict[str, Any]] = None,
 ) -> None:
     from agent_reach.daily_run.storage import get_store
 
-    if not _allow_storage_write(kind=kind, payload=payload):
+    if not _allow_storage_write(kind=kind, payload=payload, settings=settings):
         return
 
     def _write() -> None:
-        get_store().upsert_l2_scenario(
+        get_store(settings).upsert_l2_scenario(
             kind,
             scenario_key,
             payload,
@@ -416,7 +439,12 @@ def on_rules_summary(summary: dict[str, Any], *, source_path: str = "") -> None:
     on_l1_state("experience:rules_summary", "rules_summary", summary, at=str(summary.get("updated_at") or ""))
 
 
-def on_runtime_overlay(overlay: dict[str, Any], *, source_path: str = "") -> None:
+def on_runtime_overlay(
+    overlay: dict[str, Any],
+    *,
+    source_path: str = "",
+    settings: Optional[dict[str, Any]] = None,
+) -> None:
     on_l2_scenario(
         "runtime_overlay",
         "effective",
@@ -426,19 +454,31 @@ def on_runtime_overlay(overlay: dict[str, Any], *, source_path: str = "") -> Non
         content="effective harness runtime overlay",
         source_path=source_path,
         dedupe_key="l2:runtime_overlay:effective",
+        settings=settings,
     )
 
 
-def on_last_snapshot(payload: dict[str, Any], *, source_path: str = "") -> None:
+def on_last_snapshot(
+    payload: dict[str, Any],
+    *,
+    source_path: str = "",
+    settings: Optional[dict[str, Any]] = None,
+) -> None:
     at = str(payload.get("as_of") or payload.get("generated_at") or "")[:10]
-    on_l1_state("last_snapshot", "last_snapshot", payload, at=at)
+    on_l1_state("last_snapshot", "last_snapshot", payload, at=at, settings=settings)
 
 
-def on_daily_cache(payload: dict[str, Any], *, day: str, source_path: str = "") -> None:
+def on_daily_cache(
+    payload: dict[str, Any],
+    *,
+    day: str,
+    source_path: str = "",
+    settings: Optional[dict[str, Any]] = None,
+) -> None:
     day_key = str(day or "")[:10]
     if not day_key:
         return
-    on_l1_state(f"daily_cache:{day_key}", "daily_cache", payload, at=day_key)
+    on_l1_state(f"daily_cache:{day_key}", "daily_cache", payload, at=day_key, settings=settings)
 
 
 def _baseline_event_at(record: dict[str, Any]) -> str:

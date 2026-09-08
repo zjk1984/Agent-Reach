@@ -478,8 +478,10 @@ def enrich_symbol_prediction(
     name = str(pred.get("name") or code)
     ev_s = format_evidence_suffix(evidence)
     low_conf = "；**低置信度，建议轻仓操作**" if conf < 60 else ""
+    lo_s = f"{float(price_lo):.0f}" if price_lo is not None else "—"
+    hi_s = f"{float(price_hi):.0f}" if price_hi is not None else "—"
     text = (
-        f"{name}预测 {price_lo:.0f}-{price_hi:.0f}元（宽度{width:.1f}%），"
+        f"{name}预测 {lo_s}-{hi_s}元（宽度{width:.1f}%），"
         f"置信度 {confidence_tier_detail(conf)}{low_conf}；{ev_s}"
     )
     out = dict(pred)

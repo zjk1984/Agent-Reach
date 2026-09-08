@@ -24,6 +24,7 @@ def harness_tmp(monkeypatch, tmp_path):
     monkeypatch.setattr("agent_reach.daily_run.harness.harness_dir", lambda: hdir)
     monkeypatch.setattr("agent_reach.daily_run.harness._state_path", lambda: hdir / "harness_state.json")
     monkeypatch.setattr("agent_reach.daily_run.harness._refinements_path", lambda: hdir / "refinements.jsonl")
+    monkeypatch.setenv("AGENT_REACH_STORAGE", "0")
     return hdir
 
 
@@ -223,15 +224,19 @@ class TestHarnessLayerB:
         assert "收紧观察池" in playbook
 
     def test_llm_refine_respects_cooldown(self, harness_tmp):
-        from agent_reach.daily_run.harness import refine_after_job_llm
+        import uuid
 
+        from agent_reach.daily_run.harness import HarnessState, refine_after_job_llm
+
+        HarnessState().save()
+        title = f"cooldown_{uuid.uuid4().hex[:8]}"
         settings = {"harness": {"enabled": True, "llm_refine": {"enabled": True, "cooldown_hours": 24}}}
         evidence = {
             "report": {
                 "week_start": "2026-08-10",
                 "week_end": "2026-08-14",
                 "weekly_pnl_pct": -1.0,
-                "process_improvements": [{"title": "A", "detail": "d"}],
+                "process_improvements": [{"title": title, "detail": "d"}],
             }
         }
         first = refine_after_job_llm("weekly", evidence=evidence, settings=settings)

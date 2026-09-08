@@ -107,6 +107,7 @@ class TestWatchlistBreakout:
             blocked=True,
         )
         snapshot = {
+            "as_of": "2026-09-07T06:30:00+00:00",
             "portfolio": {
                 "cash_ratio": 0.46,
                 "cash": 460_000,

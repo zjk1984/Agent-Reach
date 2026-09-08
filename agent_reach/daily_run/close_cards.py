@@ -55,6 +55,8 @@ class CloseCardContext:
     harness_result: Optional[dict[str, Any]] = None
     primary_snapshot: Optional[dict[str, Any]] = None
     settings: Optional[dict[str, Any]] = None
+    watchlist_adjust_markdown: str = ""
+    code_review_markdown: str = ""
 
 
 def _fmt_pct(value: Any) -> str:
@@ -364,6 +366,8 @@ def build_single_close_card_context(
         harness_result=run_result.get("harness") or run_result.get("harness_result"),
         primary_snapshot=snap,
         settings=settings,
+        watchlist_adjust_markdown=str(run_result.get("watchlist_adjust_markdown") or ""),
+        code_review_markdown=str(run_result.get("code_review_markdown") or ""),
     )
 
 
@@ -1019,5 +1023,21 @@ def render_close_card_sections(ctx: CloseCardContext) -> list[ReportSection]:
         job="close",
         settings=ctx.settings,
     )
+    if ctx.watchlist_adjust_markdown.strip():
+        sections.append(
+            ReportSection(
+                category="watchlist_adjust",
+                title="",
+                body=ctx.watchlist_adjust_markdown.strip(),
+            )
+        )
+    if ctx.code_review_markdown.strip():
+        sections.append(
+            ReportSection(
+                category="code_review",
+                title="",
+                body=ctx.code_review_markdown.strip(),
+            )
+        )
     _renumber(sections)
     return sections

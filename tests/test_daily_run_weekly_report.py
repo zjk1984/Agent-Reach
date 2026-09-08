@@ -490,9 +490,9 @@ class TestWeeklyReport:
         assert "总览" in rendered
         assert "缺少周初净值基线" in rendered
 
-    @patch("agent_reach.daily_run.weekly_report._load_manifest")
+    @patch("agent_reach.daily_run.weekly_report._load_week_manifests")
     @patch("agent_reach.daily_run.weekly_report.runs_dir")
-    def test_manifest_pnl_from_symbol_runner_morning(self, mock_runs_dir, mock_load, tmp_path, snapshot, portfolio):
+    def test_manifest_pnl_from_symbol_runner_morning(self, mock_runs_dir, mock_week_manifests, tmp_path, snapshot, portfolio):
         day_dir = tmp_path / "2026-07-06"
         day_dir.mkdir()
         end_dir = tmp_path / "2026-07-10"
@@ -553,17 +553,10 @@ class TestWeeklyReport:
                 ]
             },
         }
-
-        def _load_side_effect(path):
-            if "morning" in path.name:
-                return morning_manifest
-            if "close" in path.name:
-                return close_manifest
-            return None
-
-        (day_dir / "morning_080000.json").write_text("{}", encoding="utf-8")
-        (end_dir / "close_153000.json").write_text("{}", encoding="utf-8")
-        mock_load.side_effect = _load_side_effect
+        mock_week_manifests.return_value = [
+            {"job": "morning", "_run_date": "2026-07-06", **morning_manifest},
+            {"job": "close", "_run_date": "2026-07-10", **close_manifest},
+        ]
 
         with patch("agent_reach.daily_run.weekly_report.run_sector_research", return_value=[]):
             with patch("agent_reach.daily_run.weekly_report._load_trade_ledger_range", return_value=[]):
@@ -578,9 +571,9 @@ class TestWeeklyReport:
         assert report.end_total == 75000
         assert report.weekly_pnl == 1000
 
-    @patch("agent_reach.daily_run.weekly_report._load_manifest")
+    @patch("agent_reach.daily_run.weekly_report._load_week_manifests")
     @patch("agent_reach.daily_run.weekly_report.runs_dir")
-    def test_manifest_pnl_from_close_runs(self, mock_runs_dir, mock_load, tmp_path, snapshot, portfolio):
+    def test_manifest_pnl_from_close_runs(self, mock_runs_dir, mock_week_manifests, tmp_path, snapshot, portfolio):
         day_dir = tmp_path / "2026-07-10"
         day_dir.mkdir()
         morning_dir = tmp_path / "2026-07-06"
@@ -603,18 +596,10 @@ class TestWeeklyReport:
                 }
             },
         }
-
-        def _load_side_effect(path):
-            name = path.name
-            if "morning" in name:
-                return morning_manifest
-            if "close" in name:
-                return close_manifest
-            return None
-
-        (morning_dir / "morning_080000.json").write_text("{}", encoding="utf-8")
-        (day_dir / "close_153000.json").write_text("{}", encoding="utf-8")
-        mock_load.side_effect = _load_side_effect
+        mock_week_manifests.return_value = [
+            {"job": "morning", "_run_date": "2026-07-06", **morning_manifest},
+            {"job": "close", "_run_date": "2026-07-10", **close_manifest},
+        ]
 
         with patch("agent_reach.daily_run.weekly_report.run_sector_research", return_value=[]):
             with patch("agent_reach.daily_run.weekly_report._load_trade_ledger_range", return_value=[]):
@@ -725,8 +710,10 @@ class TestWeeklyReport:
         }
         (fri_dir / "close_153000.json").write_text("{}", encoding="utf-8")
         with patch(
-            "agent_reach.daily_run.weekly_report._load_manifest",
-            return_value=close_manifest,
+            "agent_reach.daily_run.weekly_report._load_week_manifests",
+            return_value=[
+                {"job": "close", "_run_date": "2026-07-31", **close_manifest},
+            ],
         ):
             prices, note = _week_start_prices_from_manifests([], date(2026, 8, 3))
         assert prices.get("688008") == 200.0

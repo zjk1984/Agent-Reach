@@ -374,6 +374,7 @@ class TestSchedule:
         mock_midday_harness.assert_called_once()
         assert result["harness_midday"] == {"changes": 1, "skipped": False, "job": "midday"}
 
+    @patch("agent_reach.daily_run.run_guard.check_duplicate_job", return_value=None)
     @patch("agent_reach.daily_run.intraday.record_morning_scan", return_value={"scan": {"scan_id": "S1"}})
     @patch("agent_reach.daily_run.trade_calendar.is_trading_day", return_value=(True, ""))
     @patch("agent_reach.daily_run.workflows.save_morning_baseline")
@@ -390,12 +391,19 @@ class TestSchedule:
         mock_save_baseline,
         mock_trading_day,
         mock_morning_scan,
+        _mock_dedupe,
         portfolio,
         tmp_path,
+        monkeypatch,
     ):
         mock_load.return_value = portfolio
         mock_build.return_value = ({"code": "688008"}, tmp_path / "snap.json")
         mock_morning.return_value = {"snapshot": {"code": "688008"}, "evaluation": {"report": {}}}
+
+        monkeypatch.setattr(
+            "agent_reach.daily_run.run_manifest.runs_dir",
+            lambda: tmp_path / "runs",
+        )
 
         from agent_reach.daily_run.schedule import run_scheduled
 
@@ -405,6 +413,7 @@ class TestSchedule:
         mock_morning_scan.assert_called_once()
         assert "harness_summary" in result
 
+    @patch("agent_reach.daily_run.run_guard.check_duplicate_job", return_value=None)
     @patch("agent_reach.daily_run.intraday_harness.apply_intraday_harness_refinement")
     @patch("agent_reach.daily_run.intraday.record_morning_scan", return_value={"scan": {"scan_id": "S1"}})
     @patch("agent_reach.daily_run.trade_calendar.is_trading_day", return_value=(True, ""))
@@ -423,8 +432,10 @@ class TestSchedule:
         mock_trading_day,
         mock_morning_scan,
         mock_intraday_harness,
+        _mock_dedupe,
         portfolio,
         tmp_path,
+        monkeypatch,
     ):
         mock_load.return_value = portfolio
         mock_build.return_value = ({"code": "688008"}, tmp_path / "snap.json")
@@ -433,6 +444,11 @@ class TestSchedule:
             "evaluation": {"report": {}},
             "harness_morning": {"refinement_id": "ref_m", "changes": 1, "skipped": False, "job": "morning"},
         }
+
+        monkeypatch.setattr(
+            "agent_reach.daily_run.run_manifest.runs_dir",
+            lambda: tmp_path / "runs",
+        )
 
         from agent_reach.daily_run.schedule import run_scheduled
 

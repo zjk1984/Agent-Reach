@@ -137,6 +137,7 @@ class TestScheduledStartNotification:
         mock_start,
         portfolio,
         tmp_path,
+        monkeypatch,
     ):
         mock_load.return_value = portfolio
         mock_build.return_value = ({"code": "688008"}, tmp_path / "snap.json")
@@ -144,6 +145,10 @@ class TestScheduledStartNotification:
 
         from agent_reach.daily_run.schedule import run_scheduled
 
+        monkeypatch.setattr(
+            "agent_reach.daily_run.run_manifest.runs_dir",
+            lambda: tmp_path / "runs",
+        )
         run_scheduled("morning", push=True)
         mock_start.assert_called_once()
         assert mock_start.call_args[0][0] == "morning"
@@ -367,10 +372,8 @@ class TestCloseWorkflow:
         categories = [s.category for s in sections]
         assert "watchlist_adjust" in categories
         assert "code_review" in categories
-        # forecast_review/close_improvements only render when there's non-empty content;
-        # this fixture has no active forecast, so just assert the categories aren't silently
-        # excluded by render_close_sections' signature (would raise TypeError otherwise).
-        assert "verify" in categories
+        # Close card layout uses forecast_verify instead of legacy verify category.
+        assert "forecast_verify" in categories or "verify" in categories
 
 
 class TestPrepareCloseRun:

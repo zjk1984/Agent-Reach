@@ -23,6 +23,7 @@ def portfolio():
 
 
 class TestScheduleHarnessSmoke:
+    @patch("agent_reach.daily_run.run_guard.check_duplicate_job", return_value=None)
     @patch("agent_reach.daily_run.trade_calendar.is_trading_day", return_value=(True, ""))
     @patch("agent_reach.daily_run.schedule._uses_per_symbol_jobs", return_value=False)
     @patch("agent_reach.daily_run.intraday.record_morning_scan", return_value={"scan": {"scan_id": "S2"}})
@@ -39,6 +40,7 @@ class TestScheduleHarnessSmoke:
         mock_morning_scan,
         mock_per_symbol,
         mock_trading_day,
+        _mock_dedupe,
         portfolio,
         tmp_path,
         monkeypatch,

@@ -296,9 +296,17 @@ def portfolio_hot_stock_summary(
     macro_signals: Optional[dict[str, Any]],
     *,
     limit: int = 3,
+    code: str = "",
 ) -> str:
     """One-line overlap summary for narrative cards."""
     matches = (macro_signals or {}).get("portfolio_hot_stocks") or []
+    if code:
+        norm = normalize_xueqiu_symbol(str(code))[-6:]
+        matches = [
+            item
+            for item in matches
+            if normalize_xueqiu_symbol(str(item.get("code") or ""))[-6:] == norm
+        ]
     if not matches:
         return ""
     parts: list[str] = []

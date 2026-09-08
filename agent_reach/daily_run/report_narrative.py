@@ -640,7 +640,7 @@ def build_morning_context(
         "reasoning": (report.get("reasoning") or "")[:160],
         "macro_summary": (snapshot.get("macro_summary") or "")[:120],
         "xueqiu_hot_summary": xueqiu_hot_context_summary(macro_signals),
-        "portfolio_hot_stock_summary": portfolio_hot_stock_summary(macro_signals),
+        "portfolio_hot_stock_summary": portfolio_hot_stock_summary(macro_signals, code=code),
         "portfolio_hot_post_summary": portfolio_hot_post_summary(macro_signals),
         **supplements,
         "change_pct": snapshot.get("change_pct"),

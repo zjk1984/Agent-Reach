@@ -1181,6 +1181,8 @@ def run_close(
                     "close_improvements": improvements.to_dict() if improvements else None,
                     "llm_narrative": close_narrative,
                     "harness": harness_result,
+                    "watchlist_adjust_markdown": wl_md,
+                    "code_review_markdown": cr_md,
                 },
                 settings=cfg,
             )

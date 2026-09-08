@@ -443,7 +443,8 @@ def _week_start_prices_from_manifests(
             continue
         prices = _prices_from_manifest_record(day_records[-1])
         if prices:
-            return prices, f"本周无有效报价 manifest，持股本周盈亏按 {day.isoformat()} 收盘价估算"
+            run_day = str(day_records[-1].get("_run_date") or day.isoformat())
+            return prices, f"本周无有效报价 manifest，持股本周盈亏按 {run_day} 收盘价估算"
 
     return {}, None
 
@@ -1858,6 +1859,17 @@ def _render_overview_lines(report: WeeklyReport) -> list[str]:
     lines.extend(render_weekly_risk_markdown(report.risk_metrics))
     lines.extend(render_strategy_health_markdown(report.strategy_health))
     lines.extend(render_week_key_events_markdown(report.key_events))
+    from agent_reach.daily_run.sell_rules_whatif import render_trade_rules_whatif_markdown
+
+    whatif_md = render_trade_rules_whatif_markdown(
+        sell=report.sell_rules_whatif,
+        buy=report.buy_rules_whatif,
+        intraday=report.intraday_friction_whatif,
+        intraday_sell=report.intraday_sell_whatif,
+    )
+    if whatif_md.strip():
+        lines.extend(whatif_md.splitlines())
+        lines.append("")
     for note in report.notes:
         if "无早盘 manifest" in note or "周初净值" in note or "缺少周初" in note:
             lines.append(f"- _{note}_")
@@ -2093,6 +2105,12 @@ def render_weekly_sections(report: WeeklyReport) -> list[WeeklySection]:
         sections.append(WeeklySection("量化Overlay", _join_section_lines(overlay_lines)))
 
     market_lines = _period_header_lines(report, continuation=True) + _render_market_lines(report)
+    from agent_reach.daily_run.xueqiu_hot_display import render_xueqiu_hot_markdown
+
+    xueqiu_md = render_xueqiu_hot_markdown(report.macro_signals or {})
+    if xueqiu_md.strip():
+        market_lines.append("")
+        market_lines.append(xueqiu_md)
     wl_update = report.watchlist_candidates_update or {}
     if wl_update.get("candidates") or wl_update.get("message"):
         from agent_reach.daily_run.watchlist_candidates import render_weekly_candidates_markdown
@@ -2133,13 +2151,6 @@ def render_weekly_sections(report: WeeklyReport) -> list[WeeklySection]:
     if insight_body:
         insight_lines = _period_header_lines(report, continuation=True) + insight_body
         sections.append(WeeklySection("学习·改进", _join_section_lines(insight_lines)))
-
-    from agent_reach.daily_run.xueqiu_hot_display import render_xueqiu_hot_markdown
-
-    xueqiu_md = render_xueqiu_hot_markdown(report.macro_signals or {})
-    if xueqiu_md.strip():
-        xueqiu_lines = _period_header_lines(report, continuation=True) + [xueqiu_md]
-        sections.append(WeeklySection("雪球热门", _join_section_lines(xueqiu_lines)))
 
     from agent_reach.daily_run.deepseek_interpretation_cards import render_deepseek_interpretation_markdown
 

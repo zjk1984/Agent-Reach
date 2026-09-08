@@ -992,11 +992,11 @@ def test_weekly_sections_include_xueqiu_hot(mock_fetch):
         portfolio=portfolio,
     )
     labels = [s.label for s in render_weekly_sections(report)]
-    assert "雪球热门" in labels
-    hot = next(s for s in render_weekly_sections(report) if s.label == "雪球热门")
-    assert "周六热帖" in hot.markdown
-    assert "澜起科技" in hot.markdown
-    assert "持仓/观察池 × 雪球热股" in hot.markdown
+    assert "市场环境" in labels
+    market = next(s for s in render_weekly_sections(report) if s.label == "市场环境")
+    assert "周六热帖" in market.markdown
+    assert "澜起科技" in market.markdown
+    assert "持仓/观察池 × 雪球热股" in market.markdown
     mock_fetch.assert_called_once()
 
 

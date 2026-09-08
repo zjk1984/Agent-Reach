@@ -8,8 +8,6 @@ from pathlib import Path
 from typing import Any, Optional
 
 from agent_reach.daily_run.storage.config import (
-    daily_run_data_root,
-    path_under_daily_run_data,
     sqlite_db_path,
     storage_enabled,
     storage_settings,
@@ -17,7 +15,21 @@ from agent_reach.daily_run.storage.config import (
 
 
 def canonical_prod_sqlite_path() -> Path:
-    return daily_run_data_root() / "daily_run.db"
+    return Path.home() / ".agent-reach" / "daily_run" / "daily_run.db"
+
+
+def canonical_daily_run_data_root() -> Path:
+    return Path.home() / ".agent-reach" / "daily_run"
+
+
+def is_canonical_daily_run_data_root() -> bool:
+    # Resolve via config module so pytest monkeypatches on daily_run_data_root apply.
+    from agent_reach.daily_run.storage.config import daily_run_data_root as _daily_run_data_root
+
+    try:
+        return _daily_run_data_root().resolve() == canonical_daily_run_data_root().resolve()
+    except OSError:
+        return str(_daily_run_data_root()) == str(canonical_daily_run_data_root())
 
 
 def is_prod_sqlite_path(path: Path | str) -> bool:
@@ -130,8 +142,8 @@ def storage_db_reads_blocked_reason(
         return None
     if not storage_enabled(settings):
         return None
+    if not is_canonical_daily_run_data_root():
+        return None
     if is_prod_sqlite_path(sqlite_db_path(settings)):
-        return "pytest_must_not_read_canonical_prod_db"
-    if file_path is not None and path_under_daily_run_data(file_path):
         return "pytest_must_not_read_canonical_prod_db"
     return None

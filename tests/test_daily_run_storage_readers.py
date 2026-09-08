@@ -51,6 +51,13 @@ def storage_env(tmp_path, monkeypatch):
         "agent_reach.daily_run.settings.load_settings",
         lambda path=None: settings,
     )
+
+    from agent_reach.daily_run.storage import get_store as real_get_store, reset_store
+
+    def pinned_get_store(st=None):
+        return real_get_store(st or settings)
+
+    monkeypatch.setattr("agent_reach.daily_run.storage.get_store", pinned_get_store)
     reset_store()
     yield {"settings": settings}
     reset_store()
@@ -74,7 +81,8 @@ def test_read_trade_ledger_entries(storage_env):
                     "commission": 18.0,
                 }
             ],
-        }
+        },
+        settings=settings,
     )
     rows = read_trade_ledger_entries(settings=settings)
     assert rows
@@ -379,6 +387,7 @@ def test_read_daily_trade_state(storage_env):
         "daily_trade_state",
         {"date": "2026-08-25", "fingerprints": ["abc"]},
         at="2026-08-25T09:00:00+00:00",
+        settings=settings,
     )
     payload = read_daily_trade_state(settings=settings)
     assert payload and payload.get("fingerprints") == ["abc"]
@@ -443,6 +452,7 @@ def test_read_runtime_overlay(storage_env):
             "updated_at": "2026-08-25T10:00:00+00:00",
         },
         source_path="/tmp/last_runtime_overlay.json",
+        settings=settings,
     )
     payload = read_runtime_overlay(settings=settings)
     assert payload and payload["threshold_overlay"]["min_mss"] == 45.0
@@ -452,6 +462,7 @@ def test_load_last_runtime_overlay_prefers_db(storage_env, tmp_path, monkeypatch
     from agent_reach.daily_run.context_layers import load_last_runtime_overlay
     from agent_reach.daily_run.storage.hooks import on_runtime_overlay
 
+    settings = storage_env["settings"]
     root = tmp_path / "daily_run"
     overlay_path = root / "harness" / "last_runtime_overlay.json"
     overlay_path.parent.mkdir(parents=True, exist_ok=True)
@@ -468,6 +479,7 @@ def test_load_last_runtime_overlay_prefers_db(storage_env, tmp_path, monkeypatch
     on_runtime_overlay(
         {"runtime_overlay": {"foo": "bar"}, "updated_at": "2026-08-25T10:00:00+00:00"},
         source_path=str(overlay_path),
+        settings=settings,
     )
     overlay = load_last_runtime_overlay()
     assert overlay.get("runtime_overlay", {}).get("foo") == "bar"
@@ -481,6 +493,7 @@ def test_read_job_health(storage_env):
         "job_health",
         "job_health",
         {"jobs": {"close": {"consecutive_failures": 2, "last_error": "timeout"}}},
+        settings=settings,
     )
     payload = read_job_health(settings=settings)
     assert payload and payload["jobs"]["close"]["consecutive_failures"] == 2
@@ -490,6 +503,7 @@ def test_job_health_load_prefers_db(storage_env, tmp_path, monkeypatch):
     from agent_reach.daily_run.job_health import _load
     from agent_reach.daily_run.storage.hooks import on_l1_state
 
+    settings = storage_env["settings"]
     root = tmp_path / "daily_run"
     health_file = root / "job_health.json"
     health_file.parent.mkdir(parents=True, exist_ok=True)
@@ -507,6 +521,7 @@ def test_job_health_load_prefers_db(storage_env, tmp_path, monkeypatch):
         "job_health",
         "job_health",
         {"jobs": {"morning": {"consecutive_failures": 1, "last_error": "api"}}},
+        settings=settings,
     )
     data = _load()
     assert data["jobs"]["morning"]["consecutive_failures"] == 1
@@ -524,6 +539,7 @@ def test_read_pnl_target_state(storage_env):
             "last_result": None,
             "history": [],
         },
+        settings=settings,
     )
     payload = read_pnl_target_state(settings=settings)
     assert payload and payload["pending"]["target_pnl_cny"] == 500.0
@@ -533,6 +549,7 @@ def test_load_pnl_target_state_prefers_db(storage_env, tmp_path, monkeypatch):
     from agent_reach.daily_run.pnl_target import load_pnl_target_state
     from agent_reach.daily_run.storage.hooks import on_l1_state
 
+    settings = storage_env["settings"]
     root = tmp_path / "daily_run"
     target_file = root / "pnl_target.json"
     target_file.parent.mkdir(parents=True, exist_ok=True)
@@ -558,6 +575,7 @@ def test_load_pnl_target_state_prefers_db(storage_env, tmp_path, monkeypatch):
             "last_result": None,
             "history": [],
         },
+        settings=settings,
     )
     state = load_pnl_target_state()
     assert state["pending"]["target_pnl_cny"] == 600.0
@@ -570,6 +588,7 @@ def test_read_last_snapshot(storage_env):
     on_last_snapshot(
         {"code": "603986", "price": 120.5, "as_of": "2026-08-25T09:00:00+00:00"},
         source_path="/tmp/last_snapshot.json",
+        settings=settings,
     )
     payload = read_last_snapshot(settings=settings)
     assert payload and payload["code"] == "603986"
@@ -579,6 +598,7 @@ def test_load_last_snapshot_prefers_db(storage_env, tmp_path, monkeypatch):
     from agent_reach.daily_run.snapshot_cache import load_last_snapshot, save_last_snapshot
     from agent_reach.daily_run.storage.hooks import on_last_snapshot
 
+    settings = storage_env["settings"]
     root = tmp_path / "daily_run"
     snap_path = root / "last_snapshot.json"
     snap_path.parent.mkdir(parents=True, exist_ok=True)
@@ -595,6 +615,7 @@ def test_load_last_snapshot_prefers_db(storage_env, tmp_path, monkeypatch):
     on_last_snapshot(
         {"code": "603986", "price": 120.5, "as_of": "2026-08-25T09:00:00+00:00"},
         source_path=str(snap_path),
+        settings=settings,
     )
     snap = load_last_snapshot()
     assert snap and snap["code"] == "603986"
@@ -623,6 +644,7 @@ def test_read_daily_cache(storage_env):
         {"macro_ctx": {"macro_summary": "risk-on"}, "technicals": {"603986": {"ma20": 120.0}}},
         day="2026-08-25",
         source_path="/tmp/cache/2026-08-25.json",
+        settings=settings,
     )
     payload = read_daily_cache("2026-08-25", settings=settings)
     assert payload and payload["macro_ctx"]["macro_summary"] == "risk-on"
@@ -632,6 +654,7 @@ def test_load_daily_cache_prefers_db(storage_env, tmp_path, monkeypatch):
     from agent_reach.daily_run.snapshot_cache import load_daily_cache
     from agent_reach.daily_run.storage.hooks import on_daily_cache
 
+    settings = storage_env["settings"]
     root = tmp_path / "daily_run"
     cache_root = root / "cache"
     cache_root.mkdir(parents=True, exist_ok=True)
@@ -651,6 +674,7 @@ def test_load_daily_cache_prefers_db(storage_env, tmp_path, monkeypatch):
         {"macro_ctx": {"macro_summary": "fresh"}},
         day="2026-08-25",
         source_path=str(cache_file),
+        settings=settings,
     )
     data = load_daily_cache()
     assert data["macro_ctx"]["macro_summary"] == "fresh"
