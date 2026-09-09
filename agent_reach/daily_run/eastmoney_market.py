@@ -163,28 +163,41 @@ def fetch_all_stocks_resilient(
 
 
 def fetch_north_flow(*, timeout: float = 15.0) -> dict[str, Any]:
+    """Northbound net buy via Eastmoney kamt/get (netBuyAmt in 万元 → 亿)."""
     url = (
-        "https://push2.eastmoney.com/api/qt/kamt.kline/get"
-        "?fields1=f1,f2,f3,f4&fields2=f51,f52,f53&klt=101&lmt=10"
+        "https://push2.eastmoney.com/api/qt/kamt/get"
+        "?fields1=f1,f2,f3,f4&fields2=f51,f52,f53,f54,f63"
     )
     data = fetch_json(url, timeout=timeout)
-    result: dict[str, Any] = {"net_yi": 0.0, "direction": "flat", "recent": []}
-    lines = (data.get("data") or {}).get("klines") or []
-    for line in lines:
-        parts = str(line).split(",")
-        result["recent"].append(
-            {
-                "date": parts[0] if parts else "",
-                "value": float(parts[1]) if len(parts) > 1 else 0.0,
-                "balance": float(parts[2]) if len(parts) > 2 else 0.0,
-            }
-        )
-    if result["recent"]:
-        last = result["recent"][-1]
-        result["net_yi"] = float(last.get("value") or 0)
-        val = result["net_yi"]
-        result["direction"] = "inflow" if val > 0 else "outflow" if val < 0 else "flat"
-    return result
+    block = data.get("data") or {}
+    hk2sh = block.get("hk2sh") or {}
+    hk2sz = block.get("hk2sz") or {}
+    if not hk2sh and not hk2sz:
+        return {
+            "net_yi": None,
+            "direction": "unknown",
+            "available": False,
+            "disclosure_limited": False,
+            "recent": [],
+        }
+
+    sh_buy = hk2sh.get("netBuyAmt")
+    sz_buy = hk2sz.get("netBuyAmt")
+    total_wan = float(sh_buy or 0) + float(sz_buy or 0)
+    net_yi = round(total_wan / 10000.0, 2)
+    disclosure_limited = total_wan == 0.0 and bool(hk2sh or hk2sz)
+    direction = "inflow" if net_yi > 0.01 else "outflow" if net_yi < -0.01 else "flat"
+    return {
+        "net_yi": net_yi,
+        "net_buy_wan": total_wan,
+        "hk2sh_net_buy": sh_buy,
+        "hk2sz_net_buy": sz_buy,
+        "direction": direction,
+        "available": True,
+        "disclosure_limited": disclosure_limited,
+        "recent": [],
+        "source": "eastmoney_kamt",
+    }
 
 
 def fetch_north_flow_resilient(*, timeout: float = 15.0) -> tuple[dict[str, Any], list[str]]:
@@ -212,7 +225,7 @@ def fetch_north_flow_resilient(*, timeout: float = 15.0) -> tuple[dict[str, Any]
     except Exception as exc:
         warnings.append(f"akshare 北向: {exc}")
 
-    return {"net_yi": 0.0, "direction": "flat", "recent": []}, warnings
+    return {"net_yi": None, "direction": "unknown", "available": False, "disclosure_limited": False, "recent": []}, warnings
 
 
 def _safe_list(fetch_fn, *, timeout: float, label: str) -> tuple[list[Any], list[str]]:

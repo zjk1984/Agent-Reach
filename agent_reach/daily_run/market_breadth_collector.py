@@ -243,18 +243,26 @@ def _score_market_emotion(
             score -= 1
             reasons.append(f"炸板率 {broken_rate * 100:.0f}%，封板一般")
 
-    net = float(north.get("net_yi") or north.get("net_100m") or 0)
-    if net > north_inflow_strong:
-        score += 1
-        reasons.append(f"北向大幅流入 {net:.0f} 亿")
-    elif net > 0:
-        reasons.append(f"北向小幅流入 {net:.0f} 亿")
-    elif net < -north_outflow_strong:
-        score -= 1
-        warnings.append(f"北向大幅流出 {abs(net):.0f} 亿")
-        reasons.append(f"北向大幅流出 {abs(net):.0f} 亿")
-    elif net < 0:
-        reasons.append(f"北向小幅流出 {abs(net):.0f} 亿")
+    net_raw = north.get("net_yi")
+    northbound_net_yi: Optional[float] = None
+    if north.get("disclosure_limited"):
+        reasons.append("北向净买额未披露（东财停实时披露）")
+    elif north.get("available") is False or net_raw is None:
+        reasons.append("北向数据不可用")
+    else:
+        net = float(net_raw)
+        northbound_net_yi = net
+        if net > north_inflow_strong:
+            score += 1
+            reasons.append(f"北向大幅流入 {net:.0f} 亿")
+        elif net > 0:
+            reasons.append(f"北向小幅流入 {net:.0f} 亿")
+        elif net < -north_outflow_strong:
+            score -= 1
+            warnings.append(f"北向大幅流出 {abs(net):.0f} 亿")
+            reasons.append(f"北向大幅流出 {abs(net):.0f} 亿")
+        elif net < 0:
+            reasons.append(f"北向小幅流出 {abs(net):.0f} 亿")
 
     rating, position = rating_position_from_score(score, settings=settings)
 
@@ -273,7 +281,7 @@ def _score_market_emotion(
         position=position,
         reasons=reasons,
         warnings=warnings,
-        northbound_net_yi=net,
+        northbound_net_yi=northbound_net_yi,
     )
 
 

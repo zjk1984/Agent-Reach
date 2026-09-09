@@ -1356,6 +1356,13 @@ def _decide_trade(
         snapshot,
         settings=settings,
     )
+    from agent_reach.daily_run.systemic_risk import intraday_macro_veto_systemic_bump
+
+    macro_veto, systemic_note = intraday_macro_veto_systemic_bump(
+        macro_veto,
+        snapshot,
+        settings=settings,
+    )
     aggressive = effective_aggressive_entry(
         settings,
         str(report.get("code") or ""),
@@ -1370,6 +1377,8 @@ def _decide_trade(
     overlay_note = _harness_overlay_note(settings)
     if sector_gap_note:
         overlay_note = f"{overlay_note}{sector_gap_note}"
+    if systemic_note:
+        overlay_note = f"{overlay_note}{systemic_note}"
 
     exp_ret = expected_return_pct
     if exp_ret is None:
@@ -1521,6 +1530,26 @@ def _decide_trade(
                 reasoning=f"{kronos_block}{overlay_note}",
                 blocked=True,
                 block_kind="buy_kronos",
+                friction_blocked=friction_blocked,
+                expected_return_pct=exp_ret,
+            )
+        from agent_reach.daily_run.systemic_risk import systemic_buy_block_reason
+
+        systemic_block = systemic_buy_block_reason(
+            settings,
+            code=symbol_code,
+            snapshot=snapshot,
+        )
+        if systemic_block:
+            return TradeDecision(
+                action="hold",
+                trade_id=trade_id,
+                lookback_mss=lookback_mss,
+                lookback_detail=[],
+                trend=trend,
+                reasoning=f"{systemic_block}{overlay_note}",
+                blocked=True,
+                block_kind="buy_systemic_risk",
                 friction_blocked=friction_blocked,
                 expected_return_pct=exp_ret,
             )

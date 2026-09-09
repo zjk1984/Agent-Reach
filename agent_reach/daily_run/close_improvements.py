@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 
 from agent_reach.daily_run.schedule import INTRADAY_SCAN_TIMES
 
-Category = Literal["mss", "portfolio", "watchlist", "schedule"]
+Category = Literal["mss", "portfolio", "watchlist", "schedule", "risk"]
 
 BEIJING = ZoneInfo("Asia/Shanghai")
 
@@ -41,6 +41,7 @@ class CloseImprovements:
             "portfolio": [],
             "watchlist": [],
             "schedule": [],
+            "risk": [],
         }
         for item in self.items:
             by_cat[item.category].append(item.to_dict())
@@ -101,6 +102,7 @@ def generate_close_improvements(
     _improve_watchlist(out, current, watchlist_adjust, watchlist_cfg, portfolio_cfg)
     _improve_schedule(out, scans or [], trades or [], schedule_cfg, settings)
     _improve_forecast(out, forecast_review, settings)
+    _improve_systemic_risk(out, current, settings)
 
     # Always include a scan summary when we have data (confirms feature ran).
     from agent_reach.daily_run.intraday import MAX_SCANS
@@ -135,11 +137,12 @@ def render_improvements_markdown(
         "portfolio": "持仓与调仓",
         "watchlist": "观察池",
         "schedule": "S_n 扫描次数与时间",
+        "risk": "系统性风险",
     }
     lines = ["**🔧 复盘改进意见**", ""]
     grouped: dict[str, list[ImprovementItem]] = {k: [] for k in labels}
     for item in result.items:
-        grouped[item.category].append(item)
+        grouped.setdefault(item.category, []).append(item)
 
     for cat, title in labels.items():
         items = grouped[cat]
@@ -478,6 +481,22 @@ def _improve_schedule(
                 f"盘中 MSS 振幅 {spread:.0f} 分",
                 "波动大但扫描次数未满，可考虑在 10:30/14:00 附近增加 manual intraday 或缩短 cron 间隔",
             )
+
+
+def _improve_systemic_risk(
+    out: CloseImprovements,
+    current: dict[str, Any],
+    settings: dict[str, Any],
+) -> None:
+    from agent_reach.daily_run.systemic_risk import collect_systemic_risk_findings
+
+    for finding in collect_systemic_risk_findings(current=current, settings=settings):
+        out.add(
+            "risk",
+            str(finding.get("priority") or "medium"),
+            str(finding.get("title") or "系统性风险"),
+            str(finding.get("detail") or ""),
+        )
 
 
 def _improve_forecast(

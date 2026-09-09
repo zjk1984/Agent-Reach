@@ -54,6 +54,15 @@ def _item_to_harness(
         if "重复" in blob or "上限" in blob:
             plan.append(f"watchlist：{item.title}")
 
+    elif item.category == "risk":
+        memory.append(line)
+        if "科技链" in blob or "集中" in blob:
+            playbook.append(f"rotation / 非科技观察池：{item.detail[:160]}")
+        if "情绪降温" in blob or "涨停" in blob:
+            policy.append("系统性风险：情绪降温日暂停科技加仓，维持高 cash")
+        if "跑输基准" in blob:
+            playbook.append(f"基准超额：{item.detail[:160]}")
+
     elif item.category == "schedule":
         playbook.append(line)
         if "扫描" in blob and ("缺失" in blob or "偏少" in blob or "空档" in blob):

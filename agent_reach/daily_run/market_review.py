@@ -225,18 +225,26 @@ def _macro_breadth_fallback(
         elif pct_f < index_pct_bear:
             score -= 1
 
-    net = float(north.get("net_yi") or 0)
-    if net > north_inflow_strong:
-        score += 1
-        reasons.append(f"北向大幅流入 {net:.0f} 亿")
-    elif net > 0:
-        reasons.append(f"北向小幅流入 {net:.0f} 亿")
-    elif net < -north_outflow_strong:
-        score -= 1
-        warnings.append(f"北向大幅流出 {abs(net):.0f} 亿")
-        reasons.append(f"北向大幅流出 {abs(net):.0f} 亿")
-    elif net < 0:
-        reasons.append(f"北向小幅流出 {abs(net):.0f} 亿")
+    net_raw = north.get("net_yi")
+    northbound_net_yi: Optional[float] = None
+    if north.get("disclosure_limited"):
+        reasons.append("北向净买额未披露（东财停实时披露）")
+    elif north.get("available") is False or net_raw is None:
+        reasons.append("北向数据不可用")
+    else:
+        net = float(net_raw)
+        northbound_net_yi = net
+        if net > north_inflow_strong:
+            score += 1
+            reasons.append(f"北向大幅流入 {net:.0f} 亿")
+        elif net > 0:
+            reasons.append(f"北向小幅流入 {net:.0f} 亿")
+        elif net < -north_outflow_strong:
+            score -= 1
+            warnings.append(f"北向大幅流出 {abs(net):.0f} 亿")
+            reasons.append(f"北向大幅流出 {abs(net):.0f} 亿")
+        elif net < 0:
+            reasons.append(f"北向小幅流出 {abs(net):.0f} 亿")
 
     rating, position = rating_position_from_score(score, settings=settings)
 
@@ -246,7 +254,7 @@ def _macro_breadth_fallback(
         position=position,
         reasons=reasons,
         warnings=warnings,
-        northbound_net_yi=net,
+        northbound_net_yi=northbound_net_yi,
     )
     out = em.to_dict()
     out["breadth_degraded"] = True
@@ -502,6 +510,8 @@ def render_market_review_markdown(
         return "## 🌡️ 全市场复盘\n\n> 市场宽度数据拉取失败：无数据"
 
     em = review.get("emotion") or {}
+    from agent_reach.daily_run.systemic_risk import format_northbound_display
+
     degraded = em.get("breadth_degraded") is True
     partial = em.get("breadth_partial") is True
     has_limits = bool(em.get("limit_source")) or (
@@ -582,7 +592,9 @@ def render_market_review_markdown(
             lines.append("- 涨跌家数 **不可用**（已降级为指数+北向估算）")
         else:
             lines.append("- 涨跌家数/涨跌停 **不可用**（已降级为指数+北向估算）")
-    lines.append(f"- 北向 **{em.get('northbound_net_yi', '—')} 亿**")
+    lines.append(
+        f"- 北向 **{format_northbound_display(review.get('north'), emotion=em)}**"
+    )
 
     lines.extend(
         [

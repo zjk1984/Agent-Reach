@@ -810,8 +810,14 @@ def _symbol_score(
         intel = (snapshot.get("watchlist_intel") or {}).get(code)
         score += intel_score_adjustment(intel, settings=settings)
         from agent_reach.daily_run.watchlist_momentum import watchlist_momentum_score_boost
+        from agent_reach.daily_run.systemic_risk import watchlist_diversify_score_adjustment
 
         score += watchlist_momentum_score_boost(row, settings=settings)
+        score += watchlist_diversify_score_adjustment(
+            row,
+            portfolio=snapshot.get("portfolio") or {},
+            settings=settings,
+        )
     return score
 
 

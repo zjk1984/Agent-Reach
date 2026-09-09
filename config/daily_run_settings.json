@@ -1041,6 +1041,22 @@
     }
   },
 
+  "systemic_risk": {
+    "enabled": true,
+    "tech_cluster_ratio_warn": 0.70,
+    "tech_cluster_ratio_block_buy": 0.70,
+    "tech_cluster_score_penalty": 2.0,
+    "non_tech_score_boost": 2.0,
+    "diversify_watchlist_enabled": true,
+    "emotion_cooling_limit_up_delta": -15,
+    "emotion_cooling_limit_down_delta": 3,
+    "emotion_cooling_macro_veto_bump": 2.0,
+    "block_tech_buy_on_cooling": true,
+    "benchmark_underperform_threshold_pct": -0.20,
+    "benchmark_streak_warn_days": 2,
+    "benchmark_streak_defensive_days": 3
+  },
+
   "close_improvements": {
     "enabled": true,
     "harness_evolve": true

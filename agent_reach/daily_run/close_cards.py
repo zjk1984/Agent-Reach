@@ -649,10 +649,17 @@ def render_key_signals_markdown(ctx: CloseCardContext) -> str:
     cmp_ = (ctx.market_review or {}).get("comparison") or {}
     vs_y = cmp_.get("vs_yesterday") or {}
     if vs_y:
+        from agent_reach.daily_run.systemic_risk import format_northbound_display
+
+        north_delta = vs_y.get("northbound_delta_yi")
+        if north_delta is not None:
+            north_s = f"北向 {float(north_delta):+.1f} 亿"
+        else:
+            north_s = f"北向 {format_northbound_display(ctx.market_review.get('north') if ctx.market_review else None, emotion=(ctx.market_review or {}).get('emotion'))}"
         lines.append(
             f"**vs 昨日：** 涨停 {int(vs_y.get('limit_up_delta') or 0):+d} · "
             f"跌停 {int(vs_y.get('limit_down_delta') or 0):+d} · "
-            f"北向 {float(vs_y.get('northbound_delta_yi') or 0):+.1f} 亿"
+            f"{north_s}"
         )
     return "\n".join(lines).strip() or "暂无额外关键信号"
 
