@@ -24,6 +24,7 @@ def earnings_team_cfg(settings: Optional[dict[str, Any]] = None) -> dict[str, An
         "num_results": max(1, int(block.get("num_results", 2))),
         "timeout": int(block.get("timeout") or plugins.get("exa_timeout", 45)),
         "prefer_over_exa_research": block.get("prefer_over_exa_research", True) is not False,
+        "max_queries": max(1, int(block.get("max_queries", 6))),
     }
 
 
@@ -63,7 +64,7 @@ def _run_perspective_query(
     query = f"{name} {code} latest earnings report {angle} 2026"
     try:
         from agent_reach.daily_run.exa_cache import cached_web_search_exa
-        from agent_reach.daily_run.exa_client import ExaError, summarize_hits
+        from agent_reach.daily_run.exa_client import summarize_hits
 
         hits, _cached = cached_web_search_exa(
             query,
@@ -107,10 +108,13 @@ def run_earnings_team_lite(
     if not targets:
         return []
 
+    budget = int(cfg["max_queries"])
     results: list[dict[str, Any]] = []
     for target in targets:
         perspectives: list[dict[str, Any]] = []
         for master_key, label, angle in _PERSPECTIVES:
+            if budget <= 0:
+                break
             perspectives.append(
                 _run_perspective_query(
                     target,
@@ -122,6 +126,9 @@ def run_earnings_team_lite(
                     timeout=int(cfg["timeout"]),
                 )
             )
+            budget -= 1
+        if not perspectives:
+            break
         results.append(
             {
                 "code": target.get("code"),
@@ -131,6 +138,31 @@ def run_earnings_team_lite(
             }
         )
     return results
+
+
+def earnings_team_as_research_results(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Flatten four-master rows into the Exa research_results shape used by report_audit."""
+    out: list[dict[str, Any]] = []
+    for row in results:
+        for perspective in row.get("perspectives") or []:
+            out.append(
+                {
+                    "success": bool(perspective.get("success")),
+                    "query": perspective.get("query"),
+                    "target": {
+                        "code": row.get("code"),
+                        "name": row.get("name"),
+                        "master": perspective.get("master"),
+                    },
+                    "hits": perspective.get("hits") or [],
+                    "summary": perspective.get("summary"),
+                }
+            )
+    return out
+
+
+def earnings_team_has_success(results: list[dict[str, Any]]) -> bool:
+    return any(row.get("success") for row in results)
 
 
 def render_earnings_team_markdown(results: list[dict[str, Any]]) -> str:

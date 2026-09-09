@@ -47,11 +47,17 @@ def run_weekly_industry_funnel(
     enriched: dict[str, dict[str, Any]] | None = None,
     hot_titles: list[str] | None = None,
 ) -> dict[str, Any]:
-    from agent_reach.daily_run.berkshire.config import berkshire_enabled
+    from agent_reach.daily_run.berkshire.config import berkshire_cfg, berkshire_enabled
     from agent_reach.daily_run.berkshire.industry_funnel import funnel_select_watchlist
 
-    if not berkshire_enabled(settings, key="industry_funnel_on_close"):
-        return {"skipped": True, "reason": "industry_funnel disabled"}
+    if not berkshire_enabled(settings):
+        return {"skipped": True, "reason": "berkshire disabled"}
+    bcfg = berkshire_cfg(settings)
+    weekly = bcfg.get("industry_funnel_on_weekly")
+    if weekly is None:
+        weekly = bcfg.get("industry_funnel_on_close", True)
+    if weekly is False:
+        return {"skipped": True, "reason": "industry_funnel weekly disabled"}
     return funnel_select_watchlist(settings, enriched=enriched, hot_titles=hot_titles)
 
 

@@ -112,6 +112,7 @@ def render_morning_sections(
     harness_markdown: str = "",
     narrative: Optional[dict[str, Any]] = None,
     macro_signals: Optional[dict[str, Any]] = None,
+    news_pulse_markdown: str = "",
 ) -> list[ReportSection]:
     name = report.get("name") or report.get("code") or "大盘"
     verdict = report.get("verdict") or "观察"
@@ -134,6 +135,8 @@ def render_morning_sections(
         sections.append(ReportSection(category="eastmoney", title="", body=em_md))
     if harness_markdown.strip():
         sections.append(ReportSection(category="harness", title="", body=harness_markdown.strip()))
+    if news_pulse_markdown.strip():
+        sections.append(ReportSection(category="news_pulse", title="", body=news_pulse_markdown.strip()))
     try:
         from agent_reach.daily_run.settings import load_settings
 
@@ -186,6 +189,7 @@ def render_close_sections(
     narrative: Optional[dict[str, Any]] = None,
     macro_signals: Optional[dict[str, Any]] = None,
     snapshot: Optional[dict[str, Any]] = None,
+    news_pulse_markdown: str = "",
 ) -> list[ReportSection]:
     label = verify_name or "大盘"
     sections: list[ReportSection] = []
@@ -247,6 +251,8 @@ def render_close_sections(
         sections.append(
             ReportSection(category="daily_portfolio", title="", body=portfolio_markdown.strip())
         )
+    if news_pulse_markdown.strip():
+        sections.append(ReportSection(category="news_pulse", title="", body=news_pulse_markdown.strip()))
     try:
         from agent_reach.daily_run.settings import load_settings
 
@@ -645,6 +651,7 @@ def morning_sections_from_run(
         report=report,
         narrative=run_result.get("llm_narrative"),
         macro_signals=macro_signals,
+        news_pulse_markdown=run_result.get("news_pulse_markdown") or "",
     )
 
 
@@ -680,6 +687,7 @@ def close_sections_from_run(
         narrative=run_result.get("llm_narrative"),
         macro_signals=macro_signals,
         snapshot=snapshot,
+        news_pulse_markdown=run_result.get("news_pulse_markdown") or "",
     )
 
 

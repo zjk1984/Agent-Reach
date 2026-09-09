@@ -195,6 +195,7 @@ def run_morning(
     skip_narrative: bool = False,
     title: Optional[str] = None,
     config=None,
+    include_news_pulse: bool = True,
 ) -> dict[str, Any]:
     """
     Full morning pipeline:
@@ -281,6 +282,15 @@ def run_morning(
 
     team_md = render_team_markdown(enriched) if expert_card_enabled(cfg, workflow="morning") else ""
     report_md = render_symbol_decision_markdown(report, snapshot=enriched)
+    news_pulse_md = ""
+    if include_news_pulse:
+        from agent_reach.daily_run.berkshire.news_pulse import render_news_pulse_for_workflow
+
+        news_pulse_md = render_news_pulse_for_workflow(
+            enriched.get("portfolio") or {},
+            settings=cfg,
+            workflow="morning",
+        )
     morning_narrative: dict[str, Any] = {"skipped": True, "reason": "deferred"}
     if not skip_narrative:
         from agent_reach.daily_run.report_narrative import generate_morning_narrative
@@ -336,6 +346,12 @@ def run_morning(
             )
             steps.append("am_open_overlay")
             sections = render_morning_card_sections(morning_ctx)
+            if news_pulse_md:
+                from agent_reach.daily_run.report_push import ReportSection
+
+                sections.append(
+                    ReportSection(category="news_pulse", title="📡 新闻脉搏", body=news_pulse_md)
+                )
         else:
             from agent_reach.daily_run.am_open_overlay import (
                 build_am_open_overlay_from_run,
@@ -356,6 +372,7 @@ def run_morning(
                 harness_markdown=harness_md,
                 narrative=morning_narrative,
                 macro_signals=enriched.get("macro_signals"),
+                news_pulse_markdown=news_pulse_md,
             )
         feishu_result = push_report_sections(
             sections,
@@ -386,9 +403,12 @@ def run_morning(
         "evaluation": evaluation,
         "pipeline_handoff": pipeline_handoff,
         "agent_trace": agent_trace,
-        "markdown": team_md + "\n\n---\n\n" + report_md,
+        "markdown": "\n\n---\n\n".join(
+            p for p in (team_md, report_md, news_pulse_md) if p
+        ),
         "team_markdown": team_md,
         "report_markdown": report_md,
+        "news_pulse_markdown": news_pulse_md,
         "llm_narrative": morning_narrative,
         "feishu": feishu_result,
         "harness_plan_closeout": plan_close,
@@ -729,6 +749,7 @@ def run_close(
     verify_dict: Optional[dict[str, Any]] = None,
     portfolio_summary: bool = True,
     experts_already_ran: bool = False,
+    include_news_pulse: bool = True,
 ) -> dict[str, Any]:
     """Close workflow: Team-First experts → verify baseline vs current → Feishu push."""
     cfg = effective_settings(settings)
@@ -790,7 +811,9 @@ def run_close(
     if not skip_exa_research:
         from agent_reach.daily_run.berkshire.config import berkshire_enabled
         from agent_reach.daily_run.berkshire.earnings_team_lite import (
+            earnings_team_as_research_results,
             earnings_team_cfg,
+            earnings_team_has_success,
             render_earnings_team_markdown,
             run_earnings_team_lite,
         )
@@ -798,9 +821,15 @@ def run_close(
         et_cfg = earnings_team_cfg(cfg)
         if berkshire_enabled(cfg, key="earnings_team_lite") and et_cfg.get("prefer_over_exa_research"):
             earnings_results = run_earnings_team_lite(enriched, cfg)
-            earnings_md = render_earnings_team_markdown(earnings_results) or ""
+            if earnings_team_has_success(earnings_results):
+                earnings_md = render_earnings_team_markdown(earnings_results) or ""
+                research_results = earnings_team_as_research_results(earnings_results)
+            elif earnings_results:
+                research_results = earnings_team_as_research_results(earnings_results)
         if not earnings_md:
-            research_results = run_exa_research(enriched, cfg)
+            fallback = run_exa_research(enriched, cfg)
+            if fallback:
+                research_results = fallback
             research_md = render_research_markdown(enriched, research_results=research_results, settings=cfg) or ""
         else:
             research_md = earnings_md
@@ -840,14 +869,12 @@ def run_close(
         portfolio_review_md = render_portfolio_review_markdown(review) or ""
 
     news_pulse_md = ""
-    if pf:
-        from agent_reach.daily_run.berkshire.news_pulse import (
-            render_news_pulse_markdown,
-            run_news_pulse_batch,
-        )
+    if include_news_pulse and pf:
+        from agent_reach.daily_run.berkshire.news_pulse import render_news_pulse_for_workflow
 
-        pulse = run_news_pulse_batch(pf, settings=cfg, max_symbols=3)
-        news_pulse_md = render_news_pulse_markdown(pulse) or ""
+        news_pulse_md = render_news_pulse_for_workflow(
+            pf, settings=cfg, max_symbols=3, workflow="close"
+        ) or ""
 
     extra_parts: list[str] = []
     wl_md = ""
@@ -1261,6 +1288,12 @@ def run_close(
 
             save_close_handoff(build_close_handoff(close_ctx))
             sections = render_close_card_sections(close_ctx)
+            if news_pulse_md:
+                from agent_reach.daily_run.report_push import ReportSection
+
+                sections.append(
+                    ReportSection(category="news_pulse", title="📡 新闻脉搏", body=news_pulse_md)
+                )
         else:
             sections = render_close_sections(
             verify_name=verify.name or verify.code or "大盘",
@@ -1279,6 +1312,7 @@ def run_close(
             technical_watch_markdown=technical_watch_md,
             narrative=close_narrative,
             macro_signals=enriched.get("macro_signals"),
+            news_pulse_markdown=news_pulse_md,
         )
         feishu_result = push_report_sections(
             sections,
@@ -1311,6 +1345,7 @@ def run_close(
         "team_markdown": team_md,
         "curve_markdown": curve_md,
         "research_markdown": research_md,
+        "news_pulse_markdown": news_pulse_md,
         "experience_markdown": exp_md,
         "verify_markdown": verify_md,
         "market_review_markdown": market_review_md,
@@ -1875,6 +1910,14 @@ def run_weekly(
     steps.append("llm_narrative")
 
     md = render_weekly_markdown(report)
+    from agent_reach.daily_run.berkshire.news_pulse import append_news_pulse_markdown
+
+    weekly_pf = dict(portfolio or snapshot.get("portfolio") or {})
+    if not weekly_pf.get("watchlist") and getattr(report, "watchlist", None):
+        weekly_pf["watchlist"] = list(report.watchlist)
+    if not weekly_pf.get("holdings") and getattr(report, "holdings", None):
+        weekly_pf["holdings"] = list(report.holdings)
+    md = append_news_pulse_markdown(md, weekly_pf, settings=cfg, workflow="weekly")
     steps.append("render")
 
     feishu_result = None
@@ -1889,6 +1932,14 @@ def run_weekly(
 
         cfg_obj = config or Config()
         sections = render_weekly_push_sections(report)
+        from agent_reach.daily_run.berkshire.news_pulse import append_news_pulse_section
+
+        sections = append_news_pulse_section(
+            sections,
+            weekly_pf,
+            settings=cfg,
+            workflow="weekly",
+        )
         feishu_result = push_report_sections(
             sections,
             settings=cfg,
@@ -2136,6 +2187,9 @@ def run_forecast(
         _workflow_harness_error(harness_errors, "storage_prune", exc)
 
     md = render_forecast_markdown(forecast)
+    from agent_reach.daily_run.berkshire.news_pulse import append_news_pulse_markdown
+
+    md = append_news_pulse_markdown(md, pf, settings=cfg, workflow="forecast")
     steps.append("render")
 
     feishu_result = None
@@ -2150,6 +2204,14 @@ def run_forecast(
 
         cfg_obj = config or Config()
         sections = render_forecast_push_sections(forecast)
+        from agent_reach.daily_run.berkshire.news_pulse import append_news_pulse_section
+
+        sections = append_news_pulse_section(
+            sections,
+            pf,
+            settings=cfg,
+            workflow="forecast",
+        )
         feishu_result = push_report_sections(
             sections,
             settings=cfg,

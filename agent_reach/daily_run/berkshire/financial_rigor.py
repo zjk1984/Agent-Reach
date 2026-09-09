@@ -98,6 +98,12 @@ def verify_snapshot_financials(snapshot: dict[str, Any]) -> dict[str, Any]:
 
     enriched = enrich_snapshot_for_financial_rigor(snapshot)
     checks: dict[str, Any] = {"valuation": verify_valuation_from_snapshot(enriched)}
+    code = str(enriched.get("code") or "").strip()
+    if not code or code.upper() == "MARKET":
+        checks["market_cap"] = {"skipped": True, "reason": "no primary symbol"}
+        checks["ok"] = True
+        checks["fundamentals_source"] = enriched.get("fundamentals_source")
+        return checks
     price = enriched.get("price")
     shares = enriched.get("total_shares") or enriched.get("shares_outstanding")
     reported = enriched.get("market_cap") or enriched.get("total_market_cap")
@@ -106,7 +112,7 @@ def verify_snapshot_financials(snapshot: dict[str, Any]) -> dict[str, Any]:
         checks["market_cap"] = mc.to_dict()
         checks["ok"] = mc.ok
     else:
-        checks["market_cap"] = {"skipped": True, "reason": "missing price/shares/market_cap"}
+        checks["market_cap"] = {"skipped": True, "reason": "missing independent shares/market_cap"}
         checks["ok"] = True
     checks["fundamentals_source"] = enriched.get("fundamentals_source")
     return checks

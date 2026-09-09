@@ -40,10 +40,8 @@ def enrich_snapshot_for_financial_rigor(snapshot: dict[str, Any]) -> dict[str, A
         out["market_capital"] = cap_from_quote
         out["market_cap"] = cap_from_quote
 
-    if price and price > 0 and market_cap and market_cap > 0:
-        shares = market_cap / price
-        out.setdefault("total_shares", shares)
-        out.setdefault("shares_outstanding", shares)
+    # Do not derive shares from the same market_cap we later verify — that is tautological.
+    if market_cap and market_cap > 0:
         out.setdefault("total_market_cap", market_cap)
 
     pe = _optional_float(quote.get("pe_ttm"))

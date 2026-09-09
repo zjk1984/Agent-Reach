@@ -1,6 +1,8 @@
 # -*- coding: utf-8
 """Tests for code walk harness self-evolution."""
 
+from typing import Any
+
 from agent_reach.daily_run.close_code_review import CodeFinding, CodeReviewResult
 from agent_reach.daily_run.close_code_review import list_walk_module_names
 from agent_reach.daily_run.code_walk_harness import (
@@ -213,6 +215,44 @@ def test_scan_diff_review_detects_load_settings(monkeypatch):
     assert meta.get("agent_instructions")
     high = [f for f in findings if f.severity == "high"]
     assert any("load_settings" in f.title for f in high)
+
+
+def test_run_agent_code_walk_refine_keeps_evolve_flag(monkeypatch):
+    settings = load_settings()
+    settings.setdefault("harness", {})["enabled"] = True
+    settings.setdefault("close_code_review", {})["harness_evolve_on_walk"] = True
+    captured: dict[str, Any] = {}
+
+    def _capture(review, *, settings=None, extra_findings=None):
+        captured["evolve"] = (settings or {}).get("close_code_review", {}).get(
+            "harness_evolve_on_walk"
+        )
+        return {"skipped": False, "refinement_id": "walk-test", "changes": 1}
+
+    monkeypatch.setattr(
+        "agent_reach.daily_run.code_walk_harness.apply_code_walk_harness_refinement",
+        _capture,
+    )
+    monkeypatch.setattr(
+        "agent_reach.daily_run.code_walk_harness.run_close_code_review",
+        lambda **kwargs: CodeReviewResult(findings=[]),
+    )
+    monkeypatch.setattr(
+        "agent_reach.daily_run.code_walk_harness.scan_static_wiring",
+        lambda settings=None: [],
+    )
+    monkeypatch.setattr(
+        "agent_reach.daily_run.code_walk_harness.scan_macro_source_audit",
+        lambda portfolio=None, settings=None: [],
+    )
+    report = run_agent_code_walk(
+        portfolio={"holdings": [], "watchlist": [], "cash": 1, "total": 1, "cash_ratio": 1},
+        settings=settings,
+        walk_source=False,
+        evolve_harness=True,
+    )
+    assert captured.get("evolve") is True
+    assert report.harness_refinement.get("refinement_id") == "walk-test"
 
 
 def test_run_agent_code_walk_includes_macro_audit(monkeypatch):

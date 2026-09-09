@@ -51,8 +51,6 @@ def audit_card_context(
         mc = financial_checks.get("market_cap") or {}
         if mc.get("ok") is False:
             warnings.append(str(mc.get("message") or "财务验算：市值偏差超标"))
-        elif mc.get("skipped") and workflow in ("close", "weekly"):
-            warnings.append("财务验算跳过：缺股本/市值字段（可启用 ashare 补全）")
 
     if research_results is not None:
         failed = [r for r in research_results if not r.get("success")]

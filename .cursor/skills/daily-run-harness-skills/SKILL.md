@@ -43,6 +43,7 @@ description: >-
 | `intraday_friction` | `intraday_friction_harness.py` | 周六 weekly 汇总本周盘中摩擦惩罚阻断 |
 | `intraday_sell` | `intraday_sell_harness.py` | 周六 weekly 汇总本周盘中卖出决策 |
 | `harness_threshold` | `harness_evolution_optimizers.py` | 周六 weekly LLM 阈值调优（DeepSeek/Groq/OpenAI，否则规则 planner） |
+| `industry_funnel` | `berkshire/industry_funnel_harness.py` | 周六 weekly 行业漏斗精选 → playbook/plan |
 
 ## 收盘自动
 
@@ -71,7 +72,7 @@ python3 -m agent_reach.cli daily-run harness migrate-settings
 
 **weekly 去重**：
 - `skill_closure` / `run_guard` 开启时，`weekly` layer_a 只写 PnL / experience_snippets / applied_config
-- 周六顺序：`apply_weekly_skill_closure` → `run_weekly_harness_refinements`（**finance_variance** / **finance_statements** / **finance_research** / **finance_close_plan** / **expert_consensus_weekly** / **sell_rules_whatif** / **intraday_friction** / **intraday_sell** / **harness_threshold** / run_guard）→ `run_weekly_layer_a_refinement`
+- 周六顺序：`apply_weekly_skill_closure` → `run_weekly_harness_refinements`（**finance_variance** / **finance_statements** / **finance_research** / **finance_close_plan** / **expert_consensus_weekly** / **sell_rules_whatif** / **intraday_friction** / **intraday_sell** / **harness_threshold** / **industry_funnel** / run_guard）→ `run_weekly_layer_a_refinement`
 - 周日 forecast：`run_forecast_harness_refinements` 在 `forecast_calibrate` 后可再跑 **finance_research**（`finance_research.run_on_forecast`）
 
 ## 手动运行

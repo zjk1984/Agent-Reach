@@ -616,18 +616,19 @@ def run_agent_code_walk(
             portfolio = {"holdings": [], "watchlist": [], "cash": 0, "total": 0, "cash_ratio": 1}
 
     snap = dict(snapshot or {})
+    evolve_settings = dict(cfg)
+    review_settings = dict(cfg)
     review_cfg = dict(cfg.get("close_code_review") or {})
     if walk_source:
         review_cfg["walk_on_close"] = True
-    # Single refine at end of run_agent_code_walk (includes static findings).
+    # Prevent a nested refine inside run_close_code_review; the walk owns one refine below.
     review_cfg["harness_evolve_on_walk"] = False
-    cfg = dict(cfg)
-    cfg["close_code_review"] = review_cfg
+    review_settings["close_code_review"] = review_cfg
 
     review = run_close_code_review(
         portfolio=portfolio,
         snapshot=snap,
-        settings=cfg,
+        settings=review_settings,
         scans=scans,
         trades=trades,
     )
@@ -649,7 +650,7 @@ def run_agent_code_walk(
     if evolve_harness:
         harness_refinement = apply_code_walk_harness_refinement(
             review,
-            settings=cfg,
+            settings=evolve_settings,
             extra_findings=static_findings + macro_findings + harness_evidence_findings(diff_findings),
         )
         review.harness_refinement = harness_refinement

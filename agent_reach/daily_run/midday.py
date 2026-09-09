@@ -337,6 +337,7 @@ def run_midday(
     push: bool = True,
     title: Optional[str] = None,
     config=None,
+    include_news_pulse: bool = True,
 ) -> dict[str, Any]:
     """Midday macro refresh → evaluate → intraday scan (source=midday) → Feishu."""
     cfg = effective_settings(settings)
@@ -473,6 +474,18 @@ def run_midday(
                 warn_lines.append(f"- {w}")
             markdown = "\n".join(warn_lines) + "\n\n---\n\n" + markdown
 
+    news_pulse_md = ""
+    if include_news_pulse:
+        from agent_reach.daily_run.berkshire.news_pulse import render_news_pulse_for_workflow
+
+        news_pulse_md = render_news_pulse_for_workflow(
+            enriched.get("portfolio") or {},
+            settings=cfg,
+            workflow="midday",
+        )
+        if news_pulse_md:
+            markdown = markdown.rstrip() + "\n\n---\n\n" + news_pulse_md
+
     feishu_result = None
     push_error: Optional[str] = None
     if push:
@@ -485,6 +498,12 @@ def run_midday(
         name = scan.get("name") or scan.get("code") or "大盘"
         if card_layout and ctx is not None:
             sections = render_midday_card_sections(ctx)
+            if news_pulse_md:
+                from agent_reach.daily_run.report_push import ReportSection
+
+                sections.append(
+                    ReportSection(category="news_pulse", title="📡 新闻脉搏", body=news_pulse_md)
+                )
             if split_push_enabled(cfg, report_kind="midday"):
                 try:
                     feishu_result = push_report_sections(
@@ -525,6 +544,7 @@ def run_midday(
         "scan": scan,
         "lookback_mss": scan_result.get("lookback_mss"),
         "markdown": markdown,
+        "news_pulse_markdown": news_pulse_md,
         "llm_narrative": narrative,
         "midday_card_layout": card_layout,
         "feishu": feishu_result,

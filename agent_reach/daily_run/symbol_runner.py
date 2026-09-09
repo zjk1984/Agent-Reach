@@ -142,6 +142,7 @@ def run_morning_for_symbols(
                 start_notify=False,
                 skip_narrative=defer_narrative,
                 config=config,
+                include_news_pulse=not merge_push,
             )
             baseline_path = save_morning_baseline(
                 run_result["snapshot"],
@@ -257,6 +258,9 @@ def run_morning_for_symbols(
                 )
             )
             merged = render_morning_card_sections(morning_ctx)
+            from agent_reach.daily_run.berkshire.news_pulse import append_news_pulse_section
+
+            merged = append_news_pulse_section(merged, pf, settings=cfg, workflow="morning")
             feishu_result = push_report_sections(
                 merged,
                 settings=cfg,
@@ -302,6 +306,9 @@ def run_morning_for_symbols(
                 from agent_reach.daily_run.report_narrative import persist_morning_narrative
 
                 persist_morning_narrative(narrative)
+            from agent_reach.daily_run.berkshire.news_pulse import append_news_pulse_section
+
+            merged = append_news_pulse_section(merged, pf, settings=cfg, workflow="morning")
             feishu_result = push_report_sections(
                 merged,
                 settings=cfg,
@@ -570,6 +577,7 @@ def run_midday_for_symbols(
                 doctor_channels=doctor_channels,
                 push=push and not merge_push,
                 config=config,
+                include_news_pulse=not merge_push,
             )
             body = str(run_result.get("markdown") or "").strip()
             scan = run_result.get("scan") or {}
@@ -599,6 +607,9 @@ def run_midday_for_symbols(
         from agent_reach.integrations.feishu import send_card
 
         body = "\n\n---\n\n".join(f"## {name}\n\n{content}" for name, content in body_rows)
+        from agent_reach.daily_run.berkshire.news_pulse import append_news_pulse_markdown
+
+        body = append_news_pulse_markdown(body, pf, settings=cfg, workflow="midday")
         title = f"☀️ 午盘分析 · {scan_id or '—'} · {len(body_rows)}只"
         tpl = cfg.get("report", {}).get("feishu_template_midday", "blue")
         feishu_result = send_card(config or Config(), title, body, template=tpl)
@@ -674,6 +685,7 @@ def run_close_for_symbols(
                 config=config,
                 intraday_trades=state.trades,
                 portfolio_summary=not merge_push,
+                include_news_pulse=not merge_push,
             )
             if merge_push:
                 section_groups.append(
@@ -976,6 +988,9 @@ def run_close_for_symbols(
                     total=total,
                     symbol_count=1 if sec.category == "daily_portfolio" else len(targets),
                 )
+        from agent_reach.daily_run.berkshire.news_pulse import append_news_pulse_section
+
+        merged = append_news_pulse_section(merged, pf_work, settings=cfg, workflow="close")
         feishu_result = push_report_sections(
             merged,
             settings=cfg,

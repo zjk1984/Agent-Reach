@@ -46,7 +46,7 @@ metadata:
 | 手工删 `~/.agent-reach/daily_run/locks/*.lock` 且进程仍存活 | 先确认 PID 已退出 |
 | lock 存在时并行跑 intraday（不加 `--force`） | 会 skip 或 corrupt 状态 |
 | cron 已装仍手工重跑 morning/intraday/close **全流程** | 仅 `manual-ok` 单次补跑 |
-| 盘中对 8 票重复拉 Exa 全量 | 遵守 exa_cache；见数据源表 |
+| 盘中对 8 票重复拉 Exa 全量 | 遵守 exa_cache；news-pulse 盘中关闭 |
 | Harness cooldown 内 `harness refine --force` | 除非用户明确要求 |
 | 修改上游 channel 源码 | Agent Reach 只做 glue |
 
@@ -57,7 +57,7 @@ metadata:
 | 实时报价 | AKShare / quotes enrich | ✅ 仅刷新 quotes | ✅ |
 | 宏观 / 技术 | 日缓存 macro/technicals | 复用缓存 | 可刷新 |
 | 热点新闻 | 60s API（8787 优先） | 随 macro 缓存 | ✅ |
-| Exa 调研 | mcporter exa.* | ❌ 默认不拉 | ✅ TTL 86400s |
+| Exa 调研 | mcporter exa.* | ❌ 默认不拉；news-pulse 盘中关闭 | ✅ TTL 86400s；earnings-team lite 最多 6 次 |
 | 舆情 optional | redfox（需 KEY） | ❌ | `research-ok` |
 | AI 解读 | 本次 job 结果 LLM/规则 | 盘中小结卡 | 收盘/周报卡 |
 
@@ -92,6 +92,7 @@ ${PY} -m agent_reach.cli doctor --json
 | Exa 收盘调研 | TTL 86400s（`exa_cache`），同 query 不重复搜 |
 | 60s 热点 | 本地 8787 优先，fallback `https://60s.viki.moe` |
 | 周六 weekly | 写回经验 + 执行清单 + settings + 同步 skill + skill 审视（门禁未通过则阻断周报推送） |
+| Berkshire lite | news-pulse 仅早盘/午盘/收盘/周六/周日；盘中关闭。收盘另有 earnings-team / report_audit；周六 industry-funnel |
 
 ### 🔁 Continual Harness（job 边界自学习 · prime-agent 风格）
 

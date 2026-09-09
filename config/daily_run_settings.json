@@ -878,7 +878,8 @@
       "min_severity": "yellow",
       "exa_enabled": true,
       "eastmoney_enabled": true,
-      "thesis_review_on_red": true
+      "thesis_review_on_red": true,
+      "workflows": ["morning", "midday", "close", "weekly", "forecast"]
     },
     "report_audit": {
       "enabled": true,
@@ -888,6 +889,7 @@
     "earnings_team_lite": {
       "enabled": true,
       "max_holdings": 3,
+      "max_queries": 6,
       "prefer_over_exa_research": true
     },
     "investment_checklist": {
@@ -1306,9 +1308,10 @@
         "forecast_calibrate": true,
         "sell_rules_whatif": true,
         "harness_threshold": true,
-        "intraday_friction": true,
-        "intraday_sell": true,
-        "pnl_overview": true
+      "intraday_friction": true,
+      "intraday_sell": true,
+      "industry_funnel": true,
+      "pnl_overview": true
       }
     },
     "render_format": "xml",
@@ -1347,7 +1350,8 @@
       "sell_rules_whatif": true,
       "harness_threshold": true,
       "intraday_friction": true,
-      "intraday_sell": true
+      "intraday_sell": true,
+      "industry_funnel": true
     },
     "llm_refine": {
       "enabled": true,
