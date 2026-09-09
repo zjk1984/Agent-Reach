@@ -1097,6 +1097,16 @@ def render_intraday_scan_markdown(
     watchlist_md = render_watchlist_drawdown_markdown(pf, settings=settings)
     if watchlist_md:
         lines.extend(["", watchlist_md])
+    if pf and settings:
+        from agent_reach.daily_run.berkshire.news_pulse import (
+            render_news_pulse_markdown,
+            run_news_pulse_batch,
+        )
+
+        pulse = run_news_pulse_batch(pf, settings=settings, max_symbols=2)
+        pulse_md = render_news_pulse_markdown(pulse)
+        if pulse_md:
+            lines.extend(["", pulse_md])
     from agent_reach.daily_run.xueqiu_hot_display import render_intraday_xueqiu_alert_markdown
 
     alert_md = render_intraday_xueqiu_alert_markdown(macro_signals)

@@ -865,13 +865,42 @@
 
   "berkshire": {
     "enabled": true,
+    "research_depth": "standard",
     "thesis_tracker": true,
     "thesis_drift_on_close": true,
     "financial_rigor_on_verify": true,
     "quality_screen_watchlist": true,
     "info_richness_gate": true,
     "industry_funnel_on_close": true,
-    "masters_scoring_on_close": true
+    "masters_scoring_on_close": true,
+    "news_pulse": {
+      "enabled": true,
+      "min_severity": "yellow",
+      "exa_enabled": true,
+      "eastmoney_enabled": true,
+      "thesis_review_on_red": true
+    },
+    "report_audit": {
+      "enabled": true,
+      "require_as_of": true,
+      "require_quote_source": true
+    },
+    "earnings_team_lite": {
+      "enabled": true,
+      "max_holdings": 3,
+      "prefer_over_exa_research": true
+    },
+    "investment_checklist": {
+      "enabled": true,
+      "block_buy_on_fail": true
+    },
+    "portfolio_review": {
+      "enabled": true
+    },
+    "bottleneck_hunter": {
+      "enabled": false,
+      "themes": ["AI算力 光模块 HBM", "半导体设备 先进封装"]
+    }
   },
 
   "watchlist": {

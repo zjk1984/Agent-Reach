@@ -94,10 +94,13 @@ def verify_valuation_from_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
 
 def verify_snapshot_financials(snapshot: dict[str, Any]) -> dict[str, Any]:
     """Run market-cap and valuation checks when snapshot carries enough fields."""
-    checks: dict[str, Any] = {"valuation": verify_valuation_from_snapshot(snapshot)}
-    price = snapshot.get("price")
-    shares = snapshot.get("total_shares") or snapshot.get("shares_outstanding")
-    reported = snapshot.get("market_cap") or snapshot.get("total_market_cap")
+    from agent_reach.daily_run.berkshire.ashare_fundamentals import enrich_snapshot_for_financial_rigor
+
+    enriched = enrich_snapshot_for_financial_rigor(snapshot)
+    checks: dict[str, Any] = {"valuation": verify_valuation_from_snapshot(enriched)}
+    price = enriched.get("price")
+    shares = enriched.get("total_shares") or enriched.get("shares_outstanding")
+    reported = enriched.get("market_cap") or enriched.get("total_market_cap")
     if price is not None and shares is not None and reported is not None:
         mc = verify_market_cap(price, shares, reported)
         checks["market_cap"] = mc.to_dict()
@@ -105,6 +108,7 @@ def verify_snapshot_financials(snapshot: dict[str, Any]) -> dict[str, Any]:
     else:
         checks["market_cap"] = {"skipped": True, "reason": "missing price/shares/market_cap"}
         checks["ok"] = True
+    checks["fundamentals_source"] = enriched.get("fundamentals_source")
     return checks
 
 

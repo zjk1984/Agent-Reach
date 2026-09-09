@@ -21,7 +21,10 @@ def berkshire_enabled(settings: dict[str, Any] | None = None, *, key: str | None
         return False
     if key is None:
         return True
-    return cfg.get(key, True) is not False
+    val = cfg.get(key, True)
+    if isinstance(val, dict):
+        return val.get("enabled", True) is not False
+    return val is not False
 
 
 def thesis_dir(settings: dict[str, Any] | None = None) -> Path:

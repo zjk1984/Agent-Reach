@@ -786,9 +786,68 @@ def run_close(
 
     research_results: list[dict[str, Any]] = []
     research_md = ""
+    earnings_md = ""
     if not skip_exa_research:
-        research_results = run_exa_research(enriched, cfg)
-        research_md = render_research_markdown(enriched, research_results=research_results, settings=cfg) or ""
+        from agent_reach.daily_run.berkshire.config import berkshire_enabled
+        from agent_reach.daily_run.berkshire.earnings_team_lite import (
+            earnings_team_cfg,
+            render_earnings_team_markdown,
+            run_earnings_team_lite,
+        )
+
+        et_cfg = earnings_team_cfg(cfg)
+        if berkshire_enabled(cfg, key="earnings_team_lite") and et_cfg.get("prefer_over_exa_research"):
+            earnings_results = run_earnings_team_lite(enriched, cfg)
+            earnings_md = render_earnings_team_markdown(earnings_results) or ""
+        if not earnings_md:
+            research_results = run_exa_research(enriched, cfg)
+            research_md = render_research_markdown(enriched, research_results=research_results, settings=cfg) or ""
+        else:
+            research_md = earnings_md
+
+    report_audit_md = ""
+    fin_checks = None
+    from agent_reach.daily_run.berkshire.config import berkshire_enabled
+
+    if berkshire_enabled(cfg):
+        from agent_reach.daily_run.berkshire.financial_rigor import verify_snapshot_financials
+        from agent_reach.daily_run.berkshire.report_audit import (
+            audit_card_context,
+            render_report_audit_markdown,
+        )
+
+        fin_checks = verify_snapshot_financials(enriched)
+        audit = audit_card_context(
+            snapshot=enriched,
+            settings=cfg,
+            financial_checks=fin_checks,
+            research_results=research_results or None,
+            workflow="close",
+        )
+        report_audit_md = render_report_audit_markdown(audit) or ""
+        if audit.get("prefix") and title:
+            title = f"{audit['prefix']}{title}"
+
+    portfolio_review_md = ""
+    pf = enriched.get("portfolio") or {}
+    if pf:
+        from agent_reach.daily_run.berkshire.portfolio_review import (
+            render_portfolio_review_markdown,
+            review_portfolio,
+        )
+
+        review = review_portfolio(pf, settings=cfg)
+        portfolio_review_md = render_portfolio_review_markdown(review) or ""
+
+    news_pulse_md = ""
+    if pf:
+        from agent_reach.daily_run.berkshire.news_pulse import (
+            render_news_pulse_markdown,
+            run_news_pulse_batch,
+        )
+
+        pulse = run_news_pulse_batch(pf, settings=cfg, max_symbols=3)
+        news_pulse_md = render_news_pulse_markdown(pulse) or ""
 
     extra_parts: list[str] = []
     wl_md = ""
@@ -1084,6 +1143,9 @@ def run_close(
             team_md,
             curve_md,
             research_md,
+            report_audit_md,
+            portfolio_review_md,
+            news_pulse_md,
             *extra_parts,
             improvements_md,
             technical_watch_md,

@@ -22,6 +22,7 @@ class WeeklyHarnessSkillsReport:
     harness_threshold: dict[str, Any] = field(default_factory=dict)
     intraday_friction: dict[str, Any] = field(default_factory=dict)
     intraday_sell: dict[str, Any] = field(default_factory=dict)
+    industry_funnel: dict[str, Any] = field(default_factory=dict)
     weekly_layer_a: dict[str, Any] = field(default_factory=dict)
     effective_overlay: dict[str, Any] = field(default_factory=dict)
 
@@ -37,6 +38,7 @@ class WeeklyHarnessSkillsReport:
             "harness_threshold": self.harness_threshold,
             "intraday_friction": self.intraday_friction,
             "intraday_sell": self.intraday_sell,
+            "industry_funnel": self.industry_funnel,
             "weekly_layer_a": self.weekly_layer_a,
             "effective_overlay": self.effective_overlay,
             "total_changes": sum(
@@ -52,6 +54,7 @@ class WeeklyHarnessSkillsReport:
                     self.harness_threshold,
                     self.intraday_friction,
                     self.intraday_sell,
+                    self.industry_funnel,
                     self.weekly_layer_a,
                 )
                 if not (block or {}).get("skipped")
@@ -163,6 +166,21 @@ def run_weekly_harness_refinements(
         out.intraday_sell = apply_weekly_intraday_sell_harness_refinement(
             report,
             settings=cfg,
+        )
+
+    if _job_enabled(harness_cfg, "industry_funnel"):
+        from agent_reach.daily_run.berkshire.industry_funnel_harness import (
+            apply_industry_funnel_harness_refinement,
+        )
+
+        hot_titles = [
+            str(row.get("title") or "")
+            for row in (report.get("hot_news") or report.get("hot_topics") or [])
+            if isinstance(row, dict)
+        ]
+        out.industry_funnel = apply_industry_funnel_harness_refinement(
+            settings=cfg,
+            hot_titles=hot_titles,
         )
 
     if (

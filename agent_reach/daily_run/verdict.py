@@ -160,6 +160,18 @@ def compute_verdict(snapshot: dict[str, Any], settings: dict[str, Any]) -> Verdi
             if confidence == "高":
                 confidence = "中"
 
+    from agent_reach.daily_run.berkshire.investment_checklist import (
+        apply_checklist_to_verdict_downgrade,
+        evaluate_investment_checklist,
+    )
+
+    checklist = evaluate_investment_checklist(snapshot, settings=settings)
+    apply_checklist_to_verdict_downgrade(downgrade, checklist=checklist)
+    if checklist.get("block_buy") and label_key == "buy":
+        label_key = "watch"
+        if confidence == "高":
+            confidence = "中"
+
     verdict_map = {"buy": buy_label, "watch": watch_label, "avoid": avoid_label}
     verdict = verdict_map[label_key]
 
