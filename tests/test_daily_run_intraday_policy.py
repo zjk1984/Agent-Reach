@@ -167,6 +167,21 @@ class TestIntradayHarnessEvidence:
         )
         assert any("摩擦成本过高" in p for p in ev["policy"])
         assert any("趋势误判" in p for p in ev["policy"])
+        assert any("正面摩擦" in p for p in ev["playbook"])
+
+    def test_mss_verdict_hit_recorded_in_playbook(self):
+        ev = intraday_to_harness_evidence(
+            {
+                "scans": [
+                    {"scan_id": "S3", "verdict": "可做", "prediction_hit": True, "mss_final": 55},
+                    {"scan_id": "S4", "verdict": "可做", "prediction_hit": True, "mss_final": 54},
+                    {"scan_id": "S5", "verdict": "可做", "prediction_hit": False, "mss_final": 53},
+                ],
+                "scan": {"scan_id": "S5", "code": "688008", "name": "澜起", "mss_final": 53},
+            }
+        )
+        assert any("MSS「可做」命中 2/3" in m for m in ev["memory"])
+        assert any("勿因单日偏差过度收紧" in p for p in ev["playbook"])
 
     def test_harness_trend_evolution_on_miss(self):
         from agent_reach.daily_run.harness import HarnessEntry, HarnessState

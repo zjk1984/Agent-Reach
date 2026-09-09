@@ -9,6 +9,34 @@ from agent_reach.daily_run.harness_skill_base import apply_skill_refinement
 from agent_reach.daily_run.portfolio_manager import trade_buy_budget_blocked
 
 
+def _buy_verdict_labels(settings: Optional[dict[str, Any]]) -> set[str]:
+    labels = dict((settings or {}).get("verdict_labels") or {})
+    return {str(labels.get("buy", "可做")), "可做", "buy"}
+
+
+def _append_mss_verdict_hit_evidence(
+    memory: list[str],
+    playbook: list[str],
+    scans: list[dict[str, Any]],
+    *,
+    settings: Optional[dict[str, Any]] = None,
+) -> None:
+    """Record MSS「可做」 hit rate as positive harness sample — avoid over-tightening entry."""
+    if not scans:
+        return
+    buy_labels = _buy_verdict_labels(settings)
+    actionable = [s for s in scans if str(s.get("verdict") or "") in buy_labels]
+    if not actionable:
+        return
+    hits = sum(1 for s in actionable if s.get("prediction_hit") is True)
+    total = len(actionable)
+    memory.append(f"盘中 MSS「可做」命中 {hits}/{total}")
+    if total >= 3 and hits >= max(2, total // 2):
+        playbook.append(
+            f"MSS「可做」命中 {hits}/{total}，维持 aggressive_entry 勿因单日偏差过度收紧"
+        )
+
+
 def _decision_buy_budget_blocked(decision: dict[str, Any]) -> bool:
     """Decision-layer deploy budget precheck — not a failed trade apply."""
     return trade_buy_budget_blocked(decision)
@@ -180,6 +208,23 @@ def intraday_to_harness_evidence(
                 policy.append("防御性减仓：defensive_trim 触发卖出")
             if action == "hold" and "防御性减仓" in reasoning:
                 policy.append("卖晚了：防御信号触发但深度套牢/锁仓阻断")
+            if action == "hold" and "日内低点" in reasoning:
+                playbook.append(f"正面 guard：{name} 防御减仓在日内低点暂缓")
+            if (
+                action in (None, "hold", "skip")
+                and decision.get("friction_blocked")
+                and trend_label in ("mixed", "flat")
+            ):
+                playbook.append(
+                    f"正面摩擦：{name} mixed/flat 摩擦阻断买入，维持 friction_min_return_pct"
+                )
+            if action == "hold" and decision.get("block_kind") in (
+                "buy_budget",
+                "buy_deploy",
+                "buy_cash",
+                "buy_max_holdings",
+            ):
+                playbook.append(f"正面摩擦：{name} 买入预算/仓位上限阻断，避免过度加仓")
 
     _append_profit_lock_harness_evidence(
         memory,
@@ -248,6 +293,8 @@ def intraday_to_harness_evidence(
         memory.append(f"intraday skipped：{reason}")
         if "上限" in reason or "MAX" in reason.upper():
             plan.append("intraday：扫描达上限，确认 S12 是否落在 15:00")
+
+    _append_mss_verdict_hit_evidence(memory, playbook, scans, settings=settings)
 
     for row in payload.get("symbol_results") or []:
         if row.get("skipped"):

@@ -267,6 +267,32 @@ def _improve_portfolio(
             f"{names}；若 MSS 持续低于 macro_veto，考虑在复盘观察池回收后明日优先卖出",
         )
 
+    wl_changes = [float(w["change_pct"]) for w in wl_only if w.get("change_pct") is not None]
+    h_changes = [float(h["change_pct"]) for h in holdings if h.get("change_pct") is not None]
+    if wl_changes and h_changes:
+        wl_avg = sum(wl_changes) / len(wl_changes)
+        h_avg = sum(h_changes) / len(h_changes)
+        rotation_gap = wl_avg - h_avg
+        if rotation_gap >= 2.0:
+            leaders = sorted(wl_only, key=lambda w: float(w.get("change_pct") or 0), reverse=True)[:2]
+            laggards = sorted(holdings, key=lambda h: float(h.get("change_pct") or 0))[:2]
+            leader_names = "、".join(
+                f"{w.get('name', w.get('code'))}({float(w.get('change_pct') or 0):+.1f}%)"
+                for w in leaders
+            )
+            laggard_names = "、".join(
+                f"{h.get('name', h.get('code'))}({float(h.get('change_pct') or 0):+.1f}%)"
+                for h in laggards
+            )
+            out.add(
+                "portfolio",
+                "medium",
+                "观察池领涨、持仓偏弱",
+                f"观察池均 {wl_avg:+.1f}% vs 持仓 {h_avg:+.1f}%（差 {rotation_gap:.1f}）；"
+                f"领涨 {leader_names}；弱势 {laggard_names}；"
+                "明日可考虑 rotation：减弱势持仓、优先观察池高分标的",
+            )
+
     buy_count = sum(1 for t in trades if t.get("action") == "buy")
     sell_count = sum(1 for t in trades if t.get("action") == "sell")
     if not trades:

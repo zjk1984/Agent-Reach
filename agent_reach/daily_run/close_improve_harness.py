@@ -42,6 +42,8 @@ def _item_to_harness(
         memory.append(line)
         if "现金" in blob:
             memory.append("维持高现金：禁止接飞刀，取消一切买入")
+        if "观察池领涨" in blob or "rotation" in blob.lower():
+            playbook.append(f"rotation 提示：{item.detail[:160]}")
         if "macro_veto" in blob or "卖出" in blob or "弱势" in blob:
             plan.append(f"portfolio：{item.title}")
         if "锁定期" in blob or "holding_lock" in blob:

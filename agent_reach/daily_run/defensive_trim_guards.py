@@ -20,6 +20,9 @@ _DEFENSIVE_TRIM_NEUTRAL: dict[str, Any] = {
     "once_per_symbol_per_day": True,
     "block_sell_in_recovery_zone": True,
     "persist_macro_warming_intraday": True,
+    "block_sell_near_day_low": True,
+    "near_day_low_tolerance_pct": 0.5,
+    "near_day_low_bypass_deep_loss": True,
 }
 
 
@@ -114,6 +117,95 @@ def _session_mss_stats(settings: dict[str, Any]) -> tuple[Optional[float], Optio
         return max(values), float(values[-1])
     except Exception:
         return None, None
+
+
+def _symbol_price_and_day_low(snapshot: dict[str, Any], code: Any) -> tuple[Optional[float], Optional[float]]:
+    norm = _normalize_code(str(code or ""))
+    if not norm:
+        return None, None
+
+    price: Optional[float] = None
+    day_low: Optional[float] = None
+
+    for key in ("price",):
+        val = snapshot.get(key)
+        if val is not None:
+            try:
+                price = float(val)
+            except (TypeError, ValueError):
+                pass
+
+    pf = snapshot.get("portfolio") or {}
+    for holding in pf.get("holdings") or []:
+        if _normalize_code(str(holding.get("code", ""))) != norm:
+            continue
+        if price is None:
+            for pk in ("price",):
+                val = holding.get(pk)
+                if val is not None:
+                    try:
+                        price = float(val)
+                    except (TypeError, ValueError):
+                        pass
+        for lk in ("day_low",):
+            val = holding.get(lk)
+            if val is not None:
+                try:
+                    day_low = float(val)
+                except (TypeError, ValueError):
+                    pass
+
+    for row in snapshot.get("symbols") or []:
+        if _normalize_code(str(row.get("code", ""))) != norm:
+            continue
+        if price is None:
+            val = row.get("price")
+            if val is not None:
+                try:
+                    price = float(val)
+                except (TypeError, ValueError):
+                    pass
+        if day_low is None:
+            val = row.get("day_low")
+            if val is not None:
+                try:
+                    day_low = float(val)
+                except (TypeError, ValueError):
+                    pass
+
+    return price, day_low
+
+
+def defensive_trim_blocked_by_near_day_low(
+    settings: dict[str, Any],
+    *,
+    code: Any,
+    snapshot: dict[str, Any],
+) -> Optional[str]:
+    """Block proportional trim when price sits at/near the session low (unless deep loss)."""
+    cfg = defensive_trim_cfg(settings)
+    if not cfg.get("block_sell_near_day_low", True):
+        return None
+
+    price, day_low = _symbol_price_and_day_low(snapshot, code)
+    if price is None or day_low is None or day_low <= 0:
+        return None
+
+    tolerance_pct = float(cfg.get("near_day_low_tolerance_pct", 0.5))
+    distance_pct = (price - day_low) / day_low * 100.0
+    if distance_pct > tolerance_pct:
+        return None
+
+    if cfg.get("near_day_low_bypass_deep_loss", True):
+        from agent_reach.daily_run.portfolio_manager import symbol_is_deep_loss_holding
+
+        if symbol_is_deep_loss_holding(snapshot, settings, str(code or "")):
+            return None
+
+    return (
+        f"现价 {price:.2f} 距日内低点 {day_low:.2f} ≤{tolerance_pct:.1f}%，"
+        "防御减仓暂缓以免卖在日内低点"
+    )
 
 
 def defensive_trim_blocked_by_strength(
@@ -219,6 +311,11 @@ def evaluate_defensive_trim_sell(
         lambda: defensive_trim_blocked_by_strength(
             settings,
             trend=trend,
+            code=report.get("code"),
+            snapshot=snapshot,
+        ),
+        lambda: defensive_trim_blocked_by_near_day_low(
+            settings,
             code=report.get("code"),
             snapshot=snapshot,
         ),

@@ -1349,6 +1349,13 @@ def _decide_trade(
 ) -> TradeDecision:
     trading = settings.get("trading", {})
     macro_veto = macro_veto_default(settings)
+    from agent_reach.daily_run.sector_gap_guard import intraday_macro_veto_with_sector_buffer
+
+    macro_veto, sector_gap_note = intraday_macro_veto_with_sector_buffer(
+        macro_veto,
+        snapshot,
+        settings=settings,
+    )
     aggressive = effective_aggressive_entry(
         settings,
         str(report.get("code") or ""),
@@ -1361,6 +1368,8 @@ def _decide_trade(
     portfolio = snapshot.get("portfolio") or {}
     cash_ratio = portfolio.get("cash_ratio")
     overlay_note = _harness_overlay_note(settings)
+    if sector_gap_note:
+        overlay_note = f"{overlay_note}{sector_gap_note}"
 
     exp_ret = expected_return_pct
     if exp_ret is None:

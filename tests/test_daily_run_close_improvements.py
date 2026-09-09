@@ -57,6 +57,33 @@ def test_schedule_drift_matches_by_scan_id():
     assert "S2 预期" not in drift_text
 
 
+def test_portfolio_rotation_hint_when_watchlist_outperforms():
+    settings = load_settings()
+    current = {
+        "portfolio": {
+            "cash_ratio": 0.5,
+            "holdings": [
+                {"code": "688008", "name": "澜起", "change_pct": -1.0},
+                {"code": "600584", "name": "长电", "change_pct": 0.5},
+            ],
+        },
+        "watchlist": [
+            {"code": "603986", "name": "兆易", "change_pct": 4.0},
+            {"code": "688981", "name": "中芯", "change_pct": 3.5},
+        ],
+    }
+    result = generate_close_improvements(
+        baseline={"mss_final": 50},
+        current=current,
+        verify={"verdict_current": "观察"},
+        settings=settings,
+        scans=[],
+        trades=[],
+    )
+    titles = [i.title for i in result.items if i.category == "portfolio"]
+    assert "观察池领涨、持仓偏弱" in titles
+
+
 def test_generate_mss_and_schedule_improvements():
     settings = load_settings()
     baseline = {"mss_range": [40, 52], "mss_final": 48, "price": 100}

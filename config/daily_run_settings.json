@@ -108,7 +108,18 @@
       "persist_macro_warming_intraday": true,
       "hold_debounce": {
         "enabled": true
-      }
+      },
+      "block_sell_near_day_low": true,
+      "near_day_low_tolerance_pct": 0.5,
+      "near_day_low_bypass_deep_loss": true
+    },
+    "sector_gap_guard": {
+      "enabled": true,
+      "sectors": ["半导体", "存储", "AI算力"],
+      "min_open_gap_pct": 0.8,
+      "min_fade_pct": 2.0,
+      "macro_veto_bump": 3.0,
+      "max_macro_veto": 45.0
     },
     "profit_lock": {
       "enabled": true,
@@ -930,6 +941,12 @@
     "intel_symbol_limit": 8,
     "intel_include_candidates": true,
     "intel_candidate_limit": 5,
+    "momentum_score": {
+      "enabled": true,
+      "strong_day_pct": 2.0,
+      "strong_verdict_boost": 1.5,
+      "consecutive_strong_boost": 0.5
+    },
     "candidates": [
       {"code": "603986", "name": "兆易创新", "keywords": ["兆易", "存储", "芯片", "DDR", "半导体"]},
       {"code": "000725", "name": "京东方A", "keywords": ["京东方", "面板", "OLED", "显示"]},

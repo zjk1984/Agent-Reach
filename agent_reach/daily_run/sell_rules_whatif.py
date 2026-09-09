@@ -1791,6 +1791,11 @@ def summarize_intraday_friction_for_harness(
         plan.append("intraday：验证 trend_min_points / trend_delta_threshold")
     if friction_pass == 0 and trend_miss == 0:
         playbook.append("盘中摩擦/趋势纪律与自进化一致，维持当前门槛")
+    blocked_actual = int(data.get("friction_blocked_actual") or 0)
+    if blocked_actual >= 2:
+        playbook.append(
+            f"正面摩擦：当日摩擦阻断 {blocked_actual} 次买入，维持 friction_min_return_pct 勿过度放宽"
+        )
 
     return {
         "memory": memory,
@@ -1936,6 +1941,19 @@ def build_intraday_sell_whatif(
         elif actual_shares > 0:
             block_reason = str(decision.reasoning or "自进化未触发卖出")[:120]
 
+        from agent_reach.daily_run.defensive_trim_guards import _symbol_price_and_day_low
+
+        price, day_low = _symbol_price_and_day_low(snap, code)
+        near_day_low = False
+        if price is not None and day_low is not None and day_low > 0:
+            distance_pct = (price - day_low) / day_low * 100.0
+            near_day_low = distance_pct <= float(
+                ((cfg.get("intraday") or {}).get("defensive_trim") or {}).get(
+                    "near_day_low_tolerance_pct", 0.5
+                )
+            )
+        sell_at_day_low = actual_shares > 0 and near_day_low
+
         diverged = actual_shares != hypo_shares or (
             evolved_action == "sell" and actual_shares <= 0 and hypo_shares > 0
         )
@@ -1959,6 +1977,8 @@ def build_intraday_sell_whatif(
                 "is_deep_loss": is_deep_loss,
                 "sell_ratio": sell_ratio,
                 "block_reason": block_reason,
+                "near_day_low": near_day_low,
+                "sell_at_day_low": sell_at_day_low,
             }
         )
         actual_total += actual_shares
@@ -2149,6 +2169,8 @@ def summarize_intraday_sell_for_harness(
 
     missed = int(data.get("missed_sell_signals") or 0)
     delta = int(data.get("sell_share_delta") or 0)
+    rows = list(data.get("rows") or [])
+    day_low_sells = [r for r in rows if r.get("sell_at_day_low")]
     memory = [
         (
             f"盘中卖出 scan replay：基准 {int(data.get('actual_sell_shares') or 0)} 股 → "
@@ -2164,6 +2186,12 @@ def summarize_intraday_sell_for_harness(
         plan.append("intraday：验证 defensive_trim 与 deep_loss sell_ratio 对齐")
     elif delta > 0:
         playbook.append("自进化卖出 scan 多于基准，维持 partial sell 纪律")
+    if day_low_sells:
+        names = "、".join(
+            str(r.get("name") or r.get("code") or "?") for r in day_low_sells[:3]
+        )
+        policy.append(f"卖早了：{len(day_low_sells)} 笔在日内低点附近卖出（{names}）")
+        playbook.append("启用 block_sell_near_day_low：防御 trim 在日内低点暂缓")
     return {
         "memory": memory,
         "policy": policy,

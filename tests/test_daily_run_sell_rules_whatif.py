@@ -924,3 +924,26 @@ class TestIntradaySellWhatIf:
         md = render_intraday_sell_whatif_markdown(result)
         assert "统计周期" in md
         assert "000725" in md or "京东方A" in md
+
+
+def test_summarize_intraday_sell_flags_day_low_sells():
+    from agent_reach.daily_run.sell_rules_whatif import summarize_intraday_sell_for_harness
+
+    summary = summarize_intraday_sell_for_harness(
+        {
+            "skipped": False,
+            "actual_sell_shares": 100,
+            "hypothetical_sell_shares": 0,
+            "sell_share_delta": -100,
+            "missed_sell_signals": 0,
+            "rows": [
+                {
+                    "name": "京东方A",
+                    "code": "000725",
+                    "sell_at_day_low": True,
+                }
+            ],
+        }
+    )
+    assert any("block_sell_near_day_low" in p for p in summary["playbook"])
+    assert any("卖早了" in p for p in summary["policy"])

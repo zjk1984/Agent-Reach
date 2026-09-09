@@ -809,6 +809,9 @@ def _symbol_score(
         code = _normalize_code(str(row.get("code") or ""))
         intel = (snapshot.get("watchlist_intel") or {}).get(code)
         score += intel_score_adjustment(intel, settings=settings)
+        from agent_reach.daily_run.watchlist_momentum import watchlist_momentum_score_boost
+
+        score += watchlist_momentum_score_boost(row, settings=settings)
     return score
 
 

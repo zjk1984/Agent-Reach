@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from agent_reach.daily_run.defensive_trim_guards import (
+    defensive_trim_blocked_by_near_day_low,
     defensive_trim_blocked_by_recovery_zone,
     defensive_trim_blocked_by_strength,
     evaluate_defensive_trim_sell,
@@ -172,6 +173,60 @@ def test_jingdongfang_case_blocked_at_0946(tmp_path, monkeypatch):
     )
     assert decision.action == "hold"
     assert decision.block_kind == "sell_defensive_trim"
+
+
+def test_near_day_low_blocks_defensive_trim():
+    reason = defensive_trim_blocked_by_near_day_low(
+        {"intraday": {"defensive_trim": {"near_day_low_tolerance_pct": 0.5}}},
+        code="000725",
+        snapshot={
+            "portfolio": {
+                "holdings": [
+                    {
+                        "code": "000725",
+                        "price": 5.80,
+                        "day_low": 5.79,
+                        "cost": 5.70,
+                        "shares": 900,
+                    }
+                ]
+            },
+            "symbols": [{"code": "000725", "price": 5.80}],
+        },
+    )
+    assert reason is not None
+    assert "日内低点" in reason
+
+
+def test_near_day_low_allows_deep_loss_bypass():
+    settings = {
+        "intraday": {"defensive_trim": {"near_day_low_tolerance_pct": 0.5}},
+        "harness_runtime": {
+            "deep_loss_policy": {
+                "loss_cny_threshold": 100,
+                "loss_pct_threshold": 5,
+            }
+        },
+    }
+    reason = defensive_trim_blocked_by_near_day_low(
+        settings,
+        code="000725",
+        snapshot={
+            "portfolio": {
+                "holdings": [
+                    {
+                        "code": "000725",
+                        "price": 5.80,
+                        "day_low": 5.79,
+                        "cost": 8.0,
+                        "shares": 900,
+                    }
+                ]
+            },
+            "symbols": [{"code": "000725", "price": 5.80}],
+        },
+    )
+    assert reason is None
 
 
 def test_once_per_day_blocks_second_defensive_trim():
