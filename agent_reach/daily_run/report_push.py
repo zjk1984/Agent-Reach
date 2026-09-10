@@ -54,6 +54,7 @@ _CATEGORY_LABELS: dict[str, str] = {
     "close_improvements": "改进建议",
     "technical_watch": "技术情景",
     "deepseek_interpretation": "DeepSeek 解读",
+    "code_walk_interpretation": "走读 DeepSeek 解读",
 }
 
 # Portfolio-wide sections: only one card body when merging per-symbol runs.
@@ -183,6 +184,7 @@ def render_close_sections(
     harness_markdown: str = "",
     watchlist_adjust_markdown: str = "",
     code_review_markdown: str = "",
+    code_walk_narrative: Optional[dict[str, Any]] = None,
     forecast_review_markdown: str = "",
     close_improvements_markdown: str = "",
     technical_watch_markdown: str = "",
@@ -259,7 +261,10 @@ def render_close_sections(
         push_settings = load_settings()
     except Exception:
         push_settings = {}
-    from agent_reach.daily_run.deepseek_interpretation_cards import append_interpretation_report_section
+    from agent_reach.daily_run.deepseek_interpretation_cards import (
+        append_code_walk_interpretation_report_section,
+        append_interpretation_report_section,
+    )
 
     def _renumber_close(cards: list[ReportSection]) -> None:
         total = len(cards)
@@ -276,6 +281,12 @@ def render_close_sections(
         sections,
         narrative,
         job="close",
+        settings=push_settings,
+        renumber=_renumber_close,
+    )
+    sections = append_code_walk_interpretation_report_section(
+        sections,
+        code_walk_narrative,
         settings=push_settings,
         renumber=_renumber_close,
     )
@@ -681,6 +692,7 @@ def close_sections_from_run(
         portfolio_markdown=run_result.get("portfolio_markdown") or "",
         watchlist_adjust_markdown=run_result.get("watchlist_adjust_markdown") or "",
         code_review_markdown=run_result.get("code_review_markdown") or "",
+        code_walk_narrative=run_result.get("code_walk_narrative"),
         forecast_review_markdown="",
         close_improvements_markdown=run_result.get("close_improvements_markdown") or "",
         technical_watch_markdown=run_result.get("technical_watch_markdown") or "",

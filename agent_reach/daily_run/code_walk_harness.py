@@ -673,6 +673,52 @@ def run_agent_code_walk(
     )
 
 
+def code_walk_has_interpretation_content(code_review: Optional[dict[str, Any]]) -> bool:
+    """True when close walk produced fixes, open findings, or harness refine."""
+    raw = code_review or {}
+    open_findings = [f for f in raw.get("findings") or [] if not f.get("fixed")]
+    if open_findings:
+        return True
+    if raw.get("fixes_applied"):
+        return True
+    ref = raw.get("harness_refinement") or {}
+    return bool(ref) and not ref.get("skipped")
+
+
+def build_code_walk_narrative_context(code_review: dict[str, Any]) -> dict[str, Any]:
+    """Structured walk output for DeepSeek interpretation (no new findings)."""
+    open_findings: list[dict[str, str]] = []
+    for item in code_review.get("findings") or []:
+        if item.get("fixed"):
+            continue
+        open_findings.append(
+            {
+                "severity": str(item.get("severity") or ""),
+                "area": str(item.get("area") or ""),
+                "title": str(item.get("title") or ""),
+                "detail": str(item.get("detail") or "")[:160],
+            }
+        )
+    ref = code_review.get("harness_refinement") or {}
+    open_high = sum(
+        1 for f in open_findings if str(f.get("severity") or "") in ("critical", "high")
+    )
+    return {
+        "job": "code_walk",
+        "open_findings": open_findings[:6],
+        "open_finding_count": len(open_findings),
+        "open_high_count": open_high,
+        "fixes_applied": list(code_review.get("fixes_applied") or [])[:5],
+        "harness_refinement_id": ref.get("refinement_id"),
+        "harness_changes": ref.get("changes"),
+        "next_steps_hint": (
+            "open high 须 Phase G Grill + pytest 后再 merge"
+            if open_high
+            else "按 playbook 执行回归"
+        ),
+    }
+
+
 def render_code_walk_markdown(report: CodeWalkReport) -> str:
     from agent_reach.daily_run.close_code_review import render_code_review_markdown
 

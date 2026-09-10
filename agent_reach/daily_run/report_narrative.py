@@ -14,6 +14,7 @@ _JOB_LABELS = {
     "close": "收盘复盘",
     "weekly": "周六周报",
     "forecast": "周日预测",
+    "code_walk": "代码走读",
 }
 
 _NARRATIVE_LIMITS_DEFAULT: dict[str, int] = {
@@ -254,6 +255,14 @@ def _narrative_system_prompt(job: str, *, limits: dict[str, int]) -> str:
             '若有 trade_operations 输入，summary 须概括当日买卖与已实现盈亏；'
             'focus_points 可含明日建议；禁止编造未提供的成交价/股数。'
         )
+    elif job == "code_walk":
+        from agent_reach.daily_run.deepseek_interpretation_cards import _CODE_WALK_NARRATIVE_RULE
+
+        trade_hint = (
+            "若有 open_findings，summary 须概括待处理条数与最高 severity；"
+            "focus_points 将已给 finding 译为可执行下一步（pytest/Phase G/merge 前检查）；"
+            f"{_CODE_WALK_NARRATIVE_RULE}"
+        )
     from agent_reach.daily_run.agent_pipeline import llm_system_suffix
 
     base = (
@@ -265,9 +274,10 @@ def _narrative_system_prompt(job: str, *, limits: dict[str, int]) -> str:
         f"divergence_notes 仅实质分歧时填，最多 {limits['max_divergence_notes']} 条；"
         f"risk_alerts 最多 {limits['max_risk_alerts']} 条。"
         f"{trade_hint}"
-        f"{DEEPSEEK_NARRATIVE_RULE}"
-        "禁止编造未提供数字；禁止复述输入；省略废话；中文。"
     )
+    if job != "code_walk":
+        base += DEEPSEEK_NARRATIVE_RULE
+    base += "禁止编造未提供数字；禁止复述输入；省略废话；中文。"
     return base + llm_system_suffix()
 
 
@@ -492,6 +502,7 @@ def render_narrative_markdown(narrative: dict[str, Any], *, job: str = "") -> st
         "intraday": "盘中小结",
         "close": "复盘摘要",
         "weekly": "周报摘要",
+        "code_walk": "走读摘要",
     }
     sub = subtitles.get(use_job, "规则解读")
     lines = [f"## 📋 规则解读（{sub}）", ""]
@@ -2723,6 +2734,58 @@ def generate_forecast_narrative(
         settings=settings,
         system="优先 Kronos 强弱、一条 MSS 区间判断、一条新闻影响。",
         deterministic_fn=_forecast_deterministic,
+    )
+
+
+def _code_walk_deterministic(ctx: dict[str, Any]) -> dict[str, Any]:
+    focus: list[str] = []
+    risks: list[str] = []
+    open_count = int(ctx.get("open_finding_count") or len(ctx.get("open_findings") or []))
+    open_high = int(ctx.get("open_high_count") or 0)
+    fixes = list(ctx.get("fixes_applied") or [])
+    if fixes:
+        focus.append(f"已自动修复 {len(fixes)} 项")
+    for item in ctx.get("open_findings") or []:
+        title = str(item.get("title") or "").strip()
+        area = str(item.get("area") or "").strip()
+        if title:
+            focus.append(f"[{area}] {title}"[:96])
+        if len(focus) >= 3:
+            break
+    if open_high:
+        risks.append(f"{open_high} 条 high 待 Phase G + pytest 后 merge")
+    elif open_count:
+        risks.append(f"{open_count} 条待处理 finding")
+    ref_id = ctx.get("harness_refinement_id")
+    if ref_id:
+        focus.insert(0, f"Harness refine `{ref_id}`")
+    summary = f"代码走读 {open_count} 条待处理"
+    if fixes:
+        summary += f"，已修复 {len(fixes)} 项"
+    return {
+        "summary": summary,
+        "focus_points": focus[:3] or ["走读未发现待处理项"],
+        "divergence_notes": [],
+        "risk_alerts": risks[:2],
+        "planner": "deterministic",
+    }
+
+
+def generate_code_walk_narrative(
+    code_review: dict[str, Any],
+    *,
+    settings: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    from agent_reach.daily_run.code_walk_harness import build_code_walk_narrative_context
+
+    context = build_code_walk_narrative_context(code_review)
+    hint = str(context.get("next_steps_hint") or "优先解读 open_findings 与 fixes_applied。")
+    return _generate_narrative(
+        "code_walk",
+        context,
+        settings=settings,
+        system=hint,
+        deterministic_fn=_code_walk_deterministic,
     )
 
 

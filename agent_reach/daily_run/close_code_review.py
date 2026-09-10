@@ -155,6 +155,8 @@ def run_close_code_review(
     if cfg.get("walk_on_close", False) is True:
         _walk_source_modules(out, settings)
 
+    _maybe_append_diff_review(out, cfg)
+
     if cfg.get("run_smoke_tests") is True:
         out.smoke_tests = _run_smoke_tests(settings)
 
@@ -164,6 +166,30 @@ def run_close_code_review(
         out.harness_refinement = apply_code_walk_harness_refinement(out, settings=settings)
 
     return out
+
+
+def _maybe_append_diff_review(out: CodeReviewResult, cfg: dict[str, Any]) -> None:
+    """Phase R deterministic diff checks when branch has daily_run changes."""
+    on_close = cfg.get("review_diff_on_close") is True
+    when_changed = cfg.get("review_diff_when_changed") is True
+    if not on_close and not when_changed:
+        return
+    from agent_reach.daily_run.code_walk_harness import scan_diff_review
+
+    base = str(cfg.get("review_diff_base") or "main")
+    scope = str(cfg.get("review_diff_scope") or "branch")
+    findings, meta = scan_diff_review(base=base, scope=scope)
+    if when_changed and not on_close:
+        if meta.get("skipped") or not findings:
+            return
+    if meta.get("git_error") and not findings:
+        return
+    existing = {(f.area, f.title) for f in out.findings}
+    for finding in findings:
+        key = (finding.area, finding.title)
+        if key not in existing:
+            out.findings.append(finding)
+            existing.add(key)
 
 
 def render_code_review_markdown(result: CodeReviewResult, *, enabled: bool = True) -> str:

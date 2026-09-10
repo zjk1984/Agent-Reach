@@ -466,7 +466,8 @@
     "weekly_split_push": true,
     "forecast_split_push": true,
     "deepseek_interpretation_card": {
-      "enabled": true
+      "enabled": true,
+      "code_walk_enabled": true
     }
   },
 
@@ -1066,7 +1067,11 @@
     "enabled": true,
     "auto_fix_portfolio": true,
     "harness_evolve_on_walk": true,
-    "walk_on_close": false,
+    "walk_on_close": true,
+    "review_diff_on_close": false,
+    "review_diff_when_changed": true,
+    "review_diff_base": "main",
+    "review_diff_scope": "branch",
     "run_smoke_tests": false,
     "walk_modules": [
       "portfolio_manager.py",
@@ -1199,7 +1204,8 @@
       "close": true,
       "intraday": {"planner": "deterministic"},
       "weekly": {"planner": "llm"},
-      "forecast": {"planner": "llm"}
+      "forecast": {"planner": "llm"},
+      "code_walk": {"planner": "llm"}
     }
   },
 

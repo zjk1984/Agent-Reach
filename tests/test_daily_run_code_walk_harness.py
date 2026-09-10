@@ -304,3 +304,51 @@ def test_render_markdown_includes_phase_g_hint_for_open_high():
     assert "Phase G" in md
     assert "grill-me-bug-fix" in md
     assert "模块裸读 macro_veto" in md
+
+
+def test_code_walk_has_interpretation_content():
+    from agent_reach.daily_run.code_walk_harness import code_walk_has_interpretation_content
+
+    assert code_walk_has_interpretation_content({"findings": [{"title": "x", "fixed": False}]})
+    assert code_walk_has_interpretation_content({"fixes_applied": ["days_held sync"]})
+    assert not code_walk_has_interpretation_content({"findings": []})
+
+
+def test_generate_code_walk_narrative_deterministic():
+    from agent_reach.daily_run.report_narrative import generate_code_walk_narrative
+    from unittest.mock import patch
+
+    with patch("agent_reach.daily_run.llm_chat.resolve_chat_provider", return_value=None):
+        narrative = generate_code_walk_narrative(
+            {
+                "findings": [
+                    {
+                        "area": "harness",
+                        "severity": "high",
+                        "title": "裸读 macro_veto",
+                        "detail": "须 threshold_default",
+                        "fixed": False,
+                    }
+                ]
+            },
+            settings={"llm_narrative": {"enabled": True, "jobs": {"code_walk": {"planner": "llm"}}}},
+        )
+    assert narrative["planner"] == "deterministic"
+    joined = " ".join(narrative.get("focus_points") or [])
+    assert "裸读 macro_veto" in joined
+
+
+def test_maybe_append_diff_review_when_changed(monkeypatch):
+    from agent_reach.daily_run.close_code_review import CodeReviewResult, _maybe_append_diff_review
+    from agent_reach.daily_run.code_walk_harness import CodeFinding
+
+    monkeypatch.setattr(
+        "agent_reach.daily_run.code_walk_harness.scan_diff_review",
+        lambda **kwargs: (
+            [CodeFinding("diff", "high", "test.py load_settings 未 overlay", "fix")],
+            {"skipped": False},
+        ),
+    )
+    out = CodeReviewResult()
+    _maybe_append_diff_review(out, {"review_diff_when_changed": True})
+    assert len(out.findings) == 1

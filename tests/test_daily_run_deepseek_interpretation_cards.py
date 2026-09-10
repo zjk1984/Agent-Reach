@@ -3,7 +3,9 @@
 
 from agent_reach.daily_run.deepseek_interpretation_cards import (
     DEEPSEEK_USAGE_PRINCIPLE,
+    append_code_walk_interpretation_report_section,
     append_interpretation_report_section,
+    code_walk_interpretation_enabled,
     interpretation_card_enabled,
     render_deepseek_interpretation_markdown,
 )
@@ -83,3 +85,26 @@ def test_narrative_system_prompt_includes_deepseek_rule():
     prompt = _narrative_system_prompt("morning", limits=_NARRATIVE_LIMITS_DEFAULT)
     assert "不得推算、修改或新增价格" in prompt
     assert "不得给出新的买卖价位" in prompt
+
+
+def test_code_walk_interpretation_section():
+    narrative = {
+        "planner": "llm",
+        "summary": "2 条 high 待 Phase G",
+        "focus_points": ["先 pytest harness_policy"],
+        "job": "code_walk",
+    }
+    sections = append_code_walk_interpretation_report_section(
+        [],
+        narrative,
+        settings={"report": {"deepseek_interpretation_card": {"enabled": True}}},
+    )
+    assert len(sections) == 1
+    assert sections[0].category == "code_walk_interpretation"
+    assert "Phase G" in sections[0].body
+
+
+def test_code_walk_interpretation_can_disable():
+    assert code_walk_interpretation_enabled(
+        {"report": {"deepseek_interpretation_card": {"code_walk_enabled": False}}}
+    ) is False

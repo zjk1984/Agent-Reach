@@ -18,9 +18,25 @@ DEEPSEEK_NARRATIVE_RULE = (
     "不得给出新的买卖价位、目标仓位、止损位或加仓比例。"
 )
 
+_CODE_WALK_NARRATIVE_RULE = (
+    "仅解读输入中已给出的走读 findings/fixes/harness 摘要；"
+    "不得新增 bug、不得修改阈值或 portfolio 数字；"
+    "不得给出新的买卖价位或仓位建议。"
+)
+
 _CATEGORY = "deepseek_interpretation"
+_CODE_WALK_CATEGORY = "code_walk_interpretation"
 _INTRADAY_JOBS = frozenset({"intraday"})
 _LLM_BODY_KEYS = ("focus_points", "divergence_notes", "risk_alerts", "trade_operations")
+
+
+def code_walk_interpretation_enabled(settings: Optional[dict[str, Any]] = None) -> bool:
+    cfg = dict((settings or {}).get("report") or {}).get("deepseek_interpretation_card") or {}
+    if cfg.get("enabled") is False:
+        return False
+    if cfg.get("code_walk_enabled") is False:
+        return False
+    return True
 
 
 def interpretation_card_enabled(settings: Optional[dict[str, Any]] = None) -> bool:
@@ -50,6 +66,12 @@ def _render_llm_interpretation_body(narrative: dict[str, Any]) -> str:
     return "\n".join(lines).strip()
 
 
+def code_walk_interpretation_label(narrative: Optional[dict[str, Any]]) -> str:
+    if str((narrative or {}).get("planner") or "") == "llm":
+        return "🤖 走读 DeepSeek 解读"
+    return "📋 走读规则解读"
+
+
 def render_deepseek_interpretation_markdown(
     narrative: Optional[dict[str, Any]],
     *,
@@ -59,7 +81,10 @@ def render_deepseek_interpretation_markdown(
     """Render final interpretation card body. Intraday never uses DeepSeek."""
     if job in _INTRADAY_JOBS:
         return ""
-    if not interpretation_card_enabled(settings):
+    if job == "code_walk":
+        if not code_walk_interpretation_enabled(settings):
+            return ""
+    elif not interpretation_card_enabled(settings):
         return ""
     if not narrative or narrative.get("skipped"):
         return ""
@@ -84,6 +109,23 @@ def append_interpretation_report_section(
         return sections
     out = list(sections)
     out.append(ReportSection(category=_CATEGORY, title="", body=body))
+    if renumber:
+        renumber(out)
+    return out
+
+
+def append_code_walk_interpretation_report_section(
+    sections: list[ReportSection],
+    narrative: Optional[dict[str, Any]],
+    *,
+    settings: Optional[dict[str, Any]] = None,
+    renumber: Optional[Callable[[list[ReportSection]], None]] = None,
+) -> list[ReportSection]:
+    body = render_deepseek_interpretation_markdown(narrative, job="code_walk", settings=settings)
+    if not body.strip():
+        return sections
+    out = list(sections)
+    out.append(ReportSection(category=_CODE_WALK_CATEGORY, title="", body=body))
     if renumber:
         renumber(out)
     return out

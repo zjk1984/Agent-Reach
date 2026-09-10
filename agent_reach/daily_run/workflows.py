@@ -899,6 +899,8 @@ def run_close(
             extra_parts.append(wl_md)
 
     cr_md = ""
+    cr_obj = None
+    code_walk_narrative: dict[str, Any] = {"skipped": True, "reason": "no code review"}
     if code_review is not None:
         from agent_reach.daily_run.close_code_review import CodeReviewResult
 
@@ -910,6 +912,14 @@ def run_close(
         cr_md = render_code_review_markdown(cr_obj)
         if cr_md:
             extra_parts.append(cr_md)
+        review_cfg = cfg.get("close_code_review") or {}
+        if review_cfg.get("enabled") is not False:
+            from agent_reach.daily_run.code_walk_harness import code_walk_has_interpretation_content
+            from agent_reach.daily_run.report_narrative import generate_code_walk_narrative
+
+            cr_dict = cr_obj.to_dict()
+            if code_walk_has_interpretation_content(cr_dict):
+                code_walk_narrative = generate_code_walk_narrative(cr_dict, settings=cfg)
 
     forecast_review = None
     forecast_review_md = ""
@@ -1281,6 +1291,7 @@ def run_close(
                     "harness": harness_result,
                     "watchlist_adjust_markdown": wl_md,
                     "code_review_markdown": cr_md,
+                    "code_walk_narrative": code_walk_narrative,
                 },
                 settings=cfg,
             )
@@ -1307,6 +1318,7 @@ def run_close(
             harness_markdown=harness_md,
             watchlist_adjust_markdown=wl_md,
             code_review_markdown=cr_md,
+            code_walk_narrative=code_walk_narrative,
             forecast_review_markdown="",
             close_improvements_markdown=improvements_md,
             technical_watch_markdown=technical_watch_md,
@@ -1354,6 +1366,7 @@ def run_close(
         "portfolio_summary": portfolio_summary_obj.to_dict() if portfolio_summary_obj else None,
         "watchlist_adjust_markdown": wl_md,
         "code_review_markdown": cr_md,
+        "code_walk_narrative": code_walk_narrative,
         "forecast_review_markdown": forecast_review_md,
         "close_improvements_markdown": improvements_md,
         "close_improvements": improvements.to_dict() if improvements else None,
