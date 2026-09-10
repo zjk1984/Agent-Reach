@@ -9,6 +9,7 @@ from agent_reach.daily_run.xueqiu_cookie_browser_use import (
     _cdp_cookies_to_header,
     _parse_cli_json,
     browser_use_available,
+    browser_use_cli_path,
     refresh_xueqiu_cookie_via_browser_use,
 )
 from agent_reach.daily_run.xueqiu_cookie_health import render_xueqiu_cookie_refresh_markdown
@@ -128,11 +129,86 @@ def test_refresh_prefers_browser_use_when_enabled():
     ), patch(
         "agent_reach.daily_run.xueqiu_cookie_browser_use.refresh_xueqiu_cookie_via_browser_use",
         return_value={"success": True, "engine": BROWSER_USE_ENGINE, "job": "xueqiu_cookie_refresh"},
-    ) as mock_bu:
+    ) as mock_bu, patch(
+        "agent_reach.daily_run.xueqiu_cookie_health.ensure_xueqiu_browser_session",
+    ) as mock_legacy:
         from agent_reach.daily_run.xueqiu_cookie_health import refresh_xueqiu_cookie_from_browser
 
         out = refresh_xueqiu_cookie_from_browser(
             settings={"week_forecast": {"xueqiu_cookie_use_browser_use": True}}
         )
     mock_bu.assert_called_once()
+    mock_legacy.assert_not_called()
+    assert out["engine"] == BROWSER_USE_ENGINE
+
+
+def test_browser_use_cli_path_checks_user_local_bin():
+    with patch(
+        "agent_reach.daily_run.xueqiu_cookie_browser_use._user_local_bin",
+        return_value="/home/zjk/.local/bin/browser-use",
+    ), patch(
+        "agent_reach.daily_run.xueqiu_cookie_browser_use.shutil.which",
+        return_value=None,
+    ):
+        assert browser_use_cli_path() == "/home/zjk/.local/bin/browser-use"
+
+
+def test_refresh_cli_failure_falls_back_to_library():
+    mock_browser = MagicMock()
+    mock_browser.start = AsyncMock()
+    mock_browser.stop = AsyncMock()
+    mock_browser.navigate_to = AsyncMock()
+    mock_browser.cookies = AsyncMock(
+        side_effect=[
+            [{"name": "xq_a_token", "value": "tok", "domain": ".xueqiu.com"}],
+            [{"name": "xq_a_token", "value": "tok", "domain": ".xueqiu.com"}],
+        ]
+    )
+    mock_cfg = MagicMock()
+    cli_fail = {
+        "skipped": False,
+        "success": False,
+        "engine": BROWSER_USE_ENGINE,
+        "message": "cli parse error",
+        "job": "xueqiu_cookie_refresh",
+    }
+    with patch(
+        "agent_reach.daily_run.xueqiu_cookie_browser_use.browser_use_available",
+        return_value=True,
+    ), patch(
+        "agent_reach.daily_run.xueqiu_cookie_browser_use.browser_use_cli_available",
+        return_value=True,
+    ), patch(
+        "agent_reach.daily_run.xueqiu_cookie_browser_use._refresh_via_browser_use_cli",
+        return_value=cli_fail,
+    ), patch(
+        "browser_use.Browser.from_system_chrome",
+        return_value=mock_browser,
+    ), patch("agent_reach.config.Config", return_value=mock_cfg), patch(
+        "agent_reach.daily_run.xueqiu_cookie_browser_use.asyncio.sleep",
+        new=AsyncMock(),
+    ), patch(
+        "agent_reach.daily_run.xueqiu_cookie_browser_use._reset_xueqiu_channel_cookies"
+    ):
+        result = refresh_xueqiu_cookie_via_browser_use(settings={"week_forecast": {}})
+
+    assert result["success"] is True
+    assert result["browser_login"]["method"] == "browser-use-library"
+
+
+def test_browser_use_enabled_skips_legacy_when_unavailable():
+    with patch(
+        "agent_reach.daily_run.xueqiu_cookie_browser_use.browser_use_available",
+        return_value=False,
+    ), patch(
+        "agent_reach.daily_run.xueqiu_cookie_health.ensure_xueqiu_browser_session",
+    ) as mock_legacy:
+        from agent_reach.daily_run.xueqiu_cookie_health import refresh_xueqiu_cookie_from_browser
+
+        out = refresh_xueqiu_cookie_from_browser(
+            settings={"week_forecast": {"xueqiu_cookie_use_browser_use": True}}
+        )
+    mock_legacy.assert_not_called()
+    assert out["skipped"] is True
+    assert out["reason"] == "browser_use_not_installed"
     assert out["engine"] == BROWSER_USE_ENGINE

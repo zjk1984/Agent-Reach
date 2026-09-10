@@ -5,9 +5,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import shutil
+import site
 import subprocess
+import sys
 import time
+from pathlib import Path
 from typing import Any, Optional
 
 from agent_reach.daily_run.xueqiu_cookie_health import (
@@ -25,16 +29,42 @@ def _browser_use_repo(settings: Optional[dict[str, Any]] = None) -> str:
     return str(wf.get("xueqiu_cookie_browser_use_repo") or BROWSER_USE_REPO).strip()
 
 
+def _user_local_bin(name: str) -> Optional[str]:
+    candidate = Path.home() / ".local" / "bin" / name
+    if candidate.is_file() and os.access(candidate, os.X_OK):
+        return str(candidate)
+    return None
+
+
+def browser_use_cli_path() -> Optional[str]:
+    """Resolve browser-use CLI even when cron PATH omits ~/.local/bin."""
+    return _user_local_bin("browser-use") or shutil.which("browser-use")
+
+
 def browser_use_cli_available() -> bool:
-    return bool(shutil.which("browser-use"))
+    return bool(browser_use_cli_path())
+
+
+def _import_browser_use_module():
+    import browser_use  # noqa: F401
+
+    return browser_use
 
 
 def browser_use_available() -> bool:
     if browser_use_cli_available():
         return True
     try:
-        import browser_use  # noqa: F401
-
+        _import_browser_use_module()
+        return True
+    except ImportError:
+        pass
+    # pip --user installs may be invisible to repo venv interpreters used by cron.
+    try:
+        user_site = site.getusersitepackages()
+        if user_site:
+            site.addsitedir(user_site)
+        _import_browser_use_module()
         return True
     except ImportError:
         return False
@@ -139,9 +169,10 @@ def _refresh_via_browser_use_cli(
         "token_seen_in_browser": False,
     }
 
-    if not browser_use_cli_available():
+    cli_path = browser_use_cli_path()
+    if not cli_path:
         return {
-            "skipped": True,
+            "skipped": False,
             "success": False,
             "reason": "browser_use_cli_missing",
             "engine": BROWSER_USE_ENGINE,
@@ -154,7 +185,7 @@ def _refresh_via_browser_use_cli(
     started = time.monotonic()
     try:
         proc = subprocess.run(
-            ["browser-use"],
+            [cli_path],
             input=script,
             capture_output=True,
             text=True,
@@ -268,7 +299,11 @@ async def _async_refresh_xueqiu_cookie_library(
         or "Default"
     ).strip()
     repo = _browser_use_repo(settings)
+    from agent_reach.daily_run.xueqiu_cookie_health import _has_gui_display
+
     headed = wf.get("xueqiu_cookie_browser_login_headed", True) is not False
+    if headed and not _has_gui_display():
+        headed = False
     try:
         timeout_sec = max(10, int(wf.get("xueqiu_cookie_browser_login_timeout_sec", 120)))
     except (TypeError, ValueError):
@@ -406,13 +441,15 @@ def refresh_xueqiu_cookie_via_browser_use(
 
     if browser_use_cli_available():
         cli_result = _refresh_via_browser_use_cli(settings=settings, config=config)
-        if cli_result.get("success") or cli_result.get("skipped"):
+        if cli_result.get("success"):
             return cli_result
 
     try:
-        import browser_use  # noqa: F401
+        _import_browser_use_module()
     except ImportError:
-        return cli_result if cli_result is not None else {
+        if cli_result is not None:
+            return cli_result
+        return {
             "skipped": True,
             "success": False,
             "reason": "browser_use_not_installed",

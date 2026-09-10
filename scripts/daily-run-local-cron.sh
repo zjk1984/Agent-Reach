@@ -40,7 +40,7 @@ if [ -z "$PYTHON" ] && [ -x "${REPO_ROOT}/venv/bin/python3" ]; then
 else
   PYTHON="${PYTHON:-python3}"
 fi
-export PATH="${HOME}/.local/node/bin:${PATH}"
+export PATH="${HOME}/.local/bin:${HOME}/.local/node/bin:${PATH}"
 LOG_DIR="${HOME}/.agent-reach/daily_run/logs"
 mkdir -p "$LOG_DIR"
 LOG_FILE="${LOG_DIR}/cron-$(date +%Y-%m-%d).log"

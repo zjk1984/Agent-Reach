@@ -545,12 +545,29 @@ def refresh_xueqiu_cookie_from_browser(
 
     if _use_browser_use(settings):
         from agent_reach.daily_run.xueqiu_cookie_browser_use import (
+            BROWSER_USE_ENGINE,
+            BROWSER_USE_REPO,
             browser_use_available,
             refresh_xueqiu_cookie_via_browser_use,
         )
 
         if browser_use_available():
             return refresh_xueqiu_cookie_via_browser_use(settings=settings, config=config)
+
+        repo = str(wf.get("xueqiu_cookie_browser_use_repo") or BROWSER_USE_REPO).strip()
+        return {
+            "skipped": True,
+            "success": False,
+            "reason": "browser_use_not_installed",
+            "engine": BROWSER_USE_ENGINE,
+            "repo": repo,
+            "message": (
+                f"已启用 {BROWSER_USE_ENGINE}，但未找到 browser-use CLI 或 Python 包；"
+                f"请 pip install git+https://github.com/{BROWSER_USE_REPO}.git，"
+                "并确保 cron PATH 含 ~/.local/bin"
+            ),
+            "job": "xueqiu_cookie_refresh",
+        }
 
     browser_name = str(browser or wf.get("xueqiu_cookie_refresh_browser") or "chrome").strip().lower()
     browser_login = ensure_xueqiu_browser_session(
