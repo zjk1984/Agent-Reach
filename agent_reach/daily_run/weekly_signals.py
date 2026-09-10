@@ -472,6 +472,7 @@ def build_strategy_validation(
     sell_rules_whatif: Optional[dict[str, Any]] = None,
     buy_rules_whatif: Optional[dict[str, Any]] = None,
     prior_week_win_rate: Optional[float] = None,
+    daily_totals: Optional[list[dict[str, Any]]] = None,
 ) -> dict[str, Any]:
     signals: list[dict[str, Any]] = []
 
@@ -547,7 +548,7 @@ def build_strategy_validation(
     if not suggestions and win_rate is not None:
         suggestions.append(f"本周策略胜率 {win_rate:.0f}%，维持现有参数并跟踪盈亏比")
 
-    return {
+    base = {
         "signals": signals[:12],
         "signal_count": total,
         "win_count": wins,
@@ -555,6 +556,16 @@ def build_strategy_validation(
         "profit_loss_ratio": pl_ratio,
         "suggestions": suggestions[:2],
     }
+    from agent_reach.daily_run.strategy_analyzers import (
+        build_strategy_analyzers,
+        merge_analyzers_into_validation,
+    )
+
+    analyzers = build_strategy_analyzers(
+        daily_totals=list(daily_totals or []),
+        trade_pnl_detail=trade_pnl_detail,
+    )
+    return merge_analyzers_into_validation(base, analyzers)
 
 
 def _prior_week_win_rate(week_start: date, *, settings: Optional[dict[str, Any]] = None) -> Optional[float]:
@@ -808,6 +819,12 @@ def render_strategy_validation_markdown(data: dict[str, Any]) -> list[str]:
     pl = data.get("profit_loss_ratio")
     if pl is not None:
         lines.append(f"- **盈亏比：** 平均盈利 / 平均亏损 = **{float(pl):.2f}**")
+    pf = data.get("profit_factor")
+    if pf is not None:
+        lines.append(f"- **Profit Factor：** **{float(pf):.2f}**")
+    dd = data.get("max_drawdown_pct")
+    if dd is not None:
+        lines.append(f"- **区间最大回撤：** **{float(dd):.1f}%**")
 
     signals = data.get("signals") or []
     if signals:

@@ -306,26 +306,28 @@ def _advance_pf_with_actions(
     enriched: dict[str, dict[str, Any]],
     settings: dict[str, Any],
 ) -> dict[str, Any]:
+    from agent_reach.daily_run.execution_sim import whatif_commission, whatif_execution_price
     from agent_reach.daily_run.portfolio_manager import (
         _add_bought_shares,
         _recalc_totals,
         copy_portfolio,
-        friction_commission_rate_default,
     )
 
     pf = copy_portfolio(pf)
-    commission_rate = friction_commission_rate_default(settings)
     holdings = list(pf.get("holdings") or [])
     for action in actions or []:
         side = action.get("side")
         code = _normalize_code(str(action.get("code", "")))
         shares = int(action.get("shares") or 0)
-        price = float(action.get("price") or enriched.get(code, {}).get("price") or 0)
+        row = enriched.get(code, {})
+        price = whatif_execution_price(row, enriched, side=str(side or "buy"), settings=settings)
+        if price is None:
+            price = float(action.get("price") or row.get("price") or 0)
         if shares <= 0 or price <= 0 or not code:
             continue
         if side == "buy":
             gross = shares * price
-            commission = round(gross * commission_rate, 2)
+            commission = whatif_commission(gross, settings)
             pf["cash"] = round(float(pf.get("cash") or 0) - gross - commission, 2)
             _add_bought_shares(
                 holdings,
@@ -336,7 +338,7 @@ def _advance_pf_with_actions(
             )
         elif side == "sell":
             gross = shares * price
-            commission = round(gross * commission_rate, 2)
+            commission = whatif_commission(gross, settings)
             pf["cash"] = round(float(pf.get("cash") or 0) + gross - commission, 2)
             updated: list[dict[str, Any]] = []
             for h in holdings:
@@ -891,6 +893,21 @@ def build_weekly_sell_rules_whatif(
     )
 
 
+def _annotate_sell_whatif_oco(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        enriched_row = dict(row)
+        ratio = float(row.get("sell_ratio") or 0)
+        if row.get("is_deep_loss") and ratio < 0.999:
+            enriched_row["oco_group_id"] = "deep_loss_partial_oco"
+            enriched_row["oco_note"] = "部分深亏卖出与剩余仓位止损/止盈联动（OCO）"
+        elif ratio < 0.999:
+            enriched_row["oco_group_id"] = "partial_sell_oco"
+            enriched_row["oco_note"] = "分批卖出组；取消主单则关联减仓失效"
+        out.append(enriched_row)
+    return out
+
+
 def build_sell_rules_whatif(
     *,
     summary: dict[str, Any],
@@ -955,6 +972,7 @@ def build_sell_rules_whatif(
         )
 
     rows.sort(key=lambda r: (-int(r.get("actual_sold") or 0), str(r.get("code") or "")))
+    rows = _annotate_sell_whatif_oco(rows)
 
     if not rows:
         return SellRulesWhatIfResult(

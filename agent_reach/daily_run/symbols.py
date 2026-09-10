@@ -50,9 +50,11 @@ def build_enriched_symbols(
         except Exception:
             cfg = None
     if cfg:
+        from agent_reach.daily_run.bar_alignment import annotate_enriched_bar_quality
         from agent_reach.daily_run.sector_classifier import enrich_symbol_map_sectors
 
         out = enrich_symbol_map_sectors(out, cfg)
+        out = annotate_enriched_bar_quality(out, settings=cfg)
     return out
 
 

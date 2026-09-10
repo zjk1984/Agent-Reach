@@ -39,6 +39,12 @@ class TradeAction:
     commission: float
     reasoning: str
     holding_cost: Optional[float] = None
+    order_state: str = "complete"
+    fill_timing: str = ""
+    slippage_rate: Optional[float] = None
+    volume_limited: bool = False
+    oco_group_id: str = ""
+    reject_reason: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         payload = {
@@ -50,9 +56,20 @@ class TradeAction:
             "amount": self.amount,
             "commission": self.commission,
             "reasoning": self.reasoning,
+            "order_state": self.order_state,
         }
         if self.holding_cost is not None and float(self.holding_cost) > 0:
             payload["holding_cost"] = round(float(self.holding_cost), 4)
+        if self.fill_timing:
+            payload["fill_timing"] = self.fill_timing
+        if self.slippage_rate is not None:
+            payload["slippage_rate"] = self.slippage_rate
+        if self.volume_limited:
+            payload["volume_limited"] = True
+        if self.oco_group_id:
+            payload["oco_group_id"] = self.oco_group_id
+        if self.reject_reason:
+            payload["reject_reason"] = self.reject_reason
         return payload
 
 
@@ -690,6 +707,12 @@ def apply_auto_adjust(
 
     settings = effective_settings(settings)
 
+    from agent_reach.daily_run.indicator_warmup import indicator_warmup_block_reason
+
+    warmup_reason = indicator_warmup_block_reason(snapshot, settings=settings)
+    if warmup_reason:
+        return ApplyResult(applied=False, portfolio=portfolio, message=warmup_reason)
+
     action = getattr(decision, "action", None) or (decision.get("action") if isinstance(decision, dict) else None)
     blocked = getattr(decision, "blocked", False) if not isinstance(decision, dict) else decision.get("blocked", False)
     friction_blocked = (
@@ -741,6 +764,20 @@ def apply_auto_adjust(
         )
 
     return ApplyResult(applied=False, portfolio=portfolio, message=f"未知决策 {action}")
+
+
+def _sell_oco_group_id(sell_kind: Optional[str], sell_analysis: dict[str, Any]) -> str:
+    """Map partial/defensive sells to OCO-style group ids (Backtrader bracket semantics)."""
+    ratio = float(sell_analysis.get("sell_ratio") or 1.0)
+    if sell_kind == "profit_lock":
+        return "profit_lock_bracket"
+    if sell_kind == "defensive_trim":
+        return "defensive_trim_bracket"
+    if ratio < 0.999 and sell_analysis.get("is_deep_loss"):
+        return "deep_loss_partial_oco"
+    if ratio < 0.999:
+        return "partial_sell_oco"
+    return ""
 
 
 def _apply_sell(
@@ -843,7 +880,10 @@ def _apply_sell(
     # shares (today_buy_shares) must never be pulled in when rounding a partial
     # sell up to one lot.
     shares = _round_lot(code, shares, total_shares=sellable)
-    price = _price_for(target, enriched)
+    from agent_reach.daily_run.execution_sim import sim_execution_price, sim_trade_shares
+
+    shares, volume_meta = sim_trade_shares(shares, target, enriched, side="sell", settings=settings)
+    price, exec_meta = sim_execution_price(target, enriched, side="sell", settings=settings)
     if shares <= 0 or price is None or price <= 0:
         if holding_today_buy_shares(target) > 0:
             return ApplyResult(
@@ -908,6 +948,10 @@ def _apply_sell(
         commission=commission,
         reasoning=_decision_reason(decision, f"卖出 {target.get('name', code)} {shares} 股{sell_note}"),
         holding_cost=holding_cost if holding_cost > 0 else None,
+        fill_timing=str(exec_meta.get("fill_timing") or ""),
+        slippage_rate=exec_meta.get("slippage_rate"),
+        volume_limited=bool(volume_meta.get("volume_limited")),
+        oco_group_id=_sell_oco_group_id(sell_kind, sell_analysis),
     )
     _recalc_totals(pf, enriched)
     return ApplyResult(applied=True, portfolio=pf, actions=[trade], message=trade.reasoning)
@@ -1018,11 +1062,19 @@ def _apply_buy(
             ),
         )
 
+    from agent_reach.daily_run.execution_sim import sim_execution_price, sim_trade_shares
+
+    shares, volume_meta = sim_trade_shares(shares, target, enriched, side="buy", settings=settings)
+    price, exec_meta = sim_execution_price(target, enriched, side="buy", settings=settings)
+    if shares <= 0 or price is None or price <= 0:
+        return ApplyResult(applied=False, portfolio=pf, message=f"{code} 无法买入（股数或价格无效）")
+
     gross = shares * price
     commission = round(gross * commission_rate, 2)
     total_cost = gross + commission
     if total_cost > cash:
         shares = _round_lot(code, int((cash / (1 + commission_rate)) // price))
+        shares, volume_meta = sim_trade_shares(shares, target, enriched, side="buy", settings=settings)
         if shares <= 0:
             return ApplyResult(applied=False, portfolio=pf, message="现金不足")
         gross = shares * price
@@ -1059,6 +1111,9 @@ def _apply_buy(
             + ("；连续买入建议，临时突破现金限制" if cash_limit_bypass else "")
             + "）"
         ),
+        fill_timing=str(exec_meta.get("fill_timing") or ""),
+        slippage_rate=exec_meta.get("slippage_rate"),
+        volume_limited=bool(volume_meta.get("volume_limited")),
     )
     _recalc_totals(pf, enriched)
     return ApplyResult(applied=True, portfolio=pf, actions=[trade], message=trade.reasoning)

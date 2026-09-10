@@ -77,7 +77,36 @@
 
   "trading": {
     "commission_rate": 0.0015,
-    "slippage_rate": 0.001
+    "slippage_rate": 0.001,
+    "fill_timing": "close",
+    "max_bar_participation_pct": 10
+  },
+
+  "execution_sim": {
+    "enabled": true,
+    "fill_timing": "close",
+    "max_bar_participation_pct": 10,
+    "apply_slippage_in_whatif": true,
+    "apply_slippage_live": true
+  },
+
+  "order_state": {
+    "enabled": true
+  },
+
+  "indicator_warmup": {
+    "enabled": true,
+    "min_mss_history_points": 2,
+    "block_auto_adjust": true,
+    "require_kronos_when_enabled": false
+  },
+
+  "signal_events": {
+    "enabled": true
+  },
+
+  "bar_alignment": {
+    "enabled": true
   },
 
   "intraday": {

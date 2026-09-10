@@ -1013,7 +1013,10 @@ def generate_weekly_report(
         snap_for_symbols = dict(snapshot)
         sync_snapshot_portfolio(snap_for_symbols, pf)
 
-    enriched = build_enriched_symbols(snap_for_symbols)
+    enriched = build_enriched_symbols(snap_for_symbols, settings=settings)
+    from agent_reach.daily_run.bar_alignment import annotate_enriched_bar_quality
+
+    enriched = annotate_enriched_bar_quality(enriched, settings=settings)
     trades = _load_trade_ledger_range(week_start, week_end)
     trade_cash_flow = _compute_trade_cash_flow(trades)
     realized = _compute_realized_pnl(trades)
@@ -1431,6 +1434,7 @@ def generate_weekly_report(
         sell_rules_whatif=sell_rules_whatif,
         buy_rules_whatif=buy_rules_whatif,
         prior_week_win_rate=_prior_week_win_rate(week_start, settings=settings),
+        daily_totals=daily_totals,
     )
     next_week_outlook = build_next_week_outlook(
         week_end=week_end,
