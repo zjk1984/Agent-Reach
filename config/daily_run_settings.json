@@ -1214,18 +1214,37 @@
     "enabled": true,
     "quick": {"provider": "deepseek", "model": "deepseek-v4-flash"},
     "deep": {"provider": "deepseek", "model": "deepseek-v4-flash"},
+    "tool": {"provider": "deepseek", "model": "deepseek-v4-flash"},
+    "reasoning": {"provider": "deepseek", "model": "deepseek-v4-flash"},
+    "role_tiers": {
+      "tool": "tool",
+      "reasoning": "reasoning"
+    },
     "job_tiers": {
       "morning": "quick",
       "close": "quick",
       "intraday": "quick",
       "code_walk": "quick",
-      "counter_thesis_llm": "quick",
-      "weekly": "deep",
-      "forecast": "deep",
-      "decision_reflection": "deep",
-      "risk_debate": "deep",
-      "invest_debate": "deep"
+      "counter_thesis_llm": "tool",
+      "weekly": "reasoning",
+      "forecast": "reasoning",
+      "decision_reflection": "reasoning",
+      "risk_debate": "reasoning",
+      "invest_debate": "reasoning"
     }
+  },
+
+  "isq_lite": {
+    "enabled": true
+  },
+
+  "thesis_evolution": {
+    "enabled": true
+  },
+
+  "job_checkpoint": {
+    "enabled": true,
+    "dir": "~/.agent-reach/daily_run/cache"
   },
 
   "decision_reflection": {

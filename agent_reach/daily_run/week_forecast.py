@@ -461,6 +461,7 @@ class WeekForecast:
     llm_narrative: dict[str, Any] = field(default_factory=dict)
     decision_reflection: dict[str, Any] = field(default_factory=dict)
     invest_debate_narrative: dict[str, Any] = field(default_factory=dict)
+    thesis_evolution: dict[str, Any] = field(default_factory=dict)
     macro_signals: dict[str, Any] = field(default_factory=dict)
     watchlist_intel: dict[str, Any] = field(default_factory=dict)
     xueqiu_cookie_health: dict[str, Any] = field(default_factory=dict)
@@ -493,6 +494,7 @@ class WeekForecast:
             "llm_narrative": self.llm_narrative,
             "decision_reflection": self.decision_reflection,
             "invest_debate_narrative": self.invest_debate_narrative,
+            "thesis_evolution": self.thesis_evolution,
             "macro_signals": self.macro_signals,
             "watchlist_intel": self.watchlist_intel,
             "xueqiu_cookie_health": self.xueqiu_cookie_health,
@@ -793,17 +795,22 @@ def _render_news_section(data: dict[str, Any]) -> str:
     research = data.get("news_research") or []
     if not events and not research:
         lines.append("- 暂无新闻调研")
-        return "\n".join(lines)
-    for ev in events:
-        lines.append(f"- **{ev.get('title', '事件')}** ({ev.get('source', '')})")
-        if ev.get("summary"):
-            lines.append(f"  {ev['summary']}")
-    for r in research:
-        status = "✅" if r.get("success") else "⚠️"
-        lines.append(f"**{status} {r.get('label', '调研')}**")
-        if r.get("summary"):
-            lines.append(r["summary"])
-        lines.append("")
+    else:
+        for ev in events:
+            lines.append(f"- **{ev.get('title', '事件')}** ({ev.get('source', '')})")
+            if ev.get("summary"):
+                lines.append(f"  {ev['summary']}")
+        for r in research:
+            status = "✅" if r.get("success") else "⚠️"
+            lines.append(f"**{status} {r.get('label', '调研')}**")
+            if r.get("summary"):
+                lines.append(r["summary"])
+            lines.append("")
+    from agent_reach.daily_run.thesis_evolution import render_thesis_diff_markdown
+
+    thesis_md = render_thesis_diff_markdown(data.get("thesis_evolution") or {})
+    if thesis_md:
+        lines.extend(["", thesis_md])
     return "\n".join(lines).strip()
 
 

@@ -1,5 +1,5 @@
 # -*- coding: utf-8
-"""Quick/deep LLM tier resolution (TradingAgents-style model routing)."""
+"""Quick/deep and tool/reasoning LLM tier resolution (TradingAgents + DeepEar-style)."""
 
 from __future__ import annotations
 
@@ -18,6 +18,24 @@ _DEFAULT_JOB_TIERS: dict[str, str] = {
     "invest_debate": "deep",
 }
 
+_DEFAULT_JOB_ROLES: dict[str, str] = {
+    "morning": "tool",
+    "intraday": "tool",
+    "close": "tool",
+    "code_walk": "tool",
+    "counter_thesis_llm": "tool",
+    "weekly": "reasoning",
+    "forecast": "reasoning",
+    "decision_reflection": "reasoning",
+    "risk_debate": "reasoning",
+    "invest_debate": "reasoning",
+}
+
+_DEFAULT_ROLE_TIERS: dict[str, str] = {
+    "tool": "tool",
+    "reasoning": "reasoning",
+}
+
 
 def llm_tier_cfg(settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     root = dict((settings or {}).get("llm_tier") or {})
@@ -32,6 +50,10 @@ def llm_tier_cfg(settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:
             "deep",
             {"provider": narrative.get("provider"), "model": narrative.get("model")},
         )
+    if not root.get("tool"):
+        root.setdefault("tool", dict(root.get("quick") or {}))
+    if not root.get("reasoning"):
+        root.setdefault("reasoning", dict(root.get("deep") or {}))
     return root
 
 
@@ -40,11 +62,29 @@ def llm_tier_enabled(settings: Optional[dict[str, Any]] = None) -> bool:
     return cfg.get("enabled", True) is not False
 
 
+def resolve_job_role(job: str, settings: Optional[dict[str, Any]] = None) -> str:
+    cfg = llm_tier_cfg(settings)
+    job_roles = dict(cfg.get("job_roles") or {})
+    role = str(job_roles.get(job) or _DEFAULT_JOB_ROLES.get(job) or "tool").strip().lower()
+    return role if role in ("tool", "reasoning") else "tool"
+
+
 def resolve_job_tier(job: str, settings: Optional[dict[str, Any]] = None) -> str:
     cfg = llm_tier_cfg(settings)
     job_tiers = dict(cfg.get("job_tiers") or {})
-    tier = str(job_tiers.get(job) or _DEFAULT_JOB_TIERS.get(job) or "quick").strip().lower()
-    return tier if tier in ("quick", "deep") else "quick"
+    explicit = job_tiers.get(job)
+    if explicit:
+        tier = str(explicit).strip().lower()
+        if tier in ("quick", "deep", "tool", "reasoning"):
+            return tier
+    role = resolve_job_role(job, settings)
+    role_tiers = dict(cfg.get("role_tiers") or _DEFAULT_ROLE_TIERS)
+    tier = str(role_tiers.get(role) or _DEFAULT_JOB_TIERS.get(job) or "quick").strip().lower()
+    if tier in ("tool", "reasoning"):
+        return tier
+    if tier in ("quick", "deep"):
+        return tier
+    return "quick"
 
 
 def apply_llm_tier(
@@ -68,4 +108,5 @@ def apply_llm_tier(
     if tier_cfg.get("max_output_tokens"):
         out["max_output_tokens"] = tier_cfg["max_output_tokens"]
     out["llm_tier"] = tier
+    out["llm_role"] = resolve_job_role(job, settings)
     return out

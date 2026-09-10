@@ -52,6 +52,7 @@ class WeeklyReport:
     llm_narrative: dict[str, Any] = field(default_factory=dict)
     decision_reflection: dict[str, Any] = field(default_factory=dict)
     invest_debate_narrative: dict[str, Any] = field(default_factory=dict)
+    thesis_evolution: dict[str, Any] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
     cash: Optional[float] = None
     cash_ratio: Optional[float] = None
@@ -123,6 +124,7 @@ class WeeklyReport:
             "llm_narrative": self.llm_narrative,
             "decision_reflection": self.decision_reflection,
             "invest_debate_narrative": self.invest_debate_narrative,
+            "thesis_evolution": self.thesis_evolution,
             "notes": self.notes,
             "cash": self.cash,
             "cash_ratio": self.cash_ratio,
@@ -1225,6 +1227,14 @@ def generate_weekly_report(
     )
 
     hot_topic_diff = build_hot_topic_diff(pf, settings=settings)
+    from agent_reach.daily_run.isq_lite import enrich_weekly_isq
+
+    hot_sectors, sector_research, hot_topic_diff = enrich_weekly_isq(
+        hot_sectors,
+        sector_research,
+        hot_topic_diff,
+        settings=settings,
+    )
     market_review_weekly = summarize_week_market_reviews(
         week_start, week_end, settings=settings
     )
@@ -2004,15 +2014,31 @@ def _render_watchlist_lines(report: WeeklyReport) -> list[str]:
 
 
 def _render_market_lines(report: WeeklyReport) -> list[str]:
+    from agent_reach.daily_run.redfox_weekly import render_hot_topic_diff_markdown
+    from agent_reach.daily_run.isq_lite import render_isq_hot_sectors_markdown, render_isq_hot_topic_markdown
+    from agent_reach.daily_run.thesis_evolution import render_thesis_diff_markdown
     from agent_reach.daily_run.weekly_content_scope import render_market_environment_markdown
 
     bench = (report.weekly_metrics or {}).get("benchmark")
-    return render_market_environment_markdown(
+    lines = render_market_environment_markdown(
         macro_brief=report.macro_brief,
         market_review_weekly=report.market_review_weekly,
         sector_snapshot=report.sector_snapshot,
         benchmark=bench,
     )
+    diff_md = render_hot_topic_diff_markdown(report.hot_topic_diff or {})
+    if diff_md:
+        lines.extend(["", *diff_md.splitlines()])
+    isq_topic_md = render_isq_hot_topic_markdown(report.hot_topic_diff or {})
+    if isq_topic_md:
+        lines.extend(["", *isq_topic_md.splitlines()])
+    isq_sector_md = render_isq_hot_sectors_markdown(report.hot_sectors or [])
+    if isq_sector_md:
+        lines.extend(["", *isq_sector_md.splitlines()])
+    thesis_md = render_thesis_diff_markdown(report.thesis_evolution or {})
+    if thesis_md:
+        lines.extend(["", *thesis_md.splitlines()])
+    return lines
 
 
 def _render_prediction_verify_lines(report: WeeklyReport) -> list[str]:

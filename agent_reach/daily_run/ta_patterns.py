@@ -309,9 +309,10 @@ def generate_risk_debate_narrative(
     )
 
 
-def _invest_debate_checkpoint_path(scope_key: str) -> Path:
-    safe = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in scope_key)[:64]
-    return Path.home() / ".agent-reach" / "daily_run" / "cache" / f"invest_debate_{safe}.json"
+def _invest_debate_checkpoint(scope_key: str, settings: Optional[dict[str, Any]] = None):
+    from agent_reach.daily_run.job_checkpoint import JobCheckpoint
+
+    return JobCheckpoint.for_job("invest_debate", scope_key, settings=settings)
 
 
 def build_weekly_invest_debate_context(report: dict[str, Any]) -> dict[str, Any]:
@@ -400,22 +401,17 @@ def generate_invest_debate_narrative(
 
     cfg = _block_cfg(settings, "invest_debate")
     scope_key = str(context.get("scope_key") or context.get("scope") or "default")
-    checkpoint_path = _invest_debate_checkpoint_path(scope_key)
-    checkpoint: dict[str, Any] = {}
-    if cfg.get("checkpoint", True) and checkpoint_path.exists():
-        try:
-            checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            checkpoint = {}
+    checkpoint = _invest_debate_checkpoint(scope_key, settings)
+    checkpoint_data: dict[str, Any] = checkpoint.load() if cfg.get("checkpoint", True) else {}
 
     from agent_reach.daily_run.report_narrative import _generate_narrative
 
     rounds = max(1, int(cfg.get("max_rounds", 2)))
     merged = dict(context)
-    if checkpoint.get("bull_points"):
-        merged["prior_bull"] = checkpoint.get("bull_points")
-    if checkpoint.get("bear_points"):
-        merged["prior_bear"] = checkpoint.get("bear_points")
+    if checkpoint_data.get("bull_points"):
+        merged["prior_bull"] = checkpoint_data.get("bull_points")
+    if checkpoint_data.get("bear_points"):
+        merged["prior_bear"] = checkpoint_data.get("bear_points")
     merged["debate_rounds"] = rounds
 
     out = _generate_narrative(
@@ -431,21 +427,14 @@ def generate_invest_debate_narrative(
 
     if cfg.get("checkpoint", True) and not out.get("skipped"):
         try:
-            checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
-            checkpoint_path.write_text(
-                json.dumps(
-                    {
-                        "updated_at": datetime.now(timezone.utc).isoformat(),
-                        "scope_key": scope_key,
-                        "bull_points": out.get("bull_points") or out.get("focus_points"),
-                        "bear_points": out.get("divergence_notes") or [],
-                        "summary": out.get("summary"),
-                    },
-                    ensure_ascii=False,
-                    indent=2,
-                )
-                + "\n",
-                encoding="utf-8",
+            checkpoint.save(
+                {
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                    "scope_key": scope_key,
+                    "bull_points": out.get("bull_points") or out.get("focus_points"),
+                    "bear_points": out.get("divergence_notes") or [],
+                    "summary": out.get("summary"),
+                }
             )
         except OSError as exc:
             logger.warning("invest_debate checkpoint write failed: {}", exc)

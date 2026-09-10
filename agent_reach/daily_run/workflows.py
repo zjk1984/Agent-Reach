@@ -1963,7 +1963,11 @@ def run_weekly(
         build_weekly_invest_debate_context(report.to_dict()),
         settings=cfg,
     )
+    from agent_reach.daily_run.thesis_evolution import attach_weekly_thesis_evolution
+
+    report.thesis_evolution = attach_weekly_thesis_evolution(report.to_dict(), settings=cfg)
     steps.append("llm_narrative")
+    steps.append("thesis_evolution")
 
     md = render_weekly_markdown(report)
     from agent_reach.daily_run.berkshire.news_pulse import append_news_pulse_markdown
@@ -2235,6 +2239,11 @@ def run_forecast(
         settings=cfg,
     )
     steps.append("ta_patterns")
+
+    from agent_reach.daily_run.thesis_evolution import attach_forecast_thesis_evolution
+
+    forecast.thesis_evolution = attach_forecast_thesis_evolution(forecast.to_dict(), settings=cfg)
+    steps.append("thesis_evolution")
 
     try:
         from agent_reach.daily_run.week_open_overlay import build_and_save_week_open_overlay

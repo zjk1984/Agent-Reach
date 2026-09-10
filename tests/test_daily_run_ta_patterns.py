@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from agent_reach.daily_run.job_checkpoint import JobCheckpoint
 from agent_reach.daily_run.llm_tier import apply_llm_tier, resolve_job_tier
 from agent_reach.daily_run.ta_patterns import (
     build_forecast_reflection_context,
@@ -51,8 +52,8 @@ def test_generate_decision_reflection_deterministic():
 
 
 def test_resolve_job_tier_defaults():
-    assert resolve_job_tier("morning") == "quick"
-    assert resolve_job_tier("decision_reflection") == "deep"
+    assert resolve_job_tier("morning") == "tool"
+    assert resolve_job_tier("decision_reflection") == "reasoning"
     assert resolve_job_tier(
         "risk_debate",
         settings={"llm_tier": {"job_tiers": {"risk_debate": "quick"}}},
@@ -66,12 +67,13 @@ def test_apply_llm_tier_merges_deep_model():
         settings={
             "llm_tier": {
                 "enabled": True,
-                "deep": {"provider": "deepseek", "model": "deep-model"},
+                "reasoning": {"provider": "deepseek", "model": "deep-model"},
             }
         },
     )
     assert merged["model"] == "deep-model"
-    assert merged["llm_tier"] == "deep"
+    assert merged["llm_tier"] == "reasoning"
+    assert merged["llm_role"] == "reasoning"
 
 
 def test_generate_risk_debate_skips_without_conflicts():
@@ -80,10 +82,10 @@ def test_generate_risk_debate_skips_without_conflicts():
 
 
 def test_invest_debate_checkpoint_write(tmp_path, monkeypatch):
-    cache_dir = tmp_path / "cache"
+    ckpt = JobCheckpoint(job="invest_debate", scope_key="2026-09-08_2026-09-12", base_dir=tmp_path)
     monkeypatch.setattr(
-        "agent_reach.daily_run.ta_patterns._invest_debate_checkpoint_path",
-        lambda scope_key: cache_dir / f"invest_debate_{scope_key}.json",
+        "agent_reach.daily_run.ta_patterns._invest_debate_checkpoint",
+        lambda scope_key, settings=None: ckpt,
     )
     with patch("agent_reach.daily_run.llm_chat.resolve_chat_provider", return_value=None):
         out = generate_invest_debate_narrative(
@@ -98,9 +100,9 @@ def test_invest_debate_checkpoint_write(tmp_path, monkeypatch):
             settings={"invest_debate": {"enabled": True, "planner": "deterministic", "checkpoint": True}},
         )
     assert out.get("skipped") is not True
-    checkpoint = json.loads((cache_dir / "invest_debate_2026-09-08_2026-09-12.json").read_text(encoding="utf-8"))
-    assert checkpoint["scope_key"] == "2026-09-08_2026-09-12"
-    assert checkpoint.get("summary")
+    loaded = ckpt.load()
+    assert loaded["scope_key"] == "2026-09-08_2026-09-12"
+    assert loaded.get("summary")
 
 
 def test_persist_decision_reflection_appends_jsonl(tmp_path, monkeypatch):
