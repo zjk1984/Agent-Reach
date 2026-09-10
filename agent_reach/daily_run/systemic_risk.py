@@ -133,7 +133,9 @@ def watchlist_diversify_score_adjustment(
 
 def _market_review_from_snapshot(snapshot: dict[str, Any]) -> Optional[dict[str, Any]]:
     review = snapshot.get("market_review")
-    if isinstance(review, dict) and review.get("date"):
+    if not isinstance(review, dict):
+        return None
+    if review.get("date") or review.get("comparison") or review.get("emotion") or review.get("sector_analysis"):
         return review
     return None
 
@@ -417,3 +419,43 @@ def collect_systemic_risk_findings(
         )
 
     return findings
+
+
+def current_from_portfolio_summary(
+    portfolio_summary: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    """Minimal ``current`` payload for systemic risk detectors from close summary."""
+    ps = portfolio_summary or {}
+    holdings = list(ps.get("holdings") or [])
+    watchlist = list(ps.get("watchlist") or [])
+    return {
+        "portfolio": {
+            "holdings": holdings,
+            "watchlist": watchlist,
+            "daily_pnl_pct": ps.get("daily_pnl_pct"),
+        },
+        "watchlist": watchlist,
+        "daily_pnl_pct": ps.get("daily_pnl_pct"),
+    }
+
+
+def systemic_risk_narrative_context(
+    *,
+    portfolio_summary: Optional[dict[str, Any]] = None,
+    settings: Optional[dict[str, Any]] = None,
+    market_review: Optional[dict[str, Any]] = None,
+) -> list[dict[str, str]]:
+    """Structured systemic-risk lines for close DeepSeek interpretation (no new numbers)."""
+    findings = collect_systemic_risk_findings(
+        current=current_from_portfolio_summary(portfolio_summary),
+        settings=settings,
+        market_review=market_review,
+    )
+    return [
+        {
+            "priority": str(item.get("priority") or ""),
+            "title": str(item.get("title") or ""),
+            "detail": str(item.get("detail") or ""),
+        }
+        for item in findings
+    ]

@@ -426,6 +426,10 @@ def collect_market_review(
     sector = analyze_sectors(limit_up_stocks, industries=industries, concepts=concepts)
     lhb = analyze_lhb(lhb_raw)
 
+    if north.get("disclosure_limited"):
+        emotion["northbound_disclosure_limited"] = True
+        emotion["northbound_net_yi"] = None
+
     yesterday = _prev_trading_review(day, settings=cfg, offset_days=1)
     last_week = _prev_trading_review(day, settings=cfg, offset_days=5)
 

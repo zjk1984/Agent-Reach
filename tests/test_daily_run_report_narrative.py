@@ -1107,6 +1107,38 @@ def test_morning_narrative_focus_includes_watchlist_intel():
     assert "兆易创新" in joined
 
 
+def test_close_context_includes_systemic_risk_findings():
+    ctx = build_close_context(
+        snapshot={"name": "澜起科技", "macro_signals": {}},
+        verify={"summary": "验证通过"},
+        portfolio_summary={
+            "holdings": [{"code": "688981", "shares": 100, "sector": "半导体"}],
+            "watchlist": [{"code": "603986", "sector": "存储"}],
+        },
+        settings={"systemic_risk": {"tech_cluster_ratio_warn": 0.5}},
+    )
+    assert ctx.get("systemic_risk_findings")
+    assert ctx["systemic_risk_findings"][0]["title"] == "科技链高度集中"
+
+
+def test_close_narrative_risk_alerts_include_systemic_risk():
+    with patch("agent_reach.daily_run.llm_chat.resolve_chat_provider", return_value=None):
+        narrative = generate_close_narrative(
+            snapshot={"name": "澜起科技", "macro_signals": {}},
+            verify={"summary": "验证通过"},
+            portfolio_summary={
+                "holdings": [{"code": "688981", "shares": 100, "sector": "半导体"}],
+                "watchlist": [{"code": "603986", "sector": "存储"}],
+            },
+            settings={
+                "llm_narrative": {"enabled": True},
+                "systemic_risk": {"tech_cluster_ratio_warn": 0.5},
+            },
+        )
+    joined = " ".join(narrative.get("risk_alerts") or [])
+    assert "科技链高度集中" in joined
+
+
 def test_close_context_includes_watchlist_intel():
     ctx = build_close_context(
         snapshot={

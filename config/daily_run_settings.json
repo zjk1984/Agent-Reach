@@ -573,7 +573,7 @@
     "max_vol_scale": 1.6,
     "llm_narrative": {
       "enabled": true,
-      "planner": "deterministic",
+      "planner": "llm",
       "provider": "deepseek",
       "model": "deepseek-v4-flash",
       "timeout_seconds": 45,
@@ -1198,8 +1198,8 @@
       "morning": true,
       "close": true,
       "intraday": {"planner": "deterministic"},
-      "weekly": {"planner": "deterministic"},
-      "forecast": {"planner": "deterministic"}
+      "weekly": {"planner": "llm"},
+      "forecast": {"planner": "llm"}
     }
   },
 

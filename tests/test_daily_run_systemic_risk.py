@@ -4,10 +4,12 @@
 from agent_reach.daily_run.eastmoney_market import fetch_north_flow
 from agent_reach.daily_run.systemic_risk import (
     collect_systemic_risk_findings,
+    current_from_portfolio_summary,
     detect_emotion_cooling,
     format_northbound_display,
     is_tech_cluster_sector,
     systemic_buy_block_reason,
+    systemic_risk_narrative_context,
     tech_concentration_snapshot,
     watchlist_diversify_score_adjustment,
 )
@@ -120,3 +122,22 @@ def test_collect_systemic_risk_findings():
     titles = {f["title"] for f in findings}
     assert "市场情绪降温" in titles
     assert "科技链高度集中" in titles
+
+
+def test_systemic_risk_narrative_context_from_portfolio_summary():
+    ctx = systemic_risk_narrative_context(
+        portfolio_summary={
+            "holdings": [{"code": "688981", "shares": 100, "sector": "半导体"}],
+            "watchlist": [{"code": "603986", "sector": "存储"}],
+        },
+        settings={"systemic_risk": {"tech_cluster_ratio_warn": 0.5}},
+    )
+    assert ctx
+    assert ctx[0]["title"] == "科技链高度集中"
+    assert "detail" in ctx[0]
+
+
+def test_current_from_portfolio_summary_shape():
+    current = current_from_portfolio_summary({"holdings": [{"code": "688981"}], "daily_pnl_pct": -0.2})
+    assert current["portfolio"]["holdings"][0]["code"] == "688981"
+    assert current["daily_pnl_pct"] == -0.2

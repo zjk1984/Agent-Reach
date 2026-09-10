@@ -1394,6 +1394,35 @@ def push_intraday_narrative_card(
 # --- Close ---
 
 
+def _append_systemic_risk_context(
+    ctx: dict[str, Any],
+    *,
+    portfolio_summary: Optional[dict[str, Any]] = None,
+    settings: Optional[dict[str, Any]] = None,
+    market_review: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    from agent_reach.daily_run.systemic_risk import systemic_risk_narrative_context
+
+    findings = systemic_risk_narrative_context(
+        portfolio_summary=portfolio_summary,
+        settings=settings,
+        market_review=market_review,
+    )
+    if findings:
+        ctx["systemic_risk_findings"] = findings
+    return ctx
+
+
+def _append_systemic_risk_risks(risks: list[str], ctx: dict[str, Any]) -> None:
+    for finding in ctx.get("systemic_risk_findings") or []:
+        title = str(finding.get("title") or "").strip()
+        detail = str(finding.get("detail") or "").strip()
+        if not title:
+            continue
+        line = f"{title}：{detail[:120]}" if detail else title
+        risks.append(line)
+
+
 def build_close_context(
     *,
     snapshot: dict[str, Any],
@@ -1401,6 +1430,8 @@ def build_close_context(
     portfolio_summary: Optional[dict[str, Any]] = None,
     curve: Optional[dict[str, Any]] = None,
     forecast_review: Optional[dict[str, Any]] = None,
+    settings: Optional[dict[str, Any]] = None,
+    market_review: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     from agent_reach.daily_run.close_portfolio_summary import extract_close_trade_operations
     from agent_reach.daily_run.xueqiu_hot_display import (
@@ -1449,7 +1480,12 @@ def build_close_context(
             code=code or None,
         ),
     }
-    return ctx
+    return _append_systemic_risk_context(
+        ctx,
+        portfolio_summary=portfolio_summary,
+        settings=settings,
+        market_review=market_review,
+    )
 
 
 def _attach_close_trade_operations(
@@ -2192,6 +2228,7 @@ def _close_deterministic(ctx: dict[str, Any]) -> dict[str, Any]:
         focus.append(f"明日：{rec}")
     for dev in ctx.get("deviations") or []:
         risks.append(str(dev)[:120])
+    _append_systemic_risk_risks(risks, ctx)
     summary = f"收盘 {ctx.get('name') or ctx.get('code')} 复盘"
     if pnl is not None:
         summary += f"，当日盈亏 ¥{float(pnl):,.0f}"
@@ -2221,14 +2258,18 @@ def generate_close_narrative(
         portfolio_summary=portfolio_summary,
         curve=curve,
         forecast_review=forecast_review,
+        settings=settings,
     )
+    close_hint = "优先当日盈亏、成交买卖、偏差项、明日一条建议。"
+    if context.get("systemic_risk_findings"):
+        close_hint += "若有 systemic_risk_findings，须在 risk_alerts 中解读已给系统性风险，不得新增数字。"
     return _attach_context_trace(
         _attach_close_trade_operations(
             _generate_narrative(
                 "close",
                 context,
                 settings=settings,
-                system="优先当日盈亏、成交买卖、偏差项、明日一条建议。",
+                system=close_hint,
                 deterministic_fn=_close_deterministic,
             ),
             context,
@@ -2247,6 +2288,8 @@ def build_merged_close_context(
     forecast_review: Optional[dict[str, Any]] = None,
     harness_result: Optional[dict[str, Any]] = None,
     macro_signals: Optional[dict[str, Any]] = None,
+    settings: Optional[dict[str, Any]] = None,
+    market_review: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     from agent_reach.daily_run.close_portfolio_summary import extract_close_trade_operations
     from agent_reach.daily_run.xueqiu_hot_display import (
@@ -2270,7 +2313,7 @@ def build_merged_close_context(
             }
         )
     trade_ops = extract_close_trade_operations(portfolio_summary)
-    return {
+    ctx = {
         "job": "close",
         "portfolio_scope": "merged",
         "symbol_count": len(symbols),
@@ -2297,6 +2340,12 @@ def build_merged_close_context(
             macro_signals=macro_signals,
         ),
     }
+    return _append_systemic_risk_context(
+        ctx,
+        portfolio_summary=portfolio_summary,
+        settings=settings,
+        market_review=market_review,
+    )
 
 
 def _merged_close_deterministic(ctx: dict[str, Any]) -> dict[str, Any]:
@@ -2349,6 +2398,7 @@ def _merged_close_deterministic(ctx: dict[str, Any]) -> dict[str, Any]:
         delta = sym.get("mss_delta")
         if delta is not None and abs(float(delta)) >= 5:
             risks.append(f"{sym.get('name') or sym.get('code')} MSS Δ {float(delta):+.1f}")
+    _append_systemic_risk_risks(risks, ctx)
     summary = f"收盘全持仓 {n} 只复盘"
     if pnl is not None:
         summary += f"，当日盈亏 ¥{float(pnl):,.0f}"
@@ -2380,14 +2430,18 @@ def generate_merged_close_narrative(
         forecast_review=forecast_review,
         harness_result=harness_result,
         macro_signals=macro_signals,
+        settings=settings,
     )
+    merged_hint = "全组合视角；优先当日盈亏、成交买卖、跨标的偏差、明日一条建议。"
+    if context.get("systemic_risk_findings"):
+        merged_hint += "若有 systemic_risk_findings，须在 risk_alerts 中解读已给系统性风险，不得新增数字。"
     return _attach_context_trace(
         _attach_close_trade_operations(
             _generate_narrative(
                 "close",
                 context,
                 settings=settings,
-                system="全组合视角；优先当日盈亏、成交买卖、跨标的偏差、明日一条建议。",
+                system=merged_hint,
                 deterministic_fn=_merged_close_deterministic,
             ),
             context,
