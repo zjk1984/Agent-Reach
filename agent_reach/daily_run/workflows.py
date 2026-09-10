@@ -901,6 +901,9 @@ def run_close(
     cr_md = ""
     cr_obj = None
     code_walk_narrative: dict[str, Any] = {"skipped": True, "reason": "no code review"}
+    decision_reflection: dict[str, Any] = {"skipped": True, "reason": "deferred"}
+    risk_debate_narrative: dict[str, Any] = {"skipped": True, "reason": "deferred"}
+    invest_debate_narrative: dict[str, Any] = {"skipped": True, "reason": "close scope"}
     if code_review is not None:
         from agent_reach.daily_run.close_code_review import CodeReviewResult
 
@@ -1259,6 +1262,23 @@ def run_close(
             forecast_review=forecast_review.to_dict() if forecast_review else None,
             settings=cfg,
         )
+        from agent_reach.daily_run.ta_patterns import (
+            build_close_reflection_context,
+            generate_decision_reflection,
+            generate_risk_debate_narrative,
+            persist_decision_reflection,
+        )
+
+        reflection_ctx = build_close_reflection_context(
+            snapshot=enriched,
+            verify=verify_dict,
+            portfolio_summary=portfolio_dict,
+            forecast_review=forecast_review.to_dict() if forecast_review else None,
+            team_review=enriched.get("team_review"),
+        )
+        decision_reflection = generate_decision_reflection(reflection_ctx, settings=cfg)
+        persist_decision_reflection(decision_reflection, job_scope="close", settings=cfg)
+        risk_debate_narrative = generate_risk_debate_narrative(enriched, settings=cfg)
 
     feishu_result = None
     if push:
@@ -1292,6 +1312,8 @@ def run_close(
                     "watchlist_adjust_markdown": wl_md,
                     "code_review_markdown": cr_md,
                     "code_walk_narrative": code_walk_narrative,
+                    "decision_reflection": decision_reflection,
+                    "risk_debate_narrative": risk_debate_narrative,
                 },
                 settings=cfg,
             )
@@ -1319,6 +1341,8 @@ def run_close(
             watchlist_adjust_markdown=wl_md,
             code_review_markdown=cr_md,
             code_walk_narrative=code_walk_narrative,
+            decision_reflection=decision_reflection,
+            risk_debate_narrative=risk_debate_narrative,
             forecast_review_markdown="",
             close_improvements_markdown=improvements_md,
             technical_watch_markdown=technical_watch_md,
@@ -1367,6 +1391,8 @@ def run_close(
         "watchlist_adjust_markdown": wl_md,
         "code_review_markdown": cr_md,
         "code_walk_narrative": code_walk_narrative,
+        "decision_reflection": decision_reflection,
+        "risk_debate_narrative": risk_debate_narrative,
         "forecast_review_markdown": forecast_review_md,
         "close_improvements_markdown": improvements_md,
         "close_improvements": improvements.to_dict() if improvements else None,
@@ -1920,6 +1946,23 @@ def run_weekly(
         settings=cfg,
         harness_result=harness_result,
     )
+    from agent_reach.daily_run.ta_patterns import (
+        build_weekly_invest_debate_context,
+        build_weekly_reflection_context,
+        generate_decision_reflection,
+        generate_invest_debate_narrative,
+        persist_decision_reflection,
+    )
+
+    report.decision_reflection = generate_decision_reflection(
+        build_weekly_reflection_context(report.to_dict()),
+        settings=cfg,
+    )
+    persist_decision_reflection(report.decision_reflection, job_scope="weekly", settings=cfg)
+    report.invest_debate_narrative = generate_invest_debate_narrative(
+        build_weekly_invest_debate_context(report.to_dict()),
+        settings=cfg,
+    )
     steps.append("llm_narrative")
 
     md = render_weekly_markdown(report)
@@ -1945,6 +1988,22 @@ def run_weekly(
 
         cfg_obj = config or Config()
         sections = render_weekly_push_sections(report)
+        from agent_reach.daily_run.deepseek_interpretation_cards import append_job_interpretation_report_section
+
+        sections = append_job_interpretation_report_section(
+            sections,
+            report.decision_reflection,
+            job="decision_reflection",
+            category="decision_reflection",
+            settings=cfg,
+        )
+        sections = append_job_interpretation_report_section(
+            sections,
+            report.invest_debate_narrative,
+            job="invest_debate",
+            category="invest_debate_interpretation",
+            settings=cfg,
+        )
         from agent_reach.daily_run.berkshire.news_pulse import append_news_pulse_section
 
         sections = append_news_pulse_section(
@@ -2157,6 +2216,26 @@ def run_forecast(
     forecast.outlook = outlook
     steps.append("structured_forecast")
 
+    from agent_reach.daily_run.ta_patterns import (
+        build_forecast_invest_debate_context,
+        build_forecast_reflection_context,
+        generate_decision_reflection,
+        generate_invest_debate_narrative,
+        persist_decision_reflection,
+    )
+
+    forecast_dict = forecast.to_dict()
+    forecast.decision_reflection = generate_decision_reflection(
+        build_forecast_reflection_context(forecast_dict),
+        settings=cfg,
+    )
+    persist_decision_reflection(forecast.decision_reflection, job_scope="forecast", settings=cfg)
+    forecast.invest_debate_narrative = generate_invest_debate_narrative(
+        build_forecast_invest_debate_context(forecast_dict),
+        settings=cfg,
+    )
+    steps.append("ta_patterns")
+
     try:
         from agent_reach.daily_run.week_open_overlay import build_and_save_week_open_overlay
 
@@ -2217,6 +2296,22 @@ def run_forecast(
 
         cfg_obj = config or Config()
         sections = render_forecast_push_sections(forecast)
+        from agent_reach.daily_run.deepseek_interpretation_cards import append_job_interpretation_report_section
+
+        sections = append_job_interpretation_report_section(
+            sections,
+            forecast.decision_reflection,
+            job="decision_reflection",
+            category="decision_reflection",
+            settings=cfg,
+        )
+        sections = append_job_interpretation_report_section(
+            sections,
+            forecast.invest_debate_narrative,
+            job="invest_debate",
+            category="invest_debate_interpretation",
+            settings=cfg,
+        )
         from agent_reach.daily_run.berkshire.news_pulse import append_news_pulse_section
 
         sections = append_news_pulse_section(

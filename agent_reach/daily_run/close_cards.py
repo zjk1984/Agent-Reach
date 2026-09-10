@@ -32,6 +32,9 @@ CLOSE_CARD_LABELS: dict[str, str] = {
     "tomorrow_focus": "📋 明日关注",
     "deepseek_interpretation": "🤖 DeepSeek 解读",
     "code_walk_interpretation": "🤖 走读 DeepSeek 解读",
+    "decision_reflection": "🪞 决策反思",
+    "risk_debate_interpretation": "⚖️ 三角风控辩论",
+    "invest_debate_interpretation": "🐂🐻 多空辩论",
 }
 
 
@@ -59,6 +62,9 @@ class CloseCardContext:
     watchlist_adjust_markdown: str = ""
     code_review_markdown: str = ""
     code_walk_narrative: Optional[dict[str, Any]] = None
+    decision_reflection: Optional[dict[str, Any]] = None
+    risk_debate_narrative: Optional[dict[str, Any]] = None
+    invest_debate_narrative: Optional[dict[str, Any]] = None
 
 
 def _fmt_pct(value: Any) -> str:
@@ -371,6 +377,9 @@ def build_single_close_card_context(
         watchlist_adjust_markdown=str(run_result.get("watchlist_adjust_markdown") or ""),
         code_review_markdown=str(run_result.get("code_review_markdown") or ""),
         code_walk_narrative=run_result.get("code_walk_narrative"),
+        decision_reflection=run_result.get("decision_reflection"),
+        risk_debate_narrative=run_result.get("risk_debate_narrative"),
+        invest_debate_narrative=run_result.get("invest_debate_narrative"),
     )
 
 
@@ -1016,6 +1025,7 @@ def render_close_card_sections(ctx: CloseCardContext) -> list[ReportSection]:
     from agent_reach.daily_run.deepseek_interpretation_cards import (
         append_code_walk_interpretation_report_section,
         append_interpretation_report_section,
+        append_job_interpretation_report_section,
         code_walk_interpretation_label,
         interpretation_card_label,
     )
@@ -1027,6 +1037,12 @@ def render_close_card_sections(ctx: CloseCardContext) -> list[ReportSection]:
                 label = interpretation_card_label(ctx.narrative)
             elif sec.category == "code_walk_interpretation":
                 label = code_walk_interpretation_label(ctx.code_walk_narrative)
+            elif sec.category == "decision_reflection":
+                label = CLOSE_CARD_LABELS.get("decision_reflection", sec.category)
+            elif sec.category == "risk_debate_interpretation":
+                label = CLOSE_CARD_LABELS.get("risk_debate_interpretation", sec.category)
+            elif sec.category == "invest_debate_interpretation":
+                label = CLOSE_CARD_LABELS.get("invest_debate_interpretation", sec.category)
             else:
                 label = CLOSE_CARD_LABELS.get(sec.category, sec.category)
             sec.title = f"{label} {i}/{total}"
@@ -1056,6 +1072,27 @@ def render_close_card_sections(ctx: CloseCardContext) -> list[ReportSection]:
     sections = append_code_walk_interpretation_report_section(
         sections,
         ctx.code_walk_narrative,
+        settings=ctx.settings,
+    )
+    sections = append_job_interpretation_report_section(
+        sections,
+        ctx.decision_reflection,
+        job="decision_reflection",
+        category="decision_reflection",
+        settings=ctx.settings,
+    )
+    sections = append_job_interpretation_report_section(
+        sections,
+        ctx.risk_debate_narrative,
+        job="risk_debate",
+        category="risk_debate_interpretation",
+        settings=ctx.settings,
+    )
+    sections = append_job_interpretation_report_section(
+        sections,
+        ctx.invest_debate_narrative,
+        job="invest_debate",
+        category="invest_debate_interpretation",
         settings=ctx.settings,
     )
     _renumber(sections)

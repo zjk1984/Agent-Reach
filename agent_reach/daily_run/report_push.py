@@ -55,6 +55,9 @@ _CATEGORY_LABELS: dict[str, str] = {
     "technical_watch": "技术情景",
     "deepseek_interpretation": "DeepSeek 解读",
     "code_walk_interpretation": "走读 DeepSeek 解读",
+    "decision_reflection": "决策反思",
+    "risk_debate_interpretation": "三角风控辩论",
+    "invest_debate_interpretation": "多空辩论",
 }
 
 # Portfolio-wide sections: only one card body when merging per-symbol runs.
@@ -185,6 +188,8 @@ def render_close_sections(
     watchlist_adjust_markdown: str = "",
     code_review_markdown: str = "",
     code_walk_narrative: Optional[dict[str, Any]] = None,
+    decision_reflection: Optional[dict[str, Any]] = None,
+    risk_debate_narrative: Optional[dict[str, Any]] = None,
     forecast_review_markdown: str = "",
     close_improvements_markdown: str = "",
     technical_watch_markdown: str = "",
@@ -264,6 +269,7 @@ def render_close_sections(
     from agent_reach.daily_run.deepseek_interpretation_cards import (
         append_code_walk_interpretation_report_section,
         append_interpretation_report_section,
+        append_job_interpretation_report_section,
     )
 
     def _renumber_close(cards: list[ReportSection]) -> None:
@@ -287,6 +293,22 @@ def render_close_sections(
     sections = append_code_walk_interpretation_report_section(
         sections,
         code_walk_narrative,
+        settings=push_settings,
+        renumber=_renumber_close,
+    )
+    sections = append_job_interpretation_report_section(
+        sections,
+        decision_reflection,
+        job="decision_reflection",
+        category="decision_reflection",
+        settings=push_settings,
+        renumber=_renumber_close,
+    )
+    sections = append_job_interpretation_report_section(
+        sections,
+        risk_debate_narrative,
+        job="risk_debate",
+        category="risk_debate_interpretation",
         settings=push_settings,
         renumber=_renumber_close,
     )
@@ -693,6 +715,8 @@ def close_sections_from_run(
         watchlist_adjust_markdown=run_result.get("watchlist_adjust_markdown") or "",
         code_review_markdown=run_result.get("code_review_markdown") or "",
         code_walk_narrative=run_result.get("code_walk_narrative"),
+        decision_reflection=run_result.get("decision_reflection"),
+        risk_debate_narrative=run_result.get("risk_debate_narrative"),
         forecast_review_markdown="",
         close_improvements_markdown=run_result.get("close_improvements_markdown") or "",
         technical_watch_markdown=run_result.get("technical_watch_markdown") or "",

@@ -50,6 +50,8 @@ class WeeklyReport:
     hot_topic_diff: dict[str, Any] = field(default_factory=dict)
     market_review_weekly: dict[str, Any] = field(default_factory=dict)
     llm_narrative: dict[str, Any] = field(default_factory=dict)
+    decision_reflection: dict[str, Any] = field(default_factory=dict)
+    invest_debate_narrative: dict[str, Any] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
     cash: Optional[float] = None
     cash_ratio: Optional[float] = None
@@ -119,6 +121,8 @@ class WeeklyReport:
             "hot_topic_diff": self.hot_topic_diff,
             "market_review_weekly": self.market_review_weekly,
             "llm_narrative": self.llm_narrative,
+            "decision_reflection": self.decision_reflection,
+            "invest_debate_narrative": self.invest_debate_narrative,
             "notes": self.notes,
             "cash": self.cash,
             "cash_ratio": self.cash_ratio,

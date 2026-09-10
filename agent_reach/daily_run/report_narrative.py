@@ -15,6 +15,9 @@ _JOB_LABELS = {
     "weekly": "周六周报",
     "forecast": "周日预测",
     "code_walk": "代码走读",
+    "decision_reflection": "决策反思",
+    "risk_debate": "风控三角辩论",
+    "invest_debate": "多空辩论",
 }
 
 _NARRATIVE_LIMITS_DEFAULT: dict[str, int] = {
@@ -263,19 +266,45 @@ def _narrative_system_prompt(job: str, *, limits: dict[str, int]) -> str:
             "focus_points 将已给 finding 译为可执行下一步（pytest/Phase G/merge 前检查）；"
             f"{_CODE_WALK_NARRATIVE_RULE}"
         )
+    elif job == "decision_reflection":
+        trade_hint = (
+            '输出 JSON 含 reflection_prose（2-4 句 plain prose）；'
+            "仅基于已给盈亏/verify/预测命中；禁止新增价格/仓位/阈值。"
+        )
+    elif job == "risk_debate":
+        trade_hint = "解读 aggressive/conservative/neutral 三视角与 conflicts；不得新增 MSS 或仓位。"
+    elif job == "invest_debate":
+        trade_hint = (
+            "模拟 Bull/Bear 论点收束；可填 bull_points/bear_points 数组；"
+            "禁止新增涨跌幅、目标价或仓位。"
+        )
     from agent_reach.daily_run.agent_pipeline import llm_system_suffix
+
+    json_shape = (
+        '{"summary":"...","focus_points":["..."],'
+        '"divergence_notes":[],"risk_alerts":[]}'
+    )
+    if job == "decision_reflection":
+        json_shape = (
+            '{"summary":"...","reflection_prose":"...","focus_points":["..."],'
+            '"divergence_notes":[],"risk_alerts":[]}'
+        )
+    elif job == "invest_debate":
+        json_shape = (
+            '{"summary":"...","bull_points":["..."],"bear_points":["..."],'
+            '"focus_points":["..."],"divergence_notes":[],"risk_alerts":[]}'
+        )
 
     base = (
         f"你是 A 股量化助手 {label} AI 解读员。基于已给数据输出 JSON："
-        '{"summary":"...","focus_points":["..."],'
-        '"divergence_notes":[],"risk_alerts":[]}。'
+        f"{json_shape}。"
         f"summary 一句总结今日/本周关注点，≤{limits['max_summary_chars']}字；"
         f"focus_points 最多 {limits['max_focus_points']} 条、每条 ≤{limits['max_item_chars']}字；"
         f"divergence_notes 仅实质分歧时填，最多 {limits['max_divergence_notes']} 条；"
         f"risk_alerts 最多 {limits['max_risk_alerts']} 条。"
         f"{trade_hint}"
     )
-    if job != "code_walk":
+    if job not in ("code_walk", "decision_reflection", "risk_debate", "invest_debate"):
         base += DEEPSEEK_NARRATIVE_RULE
     base += "禁止编造未提供数字；禁止复述输入；省略废话；中文。"
     return base + llm_system_suffix()
@@ -293,6 +322,21 @@ def _narrative_cfg(settings: Optional[dict[str, Any]], job: str) -> dict[str, An
         for key, val in md.items():
             if val is not None:
                 root[key] = val
+    for block_job in ("decision_reflection", "risk_debate", "invest_debate"):
+        if job == block_job:
+            block = dict((settings or {}).get(block_job) or {})
+            if block.get("enabled") is False:
+                return {"enabled": False}
+            for key in (
+                "planner",
+                "provider",
+                "model",
+                "timeout_seconds",
+                "max_output_tokens",
+                "max_retries",
+            ):
+                if block.get(key) is not None:
+                    root[key] = block[key]
     jobs = root.get("jobs") or {}
     if isinstance(jobs, dict) and job in jobs:
         entry = jobs[job]
@@ -427,6 +471,9 @@ def _generate_narrative(
     deterministic_fn=None,
 ) -> dict[str, Any]:
     cfg = _narrative_cfg(settings, job)
+    from agent_reach.daily_run.llm_tier import apply_llm_tier
+
+    cfg = apply_llm_tier(cfg, job, settings=settings)
     if cfg.get("enabled") is False:
         return {"skipped": True, "reason": "llm_narrative disabled", "job": job}
 
@@ -458,6 +505,7 @@ def _generate_narrative(
                 model=cfg.get("model") or None,
                 timeout=int(cfg.get("timeout_seconds") or 60),
                 max_tokens=int(cfg.get("max_output_tokens") or 320),
+                max_retries=int(cfg.get("max_retries") or 1),
             )
             if isinstance(payload, dict) and payload.get("summary"):
                 payload = _compact_narrative_payload(payload, limits)
@@ -503,6 +551,9 @@ def render_narrative_markdown(narrative: dict[str, Any], *, job: str = "") -> st
         "close": "复盘摘要",
         "weekly": "周报摘要",
         "code_walk": "走读摘要",
+        "decision_reflection": "决策反思",
+        "risk_debate": "三角风控",
+        "invest_debate": "多空辩论",
     }
     sub = subtitles.get(use_job, "规则解读")
     lines = [f"## 📋 规则解读（{sub}）", ""]

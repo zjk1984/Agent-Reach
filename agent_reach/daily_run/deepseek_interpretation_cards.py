@@ -131,6 +131,25 @@ def append_code_walk_interpretation_report_section(
     return out
 
 
+def append_job_interpretation_report_section(
+    sections: list[ReportSection],
+    narrative: Optional[dict[str, Any]],
+    *,
+    job: str,
+    category: str,
+    settings: Optional[dict[str, Any]] = None,
+    renumber: Optional[Callable[[list[ReportSection]], None]] = None,
+) -> list[ReportSection]:
+    body = render_deepseek_interpretation_markdown(narrative, job=job, settings=settings)
+    if not body.strip():
+        return sections
+    out = list(sections)
+    out.append(ReportSection(category=category, title="", body=body))
+    if renumber:
+        renumber(out)
+    return out
+
+
 def append_interpretation_label_section(
     sections: list[Any],
     narrative: Optional[dict[str, Any]],

@@ -459,6 +459,8 @@ class WeekForecast:
     notes: list[str] = field(default_factory=list)
     kronos_paths: dict[str, Any] = field(default_factory=dict)
     llm_narrative: dict[str, Any] = field(default_factory=dict)
+    decision_reflection: dict[str, Any] = field(default_factory=dict)
+    invest_debate_narrative: dict[str, Any] = field(default_factory=dict)
     macro_signals: dict[str, Any] = field(default_factory=dict)
     watchlist_intel: dict[str, Any] = field(default_factory=dict)
     xueqiu_cookie_health: dict[str, Any] = field(default_factory=dict)
@@ -489,6 +491,8 @@ class WeekForecast:
             "reviews": [],
             "notes": self.notes,
             "llm_narrative": self.llm_narrative,
+            "decision_reflection": self.decision_reflection,
+            "invest_debate_narrative": self.invest_debate_narrative,
             "macro_signals": self.macro_signals,
             "watchlist_intel": self.watchlist_intel,
             "xueqiu_cookie_health": self.xueqiu_cookie_health,

@@ -84,6 +84,7 @@ def chat_json(
     temperature: float = 0.2,
     timeout: int = 45,
     max_tokens: Optional[int] = None,
+    max_retries: Optional[int] = None,
 ) -> Optional[dict[str, Any]]:
     """Call chat completions and parse a JSON object from the assistant reply."""
     resolved = resolve_chat_provider(provider)
@@ -111,23 +112,39 @@ def chat_json(
     }
     if max_tokens is not None and int(max_tokens) > 0:
         payload["max_tokens"] = int(max_tokens)
-    req = urllib.request.Request(
-        endpoint,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            body = json.loads(resp.read().decode("utf-8"))
-    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError):
-        return None
 
-    choices = body.get("choices") or []
-    if not choices:
+    retries = 0 if max_retries is None else max(0, int(max_retries))
+    last_error: Optional[Exception] = None
+    for attempt in range(retries + 1):
+        req = urllib.request.Request(
+            endpoint,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                body = json.loads(resp.read().decode("utf-8"))
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
+            last_error = exc
+            if attempt >= retries:
+                return None
+            continue
+
+        choices = body.get("choices") or []
+        if not choices:
+            if attempt >= retries:
+                return None
+            continue
+        content = ((choices[0] or {}).get("message") or {}).get("content") or ""
+        parsed = _extract_json(content)
+        if parsed is not None:
+            return parsed
+        if attempt >= retries:
+            return None
+    if last_error:
         return None
-    content = ((choices[0] or {}).get("message") or {}).get("content") or ""
-    return _extract_json(content)
+    return None

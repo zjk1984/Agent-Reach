@@ -87,6 +87,9 @@ def enrich_counter_thesis_llm(
         return list(base_factors), markdown, False, meta
 
     cfg = counter_thesis_llm_cfg(settings)
+    from agent_reach.daily_run.llm_tier import apply_llm_tier
+
+    llm_cfg = apply_llm_tier(dict(cfg), "counter_thesis_llm", settings=settings)
     context = _compact_expert_context(
         snapshot,
         by_name=by_name,
@@ -104,7 +107,7 @@ def enrich_counter_thesis_llm(
 
     from agent_reach.daily_run.llm_chat import chat_json, resolve_chat_provider
 
-    provider = str(cfg.get("provider") or "auto")
+    provider = str(llm_cfg.get("provider") or "auto")
     if not resolve_chat_provider(provider):
         meta["reason"] = "no_llm_provider"
         markdown = "反面检验：" + "；".join(base_factors[:3]) if base_factors else ""
@@ -114,9 +117,10 @@ def enrich_counter_thesis_llm(
         system=system,
         user=json.dumps(context, ensure_ascii=False),
         provider=provider,
-        model=cfg.get("model") or None,
-        timeout=int(cfg.get("timeout_seconds") or 45),
-        max_tokens=int(cfg.get("max_output_tokens") or 280),
+        model=llm_cfg.get("model") or None,
+        timeout=int(llm_cfg.get("timeout_seconds") or 45),
+        max_tokens=int(llm_cfg.get("max_output_tokens") or 280),
+        max_retries=int(llm_cfg.get("max_retries") or 1),
     )
     if not isinstance(payload, dict):
         meta["reason"] = "llm_empty"

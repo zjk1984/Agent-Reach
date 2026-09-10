@@ -1206,7 +1206,44 @@
       "weekly": {"planner": "llm"},
       "forecast": {"planner": "llm"},
       "code_walk": {"planner": "llm"}
+    },
+    "max_retries": 2
+  },
+
+  "llm_tier": {
+    "enabled": true,
+    "quick": {"provider": "deepseek", "model": "deepseek-v4-flash"},
+    "deep": {"provider": "deepseek", "model": "deepseek-v4-flash"},
+    "job_tiers": {
+      "morning": "quick",
+      "close": "quick",
+      "intraday": "quick",
+      "code_walk": "quick",
+      "counter_thesis_llm": "quick",
+      "weekly": "deep",
+      "forecast": "deep",
+      "decision_reflection": "deep",
+      "risk_debate": "deep",
+      "invest_debate": "deep"
     }
+  },
+
+  "decision_reflection": {
+    "enabled": true,
+    "planner": "llm",
+    "persist_experience": true
+  },
+
+  "risk_debate": {
+    "enabled": true,
+    "planner": "llm"
+  },
+
+  "invest_debate": {
+    "enabled": true,
+    "planner": "llm",
+    "max_rounds": 2,
+    "checkpoint": true
   },
 
   "harness": {
