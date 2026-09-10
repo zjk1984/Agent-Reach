@@ -534,7 +534,7 @@
     },
     "llm_narrative": {
       "enabled": true,
-      "planner": "deterministic"
+      "planner": "llm"
     }
   },
 
@@ -693,7 +693,7 @@
     "intraday_experts": true,
     "counter_thesis_downgrade": true,
     "counter_thesis_llm": {
-      "enabled": false,
+      "enabled": true,
       "provider": "auto",
       "model": null,
       "timeout_seconds": 45,
