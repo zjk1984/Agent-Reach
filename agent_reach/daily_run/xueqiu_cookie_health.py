@@ -334,6 +334,15 @@ def ensure_xueqiu_browser_session(
     if wf.get("xueqiu_cookie_browser_login_enabled", True) is False:
         return {**base, "skipped": True, "success": False, "reason": "disabled", "message": "browser login disabled"}
 
+    if not _cookie_needs_browser_login(settings=settings, config=config):
+        return {
+            **base,
+            "skipped": True,
+            "success": True,
+            "reason": "already_healthy",
+            "message": "雪球 Cookie 健康，跳过 Chrome 打开",
+        }
+
     if headed and not _has_gui_display():
         return {
             **base,
@@ -350,15 +359,6 @@ def ensure_xueqiu_browser_session(
             "success": False,
             "reason": "unsupported_browser",
             "message": f"browser login 目前仅支持 chrome，当前={browser_name}",
-        }
-
-    if not _cookie_needs_browser_login(settings=settings, config=config):
-        return {
-            **base,
-            "skipped": True,
-            "success": True,
-            "reason": "already_healthy",
-            "message": "雪球 Cookie 健康，跳过 Chrome 打开",
         }
 
     chrome_bin = _find_chrome_binary()

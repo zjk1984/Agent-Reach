@@ -75,6 +75,9 @@ def test_refresh_via_browser_use_cli_success():
         "agent_reach.daily_run.xueqiu_cookie_browser_use.browser_use_cli_available",
         return_value=True,
     ), patch(
+        "agent_reach.daily_run.xueqiu_cookie_browser_use.browser_use_cli_path",
+        return_value="/usr/bin/browser-use",
+    ), patch(
         "agent_reach.daily_run.xueqiu_cookie_browser_use.subprocess.run",
         return_value=MagicMock(stdout=stdout, stderr="", returncode=0),
     ), patch("agent_reach.config.Config", return_value=mock_cfg), patch(
@@ -90,16 +93,6 @@ def test_refresh_via_browser_use_cli_success():
 
 
 def test_refresh_via_browser_use_library_fallback():
-    mock_browser = MagicMock()
-    mock_browser.start = AsyncMock()
-    mock_browser.stop = AsyncMock()
-    mock_browser.navigate_to = AsyncMock()
-    mock_browser.cookies = AsyncMock(
-        side_effect=[
-            [{"name": "xq_a_token", "value": "tok", "domain": ".xueqiu.com"}],
-            [{"name": "xq_a_token", "value": "tok", "domain": ".xueqiu.com"}],
-        ]
-    )
     mock_cfg = MagicMock()
     with patch(
         "agent_reach.daily_run.xueqiu_cookie_browser_use.browser_use_available",
@@ -108,12 +101,19 @@ def test_refresh_via_browser_use_library_fallback():
         "agent_reach.daily_run.xueqiu_cookie_browser_use.browser_use_cli_available",
         return_value=False,
     ), patch(
-        "browser_use.Browser.from_system_chrome",
-        return_value=mock_browser,
-    ), patch("agent_reach.config.Config", return_value=mock_cfg), patch(
-        "agent_reach.daily_run.xueqiu_cookie_browser_use.asyncio.sleep",
-        new=AsyncMock(),
+        "agent_reach.daily_run.xueqiu_cookie_browser_use._import_browser_use_module",
+        return_value=MagicMock(),
     ), patch(
+        "agent_reach.daily_run.xueqiu_cookie_browser_use._async_refresh_xueqiu_cookie_library",
+        new=AsyncMock(
+            return_value={
+                "success": True,
+                "engine": BROWSER_USE_ENGINE,
+                "browser_login": {"method": "browser-use-library"},
+                "job": "xueqiu_cookie_refresh",
+            }
+        ),
+    ), patch("agent_reach.config.Config", return_value=mock_cfg), patch(
         "agent_reach.daily_run.xueqiu_cookie_browser_use._reset_xueqiu_channel_cookies"
     ):
         result = refresh_xueqiu_cookie_via_browser_use(settings={"week_forecast": {}})
@@ -154,16 +154,6 @@ def test_browser_use_cli_path_checks_user_local_bin():
 
 
 def test_refresh_cli_failure_falls_back_to_library():
-    mock_browser = MagicMock()
-    mock_browser.start = AsyncMock()
-    mock_browser.stop = AsyncMock()
-    mock_browser.navigate_to = AsyncMock()
-    mock_browser.cookies = AsyncMock(
-        side_effect=[
-            [{"name": "xq_a_token", "value": "tok", "domain": ".xueqiu.com"}],
-            [{"name": "xq_a_token", "value": "tok", "domain": ".xueqiu.com"}],
-        ]
-    )
     mock_cfg = MagicMock()
     cli_fail = {
         "skipped": False,
@@ -182,12 +172,19 @@ def test_refresh_cli_failure_falls_back_to_library():
         "agent_reach.daily_run.xueqiu_cookie_browser_use._refresh_via_browser_use_cli",
         return_value=cli_fail,
     ), patch(
-        "browser_use.Browser.from_system_chrome",
-        return_value=mock_browser,
-    ), patch("agent_reach.config.Config", return_value=mock_cfg), patch(
-        "agent_reach.daily_run.xueqiu_cookie_browser_use.asyncio.sleep",
-        new=AsyncMock(),
+        "agent_reach.daily_run.xueqiu_cookie_browser_use._import_browser_use_module",
+        return_value=MagicMock(),
     ), patch(
+        "agent_reach.daily_run.xueqiu_cookie_browser_use._async_refresh_xueqiu_cookie_library",
+        new=AsyncMock(
+            return_value={
+                "success": True,
+                "engine": BROWSER_USE_ENGINE,
+                "browser_login": {"method": "browser-use-library"},
+                "job": "xueqiu_cookie_refresh",
+            }
+        ),
+    ), patch("agent_reach.config.Config", return_value=mock_cfg), patch(
         "agent_reach.daily_run.xueqiu_cookie_browser_use._reset_xueqiu_channel_cookies"
     ):
         result = refresh_xueqiu_cookie_via_browser_use(settings={"week_forecast": {}})
