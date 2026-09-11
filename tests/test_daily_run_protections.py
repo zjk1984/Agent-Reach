@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 from agent_reach.daily_run.hyperopt_lite import run_hyperopt_lite
 from agent_reach.daily_run.lookahead_audit import audit_snapshot_lookahead
+from agent_reach.daily_run.pit_guard import pit_guard_block_reason
 from agent_reach.daily_run.protections.engine import protection_block_reason
 from agent_reach.daily_run.protections.max_drawdown_guard import evaluate_max_drawdown_guard
 from agent_reach.daily_run.protections.post_sell_cooldown import evaluate_post_sell_cooldown
@@ -17,6 +18,29 @@ from agent_reach.daily_run.protections.sector_mss_mismatch import (
 )
 
 _SH = ZoneInfo("Asia/Shanghai")
+
+
+def _restore_continuous_session_gate(monkeypatch):
+    """Conftest forces is_continuous_session() -> True; restore A-share windows."""
+    from datetime import time as dt_time
+
+    from agent_reach.daily_run import trade_calendar as tc
+
+    _windows = (
+        (dt_time(9, 30), dt_time(11, 30)),
+        (dt_time(13, 0), dt_time(14, 57)),
+    )
+
+    def _real(dt=None):
+        now = dt or datetime.now(_SH)
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=_SH)
+        else:
+            now = now.astimezone(_SH)
+        t = now.time()
+        return any(start <= t < end for start, end in _windows)
+
+    monkeypatch.setattr(tc, "is_continuous_session", _real)
 
 
 def _protection_settings(**overrides) -> dict:
@@ -161,3 +185,48 @@ def test_lookahead_audit_flags_future_macro_timestamp():
     result = audit_snapshot_lookahead(snapshot, job="intraday")
     assert result["ok"] is False
     assert any("macro_ctx" in item for item in result["findings"])
+
+
+def test_lookahead_audit_skips_fill_timing_during_continuous_session(monkeypatch):
+    _restore_continuous_session_gate(monkeypatch)
+    snapshot = {
+        "as_of": "2026-09-11T14:30:00+08:00",
+        "report_type": "intraday",
+        "enrich_level": "quotes",
+        "price": 926.0,
+    }
+    settings = {"execution_sim": {"fill_timing": "close"}}
+    result = audit_snapshot_lookahead(snapshot, job="intraday", settings=settings)
+    assert result["ok"] is True
+    assert not any("fill_timing" in item for item in result["findings"])
+
+
+def test_lookahead_audit_flags_fill_timing_outside_continuous_session(monkeypatch):
+    _restore_continuous_session_gate(monkeypatch)
+    snapshot = {
+        "as_of": "2026-09-11T09:00:00+08:00",
+        "report_type": "intraday",
+        "enrich_level": "quotes",
+        "price": 926.0,
+    }
+    settings = {"execution_sim": {"fill_timing": "close"}}
+    result = audit_snapshot_lookahead(snapshot, job="intraday", settings=settings)
+    assert result["ok"] is False
+    assert any("fill_timing" in item for item in result["findings"])
+
+
+def test_pit_guard_does_not_block_trade_in_continuous_session():
+    snapshot = {
+        "as_of": "2026-09-11T14:30:00+08:00",
+        "report_type": "intraday",
+        "enrich_level": "quotes",
+        "price": 926.0,
+        "continuous_session": True,
+        "pit_guard": {"ok": True, "findings": []},
+    }
+    block = pit_guard_block_reason(
+        snapshot,
+        settings={"pit_guard": {"enabled": True, "block_on_fail": True}},
+        job="intraday",
+    )
+    assert block is None

@@ -57,8 +57,16 @@ def audit_snapshot_lookahead(
         or ((settings or {}).get("trading") or {}).get("fill_timing")
         or "close"
     )
+    # fill_timing=close in live intraday uses snapshot.price (live quote), not EOD close.
+    # Only flag outside continuous matching when session is not explicitly closed —
+    # matches trade_calendar session gate and avoids false blocks 09:30–14:57.
     if report_type == "intraday" and fill_timing == "close" and not snapshot.get("session_closed"):
-        findings.append("intraday 使用 fill_timing=close 但未标记 session_closed，存在前视成交风险")
+        from agent_reach.daily_run.trade_calendar import is_continuous_session
+
+        if not is_continuous_session(as_of):
+            findings.append(
+                "intraday 使用 fill_timing=close 但未标记 session_closed，存在前视成交风险"
+            )
 
     verdict = str(snapshot.get("verdict") or "")
     if report_type == "morning" and snapshot.get("live_macro_fetch") is False and verdict == "可做":

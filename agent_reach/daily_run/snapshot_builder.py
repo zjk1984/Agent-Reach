@@ -873,6 +873,30 @@ def build_snapshot(
 
         snapshot = attach_prior_close_reference(snapshot, cfg)
 
+    if report_type == "intraday":
+        try:
+            from agent_reach.daily_run.trade_calendar import is_continuous_session
+
+            as_of_raw = snapshot.get("as_of")
+            as_of_dt = None
+            if as_of_raw:
+                text = str(as_of_raw).replace("Z", "+00:00")
+                try:
+                    as_of_dt = datetime.fromisoformat(text)
+                except ValueError:
+                    as_of_dt = None
+            in_session = is_continuous_session(as_of_dt)
+            snapshot["continuous_session"] = in_session
+            if not in_session and as_of_dt is not None:
+                from zoneinfo import ZoneInfo
+
+                sh = as_of_dt.astimezone(ZoneInfo("Asia/Shanghai")).time()
+                from datetime import time as dt_time
+
+                snapshot["session_closed"] = sh >= dt_time(14, 57) or sh < dt_time(9, 30)
+        except Exception:
+            pass
+
     try:
         from agent_reach.daily_run.pit_guard import apply_pit_guard_to_snapshot
 
