@@ -23,6 +23,7 @@ class WeeklyHarnessSkillsReport:
     intraday_friction: dict[str, Any] = field(default_factory=dict)
     intraday_sell: dict[str, Any] = field(default_factory=dict)
     industry_funnel: dict[str, Any] = field(default_factory=dict)
+    hyperopt_lite: dict[str, Any] = field(default_factory=dict)
     weekly_layer_a: dict[str, Any] = field(default_factory=dict)
     effective_overlay: dict[str, Any] = field(default_factory=dict)
 
@@ -39,6 +40,7 @@ class WeeklyHarnessSkillsReport:
             "intraday_friction": self.intraday_friction,
             "intraday_sell": self.intraday_sell,
             "industry_funnel": self.industry_funnel,
+            "hyperopt_lite": self.hyperopt_lite,
             "weekly_layer_a": self.weekly_layer_a,
             "effective_overlay": self.effective_overlay,
             "total_changes": sum(
@@ -55,6 +57,7 @@ class WeeklyHarnessSkillsReport:
                     self.intraday_friction,
                     self.intraday_sell,
                     self.industry_funnel,
+                    self.hyperopt_lite,
                     self.weekly_layer_a,
                 )
                 if not (block or {}).get("skipped")
@@ -137,6 +140,11 @@ def run_weekly_harness_refinements(
             report,
             settings=cfg,
         )
+
+    if _job_enabled(harness_cfg, "hyperopt_lite"):
+        from agent_reach.daily_run.hyperopt_lite_harness import apply_hyperopt_lite_harness_refinement
+
+        out.hyperopt_lite = apply_hyperopt_lite_harness_refinement(report, settings=cfg)
 
     if _job_enabled(harness_cfg, "harness_threshold") and not lightweight:
         from agent_reach.daily_run.harness_evolution_optimizers import apply_weekly_harness_llm_refinement

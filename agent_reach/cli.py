@@ -128,6 +128,16 @@ def main():
     p_dr_verify.add_argument("--baseline", "-b", required=True, help="Baseline snapshot/report JSON")
     p_dr_verify.add_argument("--current", "-c", required=True, help="Current snapshot JSON")
     p_dr_verify.add_argument("--push", action="store_true", help="Push verification card to Feishu")
+    p_dr_lookahead = p_daily_sub.add_parser(
+        "verify-lookahead",
+        help="Audit snapshot for lookahead / future-data risks",
+    )
+    p_dr_lookahead.add_argument("--input", "-i", required=True, help="Snapshot JSON file")
+    p_dr_lookahead.add_argument(
+        "--job",
+        default="intraday",
+        help="Job context label (morning/intraday/close)",
+    )
     p_dr_bt = p_daily_sub.add_parser("backtest", help="Run MSS threshold backtest on history JSON")
     p_dr_bt.add_argument("--input", "-i", required=True, help="History JSON array (date,mss,return,...)")
     p_dr_opt = p_daily_sub.add_parser("optimize", help="Grid search MSS thresholds/weights")
@@ -141,6 +151,16 @@ def main():
     p_dr_opt.add_argument("--save", action="store_true",
                           help="Write best params to ~/.agent-reach/daily_run_settings.json")
     p_dr_opt.add_argument("--push", action="store_true", help="Push optimization summary to Feishu")
+    p_dr_hopt = p_daily_sub.add_parser(
+        "hyperopt-lite",
+        help="Weekly hyperopt-lite for deploy_ratio / sector_gap / macro_veto",
+    )
+    p_dr_hopt.add_argument("--input", "-i", required=True, help="Weekly report JSON")
+    p_dr_hopt.add_argument(
+        "--harness",
+        action="store_true",
+        help="Apply harness refinement after search",
+    )
     p_dr_plugins = p_daily_sub.add_parser("plugins", help="List or run expert plugins")
     p_dr_plugins.add_argument("plugins_action", nargs="?", choices=["list", "run"], default="list")
     p_dr_plugins.add_argument("--input", "-i", default="", help="Snapshot JSON for plugins run")
@@ -1639,6 +1659,23 @@ def _cmd_daily_run(args):
                 sys.exit(1)
         return
 
+    if args.daily_action == "verify-lookahead":
+        from agent_reach.daily_run.lookahead_audit import (
+            audit_snapshot_lookahead,
+            render_lookahead_audit_markdown,
+        )
+        from agent_reach.daily_run.settings import load_settings
+
+        snapshot = json.loads(Path(args.input).read_text(encoding="utf-8"))
+        if not isinstance(snapshot, dict):
+            print("❌ verify-lookahead input must be a JSON object")
+            sys.exit(1)
+        result = audit_snapshot_lookahead(snapshot, job=args.job, settings=load_settings())
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        print("\n--- Markdown ---\n")
+        print(render_lookahead_audit_markdown(result))
+        return
+
     if args.daily_action == "backtest":
         from agent_reach.daily_run.backtest import render_backtest_markdown, run_mss_backtest
         from agent_reach.daily_run.harness_policy import aggressive_entry_default, macro_veto_default
@@ -1706,6 +1743,23 @@ def _cmd_daily_run(args):
             except FeishuError as exc:
                 print(f"\n❌ Feishu push failed: {exc}")
                 sys.exit(1)
+        return
+
+    if args.daily_action == "hyperopt-lite":
+        from agent_reach.daily_run.hyperopt_lite import run_hyperopt_lite
+        from agent_reach.daily_run.hyperopt_lite_harness import apply_hyperopt_lite_harness_refinement
+        from agent_reach.daily_run.settings import load_settings
+
+        report = json.loads(Path(args.input).read_text(encoding="utf-8"))
+        if not isinstance(report, dict):
+            print("❌ hyperopt-lite input must be a JSON object")
+            sys.exit(1)
+        settings = load_settings()
+        if args.harness:
+            result = apply_hyperopt_lite_harness_refinement(report, settings=settings)
+        else:
+            result = run_hyperopt_lite(report, settings=settings)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
         return
 
     if args.daily_action == "plugins":
@@ -2684,7 +2738,7 @@ def _cmd_daily_run(args):
     if args.daily_action not in ("evaluate", "push"):
         print(
             "Usage: agent-reach daily-run "
-            "{morning|close|intraday|build-snapshot|schedule|hot-news|configure|redfox|kronos|harness|capital|pnl|storage|quant|evaluate|push|fetch|verify|backtest|optimize|plugins|sample} ..."
+            "{morning|close|intraday|build-snapshot|schedule|hot-news|configure|redfox|kronos|harness|capital|pnl|storage|quant|evaluate|push|fetch|verify|verify-lookahead|backtest|optimize|hyperopt-lite|plugins|sample} ..."
         )
         sys.exit(1)
 
