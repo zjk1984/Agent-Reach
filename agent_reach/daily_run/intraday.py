@@ -823,6 +823,14 @@ def evaluate_trade(
         )
     trade_record["portfolio_applied"] = apply_result.applied
     trade_record["portfolio_message"] = apply_result.message
+    try:
+        from agent_reach.daily_run.execution_quality import enrich_trade_execution_quality
+        from agent_reach.daily_run.nested_decision import attach_nested_decision_to_trade
+
+        enrich_trade_execution_quality(trade_record, apply_result=apply_result, settings=cfg)
+        attach_nested_decision_to_trade(trade_record, decision, settings=cfg)
+    except Exception:
+        pass
     if apply_result.applied:
         payloads = apply_result.action_payloads or [
             a.to_dict() for a in (apply_result.actions or [])
@@ -1380,12 +1388,91 @@ def _decide_trade(
     if systemic_note:
         overlay_note = f"{overlay_note}{systemic_note}"
 
+    sh_now = _intraday_shanghai_now(snapshot, report, session_scans)
+    from agent_reach.daily_run.protections.engine import (
+        evaluate_protections,
+        protection_block_reason,
+        protection_overlay_note,
+        record_protection_hits,
+    )
+
+    active_protections = evaluate_protections(
+        snapshot=snapshot,
+        report=report,
+        side="buy",
+        settings=settings,
+        prior_trades=prior_trades,
+        session_scans=session_scans,
+        now=sh_now,
+    )
+    active_protections.extend(
+        evaluate_protections(
+            snapshot=snapshot,
+            report=report,
+            side="sell",
+            settings=settings,
+            prior_trades=prior_trades,
+            session_scans=session_scans,
+            now=sh_now,
+        )
+    )
+    seen_prot: set[str] = set()
+    deduped_prot = []
+    for lock in active_protections:
+        key = f"{lock.protection}:{lock.lock_side}:{lock.code}"
+        if key in seen_prot:
+            continue
+        seen_prot.add(key)
+        deduped_prot.append(lock)
+    if deduped_prot:
+        overlay_note = f"{overlay_note}{protection_overlay_note(deduped_prot)}"
+
     exp_ret = expected_return_pct
     if exp_ret is None:
         exp_ret = estimate_expected_return(lookback_mss, aggressive, macro_veto, settings)
 
     friction_blocked = not _passes_friction(exp_ret, settings)
     blocked = verdict.blocked or report.get("blocked", False)
+
+    try:
+        from agent_reach.daily_run.pit_guard import pit_guard_block_reason
+
+        pit_block = pit_guard_block_reason(snapshot, settings=settings, job="intraday")
+    except Exception:
+        pit_block = None
+    if pit_block:
+        return TradeDecision(
+            action="hold",
+            trade_id=trade_id,
+            lookback_mss=lookback_mss,
+            lookback_detail=[],
+            trend=trend,
+            reasoning=f"{pit_block}{overlay_note}",
+            blocked=True,
+            block_kind="pit_guard",
+            friction_blocked=friction_blocked,
+            expected_return_pct=exp_ret,
+        )
+
+    try:
+        from agent_reach.daily_run.drift_trigger import drift_trade_block_reason
+
+        drift_block = drift_trade_block_reason(report=report, snapshot=snapshot, settings=settings)
+    except Exception:
+        drift_block = None
+    if drift_block:
+        return TradeDecision(
+            action="hold",
+            trade_id=trade_id,
+            lookback_mss=lookback_mss,
+            lookback_detail=[],
+            trend=trend,
+            reasoning=f"{drift_block}{overlay_note}",
+            blocked=True,
+            block_kind="drift_trigger",
+            friction_blocked=friction_blocked,
+            expected_return_pct=exp_ret,
+        )
 
     from agent_reach.daily_run.watchlist_breakout import evaluate_watchlist_breakout_buy
 
@@ -1452,7 +1539,71 @@ def _decide_trade(
         )
 
     standard_buy = lookback_mss >= aggressive and trend_allows_buy(settings, trend)
-    if breakout.eligible or standard_buy:
+    if standard_buy or breakout.eligible:
+        from agent_reach.daily_run.protections.sector_mss_mismatch import protection_verdict_cap
+
+        verdict_cap = protection_verdict_cap(
+            snapshot=snapshot,
+            report=report,
+            settings=settings,
+        )
+        if verdict_cap and str(getattr(verdict, "verdict", "") or report.get("verdict") or "") == "可做":
+            prot = protection_block_reason(
+                snapshot=snapshot,
+                report=report,
+                side="buy",
+                settings=settings,
+                prior_trades=prior_trades,
+                session_scans=session_scans,
+                now=sh_now,
+            )
+            if prot is None:
+                prot_reason = (
+                    f"sector_mss_mismatch：高 MSS 但板块弱于指数，verdict 上限「{verdict_cap}」"
+                )
+            else:
+                prot_reason = prot.reason
+            record_protection_hits(
+                [prot] if prot else deduped_prot[:1],
+                settings=settings,
+                code=str(report.get("code") or ""),
+            )
+            return TradeDecision(
+                action="hold",
+                trade_id=trade_id,
+                lookback_mss=lookback_mss,
+                lookback_detail=[],
+                trend=trend,
+                reasoning=f"{prot_reason}{overlay_note}",
+                blocked=True,
+                block_kind="protection_buy",
+                friction_blocked=friction_blocked,
+                expected_return_pct=exp_ret,
+            )
+        prot_buy = protection_block_reason(
+            snapshot=snapshot,
+            report=report,
+            side="buy",
+            settings=settings,
+            prior_trades=prior_trades,
+            session_scans=session_scans,
+            now=sh_now,
+        )
+        if prot_buy:
+            record_protection_hits([prot_buy], settings=settings, code=str(report.get("code") or ""))
+            return TradeDecision(
+                action="hold",
+                trade_id=trade_id,
+                lookback_mss=lookback_mss,
+                lookback_detail=[],
+                trend=trend,
+                reasoning=f"{prot_buy.reason}{overlay_note}",
+                blocked=True,
+                block_kind="protection_buy",
+                friction_blocked=friction_blocked,
+                expected_return_pct=exp_ret,
+            )
+    if standard_buy or breakout.eligible:
         buy_block = None
         from agent_reach.daily_run.skill_rejected import trade_blocked_by_rejected
 
@@ -1664,6 +1815,29 @@ def _decide_trade(
         session_scans=session_scans,
     )
     if allow_profit:
+        prot_sell = protection_block_reason(
+            snapshot=snapshot,
+            report=report,
+            side="sell",
+            settings=settings,
+            prior_trades=prior_trades,
+            session_scans=session_scans,
+            now=sh_now,
+        )
+        if prot_sell:
+            record_protection_hits([prot_sell], settings=settings, code=str(report.get("code") or ""))
+            return TradeDecision(
+                action="hold",
+                trade_id=trade_id,
+                lookback_mss=lookback_mss,
+                lookback_detail=[],
+                trend=trend,
+                reasoning=f"{prot_sell.reason}{overlay_note}",
+                blocked=True,
+                block_kind="protection_sell",
+                friction_blocked=False,
+                expected_return_pct=exp_ret,
+            )
         if _decision_symbol_sellable(snapshot, settings, report.get("code")):
             return TradeDecision(
                 action="sell",
@@ -1732,6 +1906,33 @@ def _decide_trade(
             )
 
         if allow_defensive:
+            prot_sell = protection_block_reason(
+                snapshot=snapshot,
+                report=report,
+                side="sell",
+                settings=settings,
+                prior_trades=prior_trades,
+                session_scans=session_scans,
+                now=sh_now,
+            )
+            if prot_sell:
+                record_protection_hits(
+                    [prot_sell],
+                    settings=settings,
+                    code=str(report.get("code") or ""),
+                )
+                return TradeDecision(
+                    action="hold",
+                    trade_id=trade_id,
+                    lookback_mss=lookback_mss,
+                    lookback_detail=[],
+                    trend=trend,
+                    reasoning=f"{prot_sell.reason}{overlay_note}",
+                    blocked=True,
+                    block_kind="protection_sell",
+                    friction_blocked=False,
+                    expected_return_pct=exp_ret,
+                )
             if hold_block:
                 return TradeDecision(
                     action="hold",

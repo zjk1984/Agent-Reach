@@ -109,6 +109,52 @@
     "enabled": true
   },
 
+  "pit_guard": {
+    "enabled": true,
+    "block_on_fail": true,
+    "audit_in_snapshot": true,
+    "signal_lag_days": 1,
+    "merge_lookahead": true,
+    "block_save_on_fail": false
+  },
+
+  "execution_quality": {
+    "enabled": true,
+    "min_fill_rate": 0.95,
+    "warn_slippage_bps": 15.0
+  },
+
+  "experiment_recorder": {
+    "enabled": true,
+    "max_entries": 200,
+    "attach_to_manifest": true,
+    "jobs": ["optimize", "backtest", "hyperopt_lite", "close", "weekly", "intraday", "drift_trigger"]
+  },
+
+  "nested_decision": {
+    "enabled": true,
+    "layers": ["signal", "risk", "execution"],
+    "persist_in_trade": true
+  },
+
+  "risk_panel": {
+    "enabled": true,
+    "max_drawdown_alert_pct": 5.0,
+    "min_information_ratio": 0.0,
+    "append_to_weekly_card": true,
+    "append_to_close_summary": true
+  },
+
+  "drift_trigger": {
+    "enabled": true,
+    "mss_drift_pts": 3.0,
+    "weekly_pnl_alert_pct": -2.0,
+    "forecast_miss_pts": 4.0,
+    "thesis_drift_score_min": 2.0,
+    "actions": ["alert", "harness_only"],
+    "block_trade_on_trigger": false
+  },
+
   "intraday": {
     "harness_evolve": true,
     "consecutive_buy_cash_bypass_enabled": true,
@@ -1411,7 +1457,7 @@
     "study_registry": {
       "enabled": true,
       "max_entries": 200,
-      "jobs": ["optimize", "backtest"]
+      "jobs": ["optimize", "backtest", "hyperopt_lite", "drift_trigger"]
     },
     "rigor_check": {
       "enabled": true,
@@ -1435,7 +1481,9 @@
       "intraday_friction": true,
       "intraday_sell": true,
       "industry_funnel": true,
-      "pnl_overview": true
+      "pnl_overview": true,
+      "hyperopt_lite": true,
+      "drift_trigger": true
       }
     },
     "render_format": "xml",
@@ -1475,7 +1523,9 @@
       "harness_threshold": true,
       "intraday_friction": true,
       "intraday_sell": true,
-      "industry_funnel": true
+      "industry_funnel": true,
+      "hyperopt_lite": true,
+      "drift_trigger": true
     },
     "llm_refine": {
       "enabled": true,
@@ -1496,5 +1546,37 @@
         "forecast": true
       }
     }
+  },
+
+  "protections": {
+    "enabled": true,
+    "post_sell_cooldown": {
+      "enabled": true,
+      "min_scans_after_sell": 2,
+      "block_before_hour": 14,
+      "block_buy": true,
+      "block_sell": true
+    },
+    "sector_mss_mismatch": {
+      "enabled": true,
+      "min_mss": 49.0,
+      "min_underperform_index_pct": 1.5,
+      "sectors": ["半导体", "存储", "AI算力", "消费电子"],
+      "block_buy": true,
+      "verdict_cap": "观察"
+    },
+    "max_drawdown": {
+      "enabled": true,
+      "max_losing_streak": 3,
+      "lookback_trades": 8,
+      "stop_duration_scans": 3,
+      "block_buy": true
+    }
+  },
+
+  "hyperopt_lite": {
+    "enabled": true,
+    "trials": 24,
+    "prefer_optuna": true
   }
 }

@@ -873,6 +873,13 @@ def build_snapshot(
 
         snapshot = attach_prior_close_reference(snapshot, cfg)
 
+    try:
+        from agent_reach.daily_run.pit_guard import apply_pit_guard_to_snapshot
+
+        apply_pit_guard_to_snapshot(snapshot, job=report_type, settings=cfg)
+    except Exception:
+        pass
+
     return snapshot
 
 
@@ -922,6 +929,17 @@ def build_and_save(
         enrich_level=enrich_level,
         primary_code=primary_code,
     )
+    try:
+        from agent_reach.daily_run.pit_guard import pit_guard_cfg
+
+        pg = pit_guard_cfg(settings)
+        audit = (snap.get("pit_guard") or {}) if isinstance(snap.get("pit_guard"), dict) else {}
+        if pg.get("block_save_on_fail") and audit.get("ok") is False:
+            raise ValueError(f"pit_guard blocked save: {(audit.get('findings') or ['audit failed'])[0]}")
+    except ValueError:
+        raise
+    except Exception:
+        pass
     out = output or (Path.home() / ".agent-reach" / "daily_run" / "last_snapshot.json")
     save_last_snapshot(snap, path=out)
     return snap, out

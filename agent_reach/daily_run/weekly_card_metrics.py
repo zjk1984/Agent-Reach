@@ -466,6 +466,16 @@ def render_weekly_risk_markdown(risk: dict[str, Any]) -> list[str]:
             lines.append(f"- **基准（{bench.get('name', _DEFAULT_BENCHMARK_NAME)}）：** " + " · ".join(parts))
     else:
         lines.append("- **基准风险对比：** ⚠️ 数据获取失败")
+    panel = risk.get("risk_panel") or {}
+    if panel and not panel.get("skipped"):
+        try:
+            from agent_reach.daily_run.risk_panel import render_risk_panel_markdown
+
+            extra = render_risk_panel_markdown(panel)
+            if extra:
+                lines.extend(extra.splitlines())
+        except Exception:
+            pass
     lines.append("")
     return lines
 

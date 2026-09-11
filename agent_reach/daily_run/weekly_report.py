@@ -1342,6 +1342,16 @@ def generate_weekly_report(
         daily_totals=daily_totals,
         settings=settings,
     )
+    try:
+        from agent_reach.daily_run.risk_panel import merge_risk_panel_into_metrics
+
+        risk_metrics = merge_risk_panel_into_metrics(
+            risk_metrics,
+            daily_totals=daily_totals,
+            settings=settings,
+        )
+    except Exception:
+        pass
     trade_log = flatten_ledger_trades(trades)
     from agent_reach.daily_run.weekly_close_loop import (
         aggregate_close_card_trades,

@@ -67,6 +67,7 @@ def settings(tmp_path, monkeypatch):
             "candidates": [
                 {"code": "603986", "name": "兆易创新", "keywords": ["存储"]},
                 {"code": "002415", "name": "海康威视", "keywords": ["安防"]},
+                {"code": "688981", "name": "中芯国际", "keywords": ["半导体"]},
             ],
         },
         "thresholds": {"macro_veto": 30, "aggressive_entry": 45},
