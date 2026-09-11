@@ -75,6 +75,9 @@ Issues = "https://github.com/Panniantong/agent-reach/issues"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.metadata]
+allow-direct-references = true
+
 [tool.hatch.build.targets.wheel]
 packages = ["agent_reach"]
 
