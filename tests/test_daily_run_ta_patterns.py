@@ -129,7 +129,11 @@ def test_persist_decision_reflection_appends_jsonl(tmp_path, monkeypatch):
 
 
 @patch("agent_reach.daily_run.llm_chat.resolve_chat_provider", return_value="deepseek")
-def test_chat_json_retries_on_failure(mock_provider):
+@patch(
+    "agent_reach.daily_run.llm_chat._resolve_api_key",
+    return_value=("test-key", "https://api.deepseek.com/chat/completions"),
+)
+def test_chat_json_retries_on_failure(mock_api_key, mock_provider):
     from agent_reach.daily_run.llm_chat import chat_json
 
     mock_resp = MagicMock()
