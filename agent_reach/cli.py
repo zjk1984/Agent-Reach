@@ -161,6 +161,19 @@ def main():
         action="store_true",
         help="Apply harness refinement after search",
     )
+    p_dr_pit = p_daily_sub.add_parser("pit-guard", help="Point-in-Time audit on snapshot JSON")
+    p_dr_pit.add_argument("--input", "-i", required=True, help="Snapshot JSON file")
+    p_dr_pit.add_argument("--job", default="intraday", help="Job context label")
+    p_dr_eq = p_daily_sub.add_parser(
+        "execution-quality",
+        help="Compute PA/FFR/POS from intraday trades JSON or state",
+    )
+    p_dr_eq.add_argument("--input", "-i", required=True, help="JSON with trades[] array")
+    p_dr_rp = p_daily_sub.add_parser("risk-panel", help="Render risk panel from weekly risk metrics JSON")
+    p_dr_rp.add_argument("--input", "-i", required=True, help="Weekly risk metrics JSON object")
+    p_dr_drift = p_daily_sub.add_parser("drift-trigger", help="Evaluate MSS/forecast drift on report JSON")
+    p_dr_drift.add_argument("--input", "-i", required=True, help="Weekly report JSON")
+    p_dr_drift.add_argument("--harness", action="store_true", help="Apply harness refinement when triggered")
     p_dr_plugins = p_daily_sub.add_parser("plugins", help="List or run expert plugins")
     p_dr_plugins.add_argument("plugins_action", nargs="?", choices=["list", "run"], default="list")
     p_dr_plugins.add_argument("--input", "-i", default="", help="Snapshot JSON for plugins run")
@@ -1745,6 +1758,59 @@ def _cmd_daily_run(args):
                 sys.exit(1)
         return
 
+    if args.daily_action == "pit-guard":
+        from agent_reach.daily_run.pit_guard import audit_snapshot_pit, render_pit_guard_markdown
+        from agent_reach.daily_run.settings import load_settings
+
+        snapshot = json.loads(Path(args.input).read_text(encoding="utf-8"))
+        result = audit_snapshot_pit(snapshot, job=args.job, settings=load_settings())
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        print("\n--- Markdown ---\n")
+        print(render_pit_guard_markdown(result))
+        return
+
+    if args.daily_action == "execution-quality":
+        from agent_reach.daily_run.execution_quality import (
+            compute_execution_quality,
+            render_execution_quality_markdown,
+        )
+        from agent_reach.daily_run.settings import load_settings
+
+        payload = json.loads(Path(args.input).read_text(encoding="utf-8"))
+        trades = payload if isinstance(payload, list) else list(payload.get("trades") or [])
+        result = compute_execution_quality(trades, settings=load_settings())
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        print("\n--- Markdown ---\n")
+        print(render_execution_quality_markdown(result))
+        return
+
+    if args.daily_action == "risk-panel":
+        from agent_reach.daily_run.risk_panel import build_risk_panel, render_risk_panel_markdown
+        from agent_reach.daily_run.settings import load_settings
+
+        risk_metrics = json.loads(Path(args.input).read_text(encoding="utf-8"))
+        panel = build_risk_panel(risk_metrics=risk_metrics, settings=load_settings())
+        print(json.dumps(panel, ensure_ascii=False, indent=2))
+        print("\n--- Markdown ---\n")
+        print(render_risk_panel_markdown(panel))
+        return
+
+    if args.daily_action == "drift-trigger":
+        from agent_reach.daily_run.drift_trigger import evaluate_drift, render_drift_trigger_markdown
+        from agent_reach.daily_run.drift_trigger_harness import apply_drift_trigger_harness_refinement
+        from agent_reach.daily_run.settings import load_settings
+
+        report = json.loads(Path(args.input).read_text(encoding="utf-8"))
+        settings = load_settings()
+        if args.harness:
+            result = apply_drift_trigger_harness_refinement(report, settings=settings)
+        else:
+            result = evaluate_drift(report=report, settings=settings)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        print("\n--- Markdown ---\n")
+        print(render_drift_trigger_markdown(result))
+        return
+
     if args.daily_action == "hyperopt-lite":
         from agent_reach.daily_run.hyperopt_lite import run_hyperopt_lite
         from agent_reach.daily_run.hyperopt_lite_harness import apply_hyperopt_lite_harness_refinement
@@ -2738,7 +2804,7 @@ def _cmd_daily_run(args):
     if args.daily_action not in ("evaluate", "push"):
         print(
             "Usage: agent-reach daily-run "
-            "{morning|close|intraday|build-snapshot|schedule|hot-news|configure|redfox|kronos|harness|capital|pnl|storage|quant|evaluate|push|fetch|verify|verify-lookahead|backtest|optimize|hyperopt-lite|plugins|sample} ..."
+            "{morning|close|intraday|build-snapshot|schedule|hot-news|configure|redfox|kronos|harness|capital|pnl|storage|quant|evaluate|push|fetch|verify|verify-lookahead|pit-guard|execution-quality|risk-panel|drift-trigger|backtest|optimize|hyperopt-lite|plugins|sample} ..."
         )
         sys.exit(1)
 

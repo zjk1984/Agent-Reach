@@ -17,6 +17,12 @@ def apply_hyperopt_lite_harness_refinement(
     result = run_hyperopt_lite(report, settings=settings)
     if result.get("skipped"):
         return result
+    try:
+        from agent_reach.daily_run.experiment_recorder import record_hyperopt_experiment
+
+        record_hyperopt_experiment(result, settings=settings)
+    except Exception:
+        pass
     evidence = hyperopt_lite_to_harness_evidence(result, report=report)
     refine = apply_skill_refinement("hyperopt_lite", evidence, settings=settings)
     return {**result, **refine}

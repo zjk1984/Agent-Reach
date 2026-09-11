@@ -823,6 +823,14 @@ def evaluate_trade(
         )
     trade_record["portfolio_applied"] = apply_result.applied
     trade_record["portfolio_message"] = apply_result.message
+    try:
+        from agent_reach.daily_run.execution_quality import enrich_trade_execution_quality
+        from agent_reach.daily_run.nested_decision import attach_nested_decision_to_trade
+
+        enrich_trade_execution_quality(trade_record, apply_result=apply_result, settings=cfg)
+        attach_nested_decision_to_trade(trade_record, decision, settings=cfg)
+    except Exception:
+        pass
     if apply_result.applied:
         payloads = apply_result.action_payloads or [
             a.to_dict() for a in (apply_result.actions or [])
@@ -1425,6 +1433,46 @@ def _decide_trade(
 
     friction_blocked = not _passes_friction(exp_ret, settings)
     blocked = verdict.blocked or report.get("blocked", False)
+
+    try:
+        from agent_reach.daily_run.pit_guard import pit_guard_block_reason
+
+        pit_block = pit_guard_block_reason(snapshot, settings=settings, job="intraday")
+    except Exception:
+        pit_block = None
+    if pit_block:
+        return TradeDecision(
+            action="hold",
+            trade_id=trade_id,
+            lookback_mss=lookback_mss,
+            lookback_detail=[],
+            trend=trend,
+            reasoning=f"{pit_block}{overlay_note}",
+            blocked=True,
+            block_kind="pit_guard",
+            friction_blocked=friction_blocked,
+            expected_return_pct=exp_ret,
+        )
+
+    try:
+        from agent_reach.daily_run.drift_trigger import drift_trade_block_reason
+
+        drift_block = drift_trade_block_reason(report=report, snapshot=snapshot, settings=settings)
+    except Exception:
+        drift_block = None
+    if drift_block:
+        return TradeDecision(
+            action="hold",
+            trade_id=trade_id,
+            lookback_mss=lookback_mss,
+            lookback_detail=[],
+            trend=trend,
+            reasoning=f"{drift_block}{overlay_note}",
+            blocked=True,
+            block_kind="drift_trigger",
+            friction_blocked=friction_blocked,
+            expected_return_pct=exp_ret,
+        )
 
     from agent_reach.daily_run.watchlist_breakout import evaluate_watchlist_breakout_buy
 

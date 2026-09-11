@@ -174,6 +174,16 @@ def save_run_manifest(
         "feishu": feishu,
         "payload": payload,
     }
+    try:
+        from agent_reach.daily_run.experiment_recorder import attach_experiment_to_manifest_payload
+
+        record["payload"] = attach_experiment_to_manifest_payload(
+            dict(payload),
+            job=job,
+            metrics={"duration_ms": duration_ms},
+        )
+    except Exception:
+        pass
     path.write_text(
         json.dumps(_json_safe(record), ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
