@@ -887,6 +887,8 @@ def build_snapshot(
                     as_of_dt = None
             in_session = is_continuous_session(as_of_dt)
             snapshot["continuous_session"] = in_session
+            snapshot["morning_baseline_same_day"] = False
+            snapshot["lookback_source"] = "intraday_scans"
             if not in_session and as_of_dt is not None:
                 from zoneinfo import ZoneInfo
 

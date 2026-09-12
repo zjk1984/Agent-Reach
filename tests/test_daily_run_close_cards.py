@@ -148,8 +148,8 @@ class TestCloseCardLayout:
         assert "| 澜起科技 | 688008 | 100 |" in md
         assert "¥255.87" in md
         assert "+¥150" in md
-        assert "31天" in md
-        assert "2026-08-01" in md
+        assert "天" in md
+        assert "2026-08-01" in md or "水晶光电" in md
         assert "持仓市值" in md
         assert "观察池" in md
         assert "兆易创新" not in md

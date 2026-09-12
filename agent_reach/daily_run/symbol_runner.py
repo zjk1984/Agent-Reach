@@ -91,7 +91,9 @@ def run_morning_for_symbols(
     from agent_reach.daily_run.workflows import run_morning, save_morning_baseline
     from agent_reach.daily_run.team import expert_card_enabled
 
-    cfg = settings or load_settings()
+    from agent_reach.daily_run.settings import effective_settings, load_settings
+
+    cfg = effective_settings(settings)
     pf = load_portfolio()
     targets = symbols or resolve_target_symbols(pf, cfg, workflow="morning")
     primary = pf.get("primary_code")
@@ -355,7 +357,9 @@ def run_intraday_for_symbols(
     from agent_reach.daily_run.report_push import ReportSection, merged_category_title, push_report_sections
     from agent_reach.daily_run.schedule import INTRADAY_MAX_SCANS
 
-    cfg = settings or load_settings()
+    from agent_reach.daily_run.settings import effective_settings, load_settings
+
+    cfg = effective_settings(settings)
     pf = load_portfolio()
     targets = symbols or resolve_target_symbols(pf, cfg, workflow="intraday")
     merge_push = _should_merge_push(cfg)
@@ -536,7 +540,9 @@ def run_midday_for_symbols(
     from agent_reach.daily_run.midday import midday_cfg, run_midday
     from agent_reach.daily_run.schedule import INTRADAY_MAX_SCANS
 
-    cfg = settings or load_settings()
+    from agent_reach.daily_run.settings import effective_settings, load_settings
+
+    cfg = effective_settings(settings)
     if not midday_cfg(cfg)["enabled"]:
         return {"job": "midday", "skipped": True, "reason": "midday disabled", "feishu": None}
 
@@ -644,7 +650,9 @@ def run_close_for_symbols(
     from agent_reach.daily_run.workflows import load_morning_baseline, run_close
     from agent_reach.daily_run.team import expert_card_enabled
 
-    cfg = settings or load_settings()
+    from agent_reach.daily_run.settings import effective_settings, load_settings
+
+    cfg = effective_settings(settings)
     pf = load_portfolio()
     targets = symbols or resolve_target_symbols(pf, cfg, workflow="close")
     merge_push = _should_merge_push(cfg)

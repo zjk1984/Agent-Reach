@@ -2001,9 +2001,9 @@ def _cmd_daily_run(args):
             reset_state,
             run_intraday,
         )
-        from agent_reach.daily_run.settings import load_settings
+        from agent_reach.daily_run.settings import effective_settings, load_settings
 
-        settings = load_settings()
+        settings = effective_settings(load_settings())
 
         if args.reset:
             reset_state()

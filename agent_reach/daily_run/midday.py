@@ -197,7 +197,8 @@ def render_midday_markdown(
     try:
         from agent_reach.daily_run.workflows import load_morning_baseline
 
-        baseline = load_morning_baseline()
+        sym_code = scan.get("code") or enriched.get("code")
+        baseline = load_morning_baseline(code=str(sym_code) if sym_code else None)
     except (FileNotFoundError, OSError, ValueError):
         baseline = None
 

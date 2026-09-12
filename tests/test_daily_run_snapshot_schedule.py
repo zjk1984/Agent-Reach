@@ -333,6 +333,7 @@ class TestSchedule:
     def test_default_entries_count(self):
         assert len(default_entries()) == 16  # premarket + morning + midday + 10 scans + close + weekly + forecast
 
+    @patch("agent_reach.daily_run.trade_calendar.is_trading_day", return_value=(True, ""))
     @patch("agent_reach.daily_run.midday_harness.apply_midday_harness_refinement")
     @patch("agent_reach.daily_run.midday.run_midday")
     @patch("agent_reach.daily_run.snapshot_builder.build_and_save")

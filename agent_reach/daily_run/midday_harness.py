@@ -13,7 +13,60 @@ from typing import Any, Optional
 from agent_reach.daily_run.harness_skill_base import apply_skill_refinement
 
 
+def _merge_evidence(parts: list[dict[str, Any]]) -> dict[str, Any]:
+    memory: list[str] = []
+    policy: list[str] = []
+    playbook: list[str] = []
+    plan: list[str] = []
+    summaries: list[str] = []
+    for part in parts:
+        memory.extend(part.get("memory") or [])
+        policy.extend(part.get("policy") or [])
+        playbook.extend(part.get("playbook") or [])
+        plan.extend(part.get("plan") or [])
+        if part.get("summary"):
+            summaries.append(str(part["summary"]))
+    summary = summaries[0] if len(summaries) == 1 else f"midday batch · {len(summaries)} symbols"
+    return {
+        "memory": memory,
+        "policy": policy,
+        "playbook": playbook,
+        "plan": plan,
+        "summary": summary,
+    }
+
+
 def midday_to_harness_evidence(run_result: dict[str, Any]) -> dict[str, Any]:
+    symbol_rows = run_result.get("symbol_results") or []
+    if symbol_rows:
+        parts: list[dict[str, Any]] = []
+        for row in symbol_rows:
+            if row.get("skipped"):
+                reason = str(row.get("reason") or row.get("message") or "")
+                code = row.get("code") or "?"
+                parts.append(
+                    {
+                        "memory": [f"midday {code} skipped：{reason}"] if reason else [],
+                        "policy": [],
+                        "playbook": [],
+                        "plan": [],
+                        "summary": f"midday {code} skipped",
+                    }
+                )
+                continue
+            inner = row.get("result") or {}
+            if inner:
+                parts.append(midday_to_harness_evidence(inner))
+        if not parts:
+            return {
+                "memory": [],
+                "policy": [],
+                "playbook": [],
+                "plan": [],
+                "summary": "midday empty symbol_results",
+            }
+        return _merge_evidence(parts)
+
     memory: list[str] = []
     policy: list[str] = []
     playbook: list[str] = []
@@ -35,6 +88,7 @@ def midday_to_harness_evidence(run_result: dict[str, Any]) -> dict[str, Any]:
     macro_only = bool(scan_result.get("macro_only") or scan.get("record_scan_skipped"))
     scan_id = scan.get("scan_id") or "midday"
     name = scan.get("name") or scan.get("code") or "标的"
+    code = scan.get("code") or run_result.get("code")
     mss = scan.get("mss_final")
     verdict = scan.get("verdict")
     trend = scan_result.get("trend") or "flat"
@@ -57,7 +111,7 @@ def midday_to_harness_evidence(run_result: dict[str, Any]) -> dict[str, Any]:
     try:
         from agent_reach.daily_run.workflows import load_morning_baseline
 
-        baseline = load_morning_baseline()
+        baseline = load_morning_baseline(code=str(code) if code else None)
         baseline_mss = (baseline or {}).get("mss_final") or ((baseline or {}).get("report") or {}).get(
             "mss_final"
         )
@@ -83,7 +137,7 @@ def midday_to_harness_evidence(run_result: dict[str, Any]) -> dict[str, Any]:
     if isinstance(xueqiu_cross, dict) and xueqiu_cross.get("alerts"):
         memory.append(f"午盘雪球热度交叉告警 {len(xueqiu_cross['alerts'])} 条")
 
-    enriched = scan_result.get("enriched") or {}
+    enriched = scan_result.get("enriched") or run_result.get("enriched") or {}
     if not str(enriched.get("macro_summary") or "").strip():
         memory.append("午盘宏观刷新未获取摘要：检查网络 / 60s / 雪球 Cookie")
         plan.append("midday：确认 macro_refresh 数据源可用性")

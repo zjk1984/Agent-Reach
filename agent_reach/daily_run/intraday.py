@@ -509,7 +509,7 @@ def record_scan_from_evaluation(
     code: Optional[str] = None,
 ) -> dict[str, Any]:
     """Append S_n from an existing evaluation (morning S1 backfill)."""
-    cfg = settings or load_settings()
+    cfg = effective_settings(settings)
     sym = code or enriched.get("code")
     resolved_path = state_path or (default_state_path(sym) if sym else default_state_path())
     st = state or load_state(resolved_path, code=sym)

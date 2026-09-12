@@ -735,6 +735,8 @@ def _holding_pnl_rows(
     week_end_prices: Optional[dict[str, float]] = None,
 ) -> list[dict[str, Any]]:
     end_prices = week_end_prices or {}
+    from agent_reach.daily_run.portfolio_manager import effective_days_held
+
     rows: list[dict[str, Any]] = []
     for h in portfolio.get("holdings") or []:
         code = _normalize_code(str(h.get("code", "")))
@@ -774,7 +776,7 @@ def _holding_pnl_rows(
                 "change_pct": row.get("change_pct"),
                 "sector": row.get("sector") or row.get("industry") or h.get("sector") or h.get("industry"),
                 "acquired_date": h.get("acquired_date"),
-                "days_held": h.get("days_held"),
+                "days_held": effective_days_held(h),
             }
         )
     rows.sort(key=lambda x: x.get("market_value") or 0, reverse=True)

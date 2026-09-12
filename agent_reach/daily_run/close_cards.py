@@ -110,8 +110,14 @@ def _fmt_weight_pct(value: Any) -> str:
     return f"{v:.1f}%" if v is not None else "—"
 
 
-def collect_holdings_ledger_rows(portfolio_summary: dict[str, Any]) -> list[dict[str, Any]]:
+def collect_holdings_ledger_rows(
+    portfolio_summary: dict[str, Any],
+    *,
+    settings: Optional[dict[str, Any]] = None,
+) -> list[dict[str, Any]]:
     """Actual holdings only (shares > 0), sorted by market value descending."""
+    from agent_reach.daily_run.portfolio_manager import effective_days_held
+
     rows: list[dict[str, Any]] = []
     for raw in portfolio_summary.get("holdings") or []:
         if not isinstance(raw, dict):
@@ -146,7 +152,7 @@ def collect_holdings_ledger_rows(portfolio_summary: dict[str, Any]) -> list[dict
                 "unrealized_pct": _optional_float(raw.get("unrealized_pct")),
                 "sector": str(raw.get("sector") or raw.get("industry") or "").strip() or None,
                 "acquired_date": str(raw.get("acquired_date") or "").strip() or None,
-                "days_held": int(raw["days_held"]) if raw.get("days_held") is not None else None,
+                "days_held": effective_days_held(raw, settings=settings),
             }
         )
     rows.sort(key=lambda row: row.get("market_value") or 0, reverse=True)

@@ -261,10 +261,10 @@ def run_scheduled(
 ) -> dict:
     """Execute morning | intraday | close with auto snapshot + doctor + manifest."""
     from agent_reach.config import Config
-    from agent_reach.daily_run.settings import load_settings
+    from agent_reach.daily_run.settings import effective_settings, load_settings
 
     cfg_obj = config or Config()
-    settings = load_settings()
+    settings = effective_settings(load_settings())
     t0 = time.perf_counter()
 
     from agent_reach.daily_run.trade_calendar import is_trading_day
@@ -391,7 +391,12 @@ def _apply_scheduled_job_harness(
         elif job == "midday":
             from agent_reach.daily_run.midday_harness import apply_midday_harness_refinement
 
-            run_result = result.get("result") if not result.get("skipped") else result
+            if result.get("skipped"):
+                run_result = result
+            else:
+                run_result = result.get("result") or {}
+                if not run_result and result.get("symbol_results"):
+                    run_result = result
             harness_ref = (
                 apply_midday_harness_refinement(run_result, settings=settings)
                 if run_result

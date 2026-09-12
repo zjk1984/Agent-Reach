@@ -98,6 +98,35 @@ def test_apply_midday_harness_refinement_skips_on_empty_evidence(monkeypatch):
     assert result["job"] == "midday"
 
 
+def test_midday_harness_merges_symbol_results():
+    ev = midday_to_harness_evidence(
+        {
+            "symbol_results": [
+                {
+                    "code": "688008",
+                    "name": "澜起科技",
+                    "result": {
+                        "scan": {"scan_id": "S8", "code": "688008", "name": "澜起科技", "mss_final": 44.0},
+                        "scan_result": {"trend": "flat", "lookback_mss": 43.0},
+                        "evaluation": {},
+                    },
+                },
+                {
+                    "code": "000725",
+                    "name": "京东方A",
+                    "result": {
+                        "scan": {"scan_id": "S8", "code": "000725", "name": "京东方A", "mss_final": 42.0},
+                        "scan_result": {"trend": "falling", "lookback_mss": 41.0},
+                        "evaluation": {},
+                    },
+                },
+            ]
+        }
+    )
+    assert any("澜起科技" in line for line in ev.get("memory") or [])
+    assert any("京东方" in line for line in ev.get("memory") or [])
+
+
 def test_run_guard_dedupe_event():
     ev = guard_event_to_harness_evidence("close", reason="manifest 去重", guard="dedupe")
     assert ev["memory"]
