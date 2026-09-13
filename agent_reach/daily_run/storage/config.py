@@ -159,7 +159,7 @@ def prune_settings(settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         "include_in_forecast_markdown": block.get("include_in_forecast_markdown", True) is not False,
         "pip_cache_on_forecast": block.get("pip_cache_on_forecast", True) is not False,
         "l2_prune_enabled": block.get("l2_prune_enabled", True) is not False,
-        "l2_keep_days": max(1, int(block.get("l2_keep_days") or 60)),
+        "l2_keep_days": max(1, int(block.get("l2_keep_days") or 45)),
         "harness_snapshot_keep_days": max(1, int(block.get("harness_snapshot_keep_days") or 14)),
         "close_handoff_keep_days": max(1, int(block.get("close_handoff_keep_days") or 15)),
         "protected_l0_kinds": list(block.get("protected_l0_kinds") or PROTECTED_L0_KINDS),

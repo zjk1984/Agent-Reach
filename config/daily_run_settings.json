@@ -1231,7 +1231,7 @@
       "handoff_intraday_keep_days": 21,
       "snapshot_keep": 20,
       "l2_prune_enabled": true,
-      "l2_keep_days": 60,
+      "l2_keep_days": 45,
       "harness_snapshot_keep_days": 14,
       "close_handoff_keep_days": 15,
       "vacuum": true,

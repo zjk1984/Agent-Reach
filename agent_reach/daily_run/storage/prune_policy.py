@@ -143,7 +143,7 @@ def l2_kind_keep_days(kind: str, cfg: dict[str, Any]) -> int:
         return max(1, int(cfg.get("harness_snapshot_keep_days") or 14))
     if kind == "close_handoff":
         return max(1, int(cfg.get("close_handoff_keep_days") or 15))
-    return max(1, int(cfg.get("l2_keep_days") or 60))
+    return max(1, int(cfg.get("l2_keep_days") or 45))
 
 
 def is_protected_l2_row(
