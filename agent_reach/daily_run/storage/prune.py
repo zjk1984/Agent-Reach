@@ -393,7 +393,6 @@ def prune_database(
     db_before = getattr(store, "db_file_size_bytes", lambda: 0)()
     cutoff_l0 = _iso_cutoff(l0_keep_days)
     kinds_l0 = l0_kinds if l0_kinds is not None else effective_prune_l0_kinds(settings)
-    l0_result = prune_l0(cutoff_iso=cutoff_l0, kinds=kinds_l0, dry_run=dry_run)
 
     l1_result: dict[str, Any] = {"skipped": True, "reason": "l1_prune_disabled"}
     kinds_l1 = l1_kinds if l1_kinds is not None else effective_prune_l1_kinds(settings)
@@ -401,6 +400,8 @@ def prune_database(
     if kinds_l1 and callable(prune_l1):
         cutoff_l1 = _iso_cutoff(l1_keep_days)
         l1_result = prune_l1(cutoff_iso=cutoff_l1, kinds=kinds_l1, dry_run=dry_run)
+
+    l0_result = prune_l0(cutoff_iso=cutoff_l0, kinds=kinds_l0, dry_run=dry_run)
 
     vacuum_bytes = 0
     if vacuum and not dry_run:

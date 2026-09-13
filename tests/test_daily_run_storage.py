@@ -352,6 +352,40 @@ def test_prune_distilled_l0_and_files(storage_env):
     assert db_result.get("skipped") is not True
 
 
+def test_prune_distilled_l0_detaches_l1_fk(storage_env):
+    from agent_reach.daily_run.storage.prune import prune_database
+
+    store = SqliteDailyRunStore(Path(storage_env["db_path"]))
+    event_id = store.append_l0_event(
+        "job_run",
+        {"at": "2026-01-01T00:00:00+00:00", "job": "morning", "success": True},
+        dedupe_key="job:fk",
+    )
+    store.mark_l0_distilled([event_id], job="test")
+    store.upsert_l1_atom(
+        kind="harness_audit",
+        content="distilled audit row",
+        source_event_id=event_id,
+        dedupe_key="l1:fk",
+    )
+
+    applied = store.prune_distilled_l0(
+        cutoff_iso="2026-06-01T00:00:00+00:00",
+        kinds=["job_run"],
+        dry_run=False,
+    )
+    assert applied["deleted_rows"] == 1
+    assert applied["detached_l1_refs"] == 1
+    assert store.status()["counts"]["l0_events"] == 0
+    assert store.status()["counts"]["l1_atoms"] == 1
+
+    atoms = store.query_l1_atoms(limit=5)
+    assert atoms[0]["source_event_id"] is None
+
+    db_result = prune_database(settings=storage_env["settings"], l0_keep_days=90, dry_run=False)
+    assert db_result.get("deleted_rows", 0) >= 0
+
+
 def test_render_prune_markdown_and_forecast_hook(storage_env):
     from agent_reach.daily_run.storage.prune import render_prune_markdown, run_scheduled_prune
 

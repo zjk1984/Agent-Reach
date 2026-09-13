@@ -710,7 +710,23 @@ class SqliteDailyRunStore:
             }
             total_rows = sum(v["rows"] for v in by_kind.values())
             total_bytes = sum(v["bytes"] for v in by_kind.values())
+            detached_l1 = 0
             if not dry_run and total_rows > 0:
+                # L1 atoms keep distilled content; drop FK before removing L0 payloads.
+                cur = conn.execute(
+                    f"""
+                    UPDATE l1_atoms
+                    SET source_event_id = NULL
+                    WHERE source_event_id IN (
+                        SELECT id FROM l0_events
+                        WHERE kind IN ({placeholders})
+                          AND distilled_at IS NOT NULL
+                          AND at < ?
+                    )
+                    """,
+                    params,
+                )
+                detached_l1 = int(cur.rowcount or 0)
                 conn.execute(
                     f"""
                     DELETE FROM l0_events
@@ -728,6 +744,7 @@ class SqliteDailyRunStore:
             "would_delete_rows": total_rows,
             "bytes_estimate": total_bytes,
             "by_kind": by_kind,
+            "detached_l1_refs": 0 if dry_run else detached_l1,
         }
 
     def prune_l1_atoms(
