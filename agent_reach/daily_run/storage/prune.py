@@ -173,6 +173,9 @@ def prune_files(
     intraday_keep_days: int = 1,
     overlay_log_keep_days: int = 45,
     handoff_intraday_keep_days: int = 21,
+    close_handoff_keep_days: int = 15,
+    l2_keep_days: int = 60,
+    settings: Optional[dict[str, Any]] = None,
     snapshot_keep: int = 20,
     dry_run: bool = False,
 ) -> dict[str, Any]:
@@ -291,6 +294,33 @@ def prune_files(
                 if datetime.fromtimestamp(path.stat().st_mtime) < handoff_cutoff:
                     maybe_delete(path, phase="1", reason=f"handoff_{prefix}>{handoff_intraday_keep_days}d")
 
+        from agent_reach.daily_run.storage.prune_policy import (
+            _parse_iso_date,
+            protected_week_open_keys,
+        )
+
+        if close_handoff_keep_days > 0:
+            close_cutoff_day = datetime.now().date() - timedelta(days=close_handoff_keep_days)
+            for path in handoff.glob("close_*.json"):
+                if path.name == "last_close_handoff.json":
+                    continue
+                day = _parse_iso_date(path.stem.replace("close_", "", 1))
+                if day is not None and day < close_cutoff_day:
+                    maybe_delete(path, phase="1", reason=f"close_handoff>{close_handoff_keep_days}d")
+
+        protected_wo = protected_week_open_keys(settings=settings)
+        week_open_cutoff_day = datetime.now().date() - timedelta(days=max(1, l2_keep_days))
+        for path in handoff.glob("week_open_*.json"):
+            if path.name == "last_week_open_overlay.json":
+                continue
+            week_start = _parse_iso_date(path.stem.replace("week_open_", "", 1))
+            if week_start is None:
+                continue
+            if week_start.isoformat() in protected_wo:
+                continue
+            if week_start < week_open_cutoff_day:
+                maybe_delete(path, phase="1", reason=f"week_open>{l2_keep_days}d")
+
     # Phase 2 — runs/ day dirs (manifests already in L0 when dual-write enabled)
     runs = base / "runs"
     if runs.exists() and runs_keep_days > 0:
@@ -402,6 +432,7 @@ def prune_database(
         l1_result = prune_l1(cutoff_iso=cutoff_l1, kinds=kinds_l1, dry_run=dry_run)
 
     l0_result = prune_l0(cutoff_iso=cutoff_l0, kinds=kinds_l0, dry_run=dry_run)
+    l2_result = prune_l2_database(settings=settings, dry_run=dry_run)
 
     vacuum_bytes = 0
     if vacuum and not dry_run:
@@ -416,12 +447,68 @@ def prune_database(
     return {
         **l0_result,
         "l1": l1_result,
+        "l2": l2_result,
         "l0_kinds": kinds_l0,
         "l1_kinds": kinds_l1,
         "db_bytes_before": db_before,
         "db_bytes_after": db_after,
         "vacuum_bytes_freed": vacuum_bytes,
     }
+
+
+def prune_l2_database(
+    *,
+    settings: Optional[dict[str, Any]] = None,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Drop stale L2 scenarios while preserving active handoff/forecast/week_open rows."""
+    from agent_reach.daily_run.storage import get_store, storage_enabled
+    from agent_reach.daily_run.storage.config import prune_settings
+    from agent_reach.daily_run.storage.prune_policy import (
+        effective_prune_l2_kinds,
+        is_protected_l2_row,
+        l2_row_is_stale,
+        protected_forecast_keys,
+        protected_week_open_keys,
+    )
+
+    if not storage_enabled(settings):
+        return {"skipped": True, "reason": "storage_disabled"}
+
+    cfg = prune_settings(settings)
+    kinds = effective_prune_l2_kinds(settings)
+    if not kinds:
+        return {"skipped": True, "reason": "l2_prune_disabled"}
+
+    store = get_store(settings)
+    query_l2 = getattr(store, "query_l2_scenarios", None)
+    delete_l2 = getattr(store, "delete_l2_scenarios", None)
+    if not callable(query_l2) or not callable(delete_l2):
+        return {"skipped": True, "reason": "backend_no_l2_prune"}
+
+    rows: list[dict[str, Any]] = []
+    for kind in kinds:
+        rows.extend(query_l2(kind=kind, limit=100_000))
+
+    protected_forecast = protected_forecast_keys(rows, settings=settings)
+    protected_week_open = protected_week_open_keys(settings=settings)
+    stale_ids: list[int] = []
+    for row in rows:
+        if is_protected_l2_row(
+            row,
+            cfg=cfg,
+            protected_forecast=protected_forecast,
+            protected_week_open=protected_week_open,
+        ):
+            continue
+        if l2_row_is_stale(row, cfg=cfg):
+            stale_ids.append(int(row["id"]))
+
+    result = delete_l2(stale_ids, dry_run=dry_run)
+    result["kinds"] = kinds
+    result["protected_forecast_keys"] = sorted(protected_forecast)
+    result["protected_week_open_keys"] = sorted(protected_week_open)
+    return result
 
 
 def run_prune(
@@ -435,6 +522,8 @@ def run_prune(
     l1_keep_days: int = 90,
     overlay_log_keep_days: int = 45,
     handoff_intraday_keep_days: int = 21,
+    close_handoff_keep_days: int = 15,
+    l2_keep_days: int = 60,
     vacuum: bool = False,
     dry_run: bool = False,
     distill_first: bool = False,
@@ -466,6 +555,9 @@ def run_prune(
         log_keep_days=log_keep_days,
         overlay_log_keep_days=overlay_log_keep_days,
         handoff_intraday_keep_days=handoff_intraday_keep_days,
+        close_handoff_keep_days=close_handoff_keep_days,
+        l2_keep_days=l2_keep_days,
+        settings=settings,
         dry_run=dry_run,
     )
     db = prune_database(
@@ -506,6 +598,8 @@ def run_scheduled_prune(
         l1_keep_days=int(cfg["l1_keep_days"]),
         overlay_log_keep_days=int(cfg["overlay_log_keep_days"]),
         handoff_intraday_keep_days=int(cfg["handoff_intraday_keep_days"]),
+        close_handoff_keep_days=int(cfg["close_handoff_keep_days"]),
+        l2_keep_days=int(cfg["l2_keep_days"]),
         vacuum=bool(cfg.get("vacuum")),
         dry_run=dry_run,
         distill_first=bool(cfg.get("auto_distill_before_prune")),
@@ -523,7 +617,7 @@ def run_scheduled_prune(
 
 def render_prune_markdown(result: dict[str, Any], *, settings: Optional[dict[str, Any]] = None) -> str:
     from agent_reach.daily_run.storage.config import prune_settings
-    from agent_reach.daily_run.storage.prune_policy import PROTECTED_L0_KINDS
+    from agent_reach.daily_run.storage.prune_policy import PROTECTED_L0_KINDS, PROTECTED_L2_KINDS
 
     if result.get("skipped"):
         return f"存储清理已跳过：{result.get('reason') or 'disabled'}"
@@ -563,11 +657,16 @@ def render_prune_markdown(result: dict[str, Any], *, settings: Optional[dict[str
         f"{cfg['l0_keep_days']} 天的 audit/scan/harness 日志（见配置 prune_l0_kinds）",
         "- **可删 L1**：超过 "
         f"{cfg['l1_keep_days']} 天的 harness 审计 atom（保留 trade/experience/portfolio）",
-        "- **L2 场景**（close_handoff、week_open、forecast、trade_case）不在自动清理范围",
+        "- **可删 L2**：超过 retention 的场景快照（"
+        f"harness_snapshot {cfg['harness_snapshot_keep_days']}d · "
+        f"close_handoff {cfg['close_handoff_keep_days']}d · 其它 {cfg['l2_keep_days']}d）",
+        "- **保护 L2**：" + "、".join(PROTECTED_L2_KINDS)
+        + "；当前活跃 forecast / week_open；`last_*` handoff 文件",
         "",
         "**文件保留**",
         f"- runs {cfg['runs_keep_days']}d · cache {cfg['cache_keep_days']}d · overlay_log {cfg['overlay_log_keep_days']}d",
-        f"- handoff morning/midday {cfg['handoff_intraday_keep_days']}d（close/week_open 保留）",
+        f"- handoff morning/midday {cfg['handoff_intraday_keep_days']}d · "
+        f"close {cfg['close_handoff_keep_days']}d · week_open {cfg['l2_keep_days']}d",
         "",
         "**环境清理**",
         "- 周日 forecast 自动执行 `pip cache purge`（可通过 `storage.prune.pip_cache_on_forecast=false` 关闭）",
@@ -643,6 +742,22 @@ def render_prune_markdown(result: dict[str, Any], *, settings: Optional[dict[str
             l1_rows = l1.get("deleted_rows", l1.get("would_delete_rows", 0))
             l1_mb = round((l1.get("bytes_estimate") or 0) / 1024 / 1024, 2)
             lines.append(f"- 删除过期 L1 atom：**{l1_rows}** 行（约 **{l1_mb} MB**）")
+        l2 = db.get("l2") or {}
+        if not l2.get("skipped"):
+            l2_rows = l2.get("deleted_rows", l2.get("would_delete_rows", 0))
+            l2_mb = round((l2.get("bytes_estimate") or 0) / 1024 / 1024, 2)
+            lines.append(f"- 删除过期 L2 场景：**{l2_rows}** 行（约 **{l2_mb} MB**）")
+            by_kind = l2.get("by_kind") or {}
+            if by_kind:
+                top = sorted(
+                    ((kind, meta.get("rows", 0)) for kind, meta in by_kind.items()),
+                    key=lambda item: item[1],
+                    reverse=True,
+                )[:4]
+                if top:
+                    lines.append(
+                        "- L2 明细：" + " · ".join(f"{kind} {count}" for kind, count in top)
+                    )
         before_mb = round(float(db.get("db_bytes_before") or 0) / 1024 / 1024, 1)
         after_mb = round(float(db.get("db_bytes_after") or 0) / 1024 / 1024, 1)
         if before_mb > 0:

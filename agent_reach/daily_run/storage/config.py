@@ -127,8 +127,10 @@ def prune_settings(settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     from agent_reach.daily_run.storage.prune_policy import (
         DEFAULT_PRUNE_L0_KINDS,
         DEFAULT_PRUNE_L1_KINDS,
+        DEFAULT_L2_PRUNE_KINDS,
         PROTECTED_L0_KINDS,
         PROTECTED_L1_KINDS,
+        PROTECTED_L2_KINDS,
     )
 
     cfg = storage_settings(settings)
@@ -156,8 +158,14 @@ def prune_settings(settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         "push_card": block.get("push_card", True) is not False,
         "include_in_forecast_markdown": block.get("include_in_forecast_markdown", True) is not False,
         "pip_cache_on_forecast": block.get("pip_cache_on_forecast", True) is not False,
+        "l2_prune_enabled": block.get("l2_prune_enabled", True) is not False,
+        "l2_keep_days": max(1, int(block.get("l2_keep_days") or 60)),
+        "harness_snapshot_keep_days": max(1, int(block.get("harness_snapshot_keep_days") or 14)),
+        "close_handoff_keep_days": max(1, int(block.get("close_handoff_keep_days") or 15)),
         "protected_l0_kinds": list(block.get("protected_l0_kinds") or PROTECTED_L0_KINDS),
         "prune_l0_kinds": list(block.get("prune_l0_kinds") or DEFAULT_PRUNE_L0_KINDS),
         "protected_l1_kinds": list(block.get("protected_l1_kinds") or PROTECTED_L1_KINDS),
         "prune_l1_kinds": list(block.get("prune_l1_kinds") or DEFAULT_PRUNE_L1_KINDS),
+        "protected_l2_kinds": list(block.get("protected_l2_kinds") or PROTECTED_L2_KINDS),
+        "prune_l2_kinds": list(block.get("prune_l2_kinds") or DEFAULT_L2_PRUNE_KINDS),
     }

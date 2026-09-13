@@ -386,6 +386,71 @@ def test_prune_distilled_l0_detaches_l1_fk(storage_env):
     assert db_result.get("deleted_rows", 0) >= 0
 
 
+def test_prune_l2_scenarios_respects_protection(storage_env):
+    from agent_reach.daily_run.storage.prune import prune_l2_database
+
+    store = SqliteDailyRunStore(Path(storage_env["db_path"]))
+    settings = dict(storage_env["settings"])
+    settings["storage"] = dict(settings["storage"])
+    settings["storage"]["prune"] = {
+        "l2_prune_enabled": True,
+        "l2_keep_days": 30,
+        "harness_snapshot_keep_days": 7,
+        "close_handoff_keep_days": 15,
+    }
+
+    active_mon = "2026-09-15"
+    store.upsert_l2_scenario(
+        "harness_snapshot",
+        "old_snap.json",
+        {"saved_at": "2026-01-01T00:00:00+00:00", "job": "close"},
+        at="2026-01-01T00:00:00+00:00",
+        dedupe_key="l2:harness_snapshot:old",
+    )
+    store.upsert_l2_scenario(
+        "harness_snapshot",
+        "fresh_snap.json",
+        {"saved_at": "2026-09-13T00:00:00+00:00", "job": "close"},
+        at="2026-09-13T00:00:00+00:00",
+        dedupe_key="l2:harness_snapshot:fresh",
+    )
+    store.upsert_l2_scenario(
+        "close_handoff",
+        "2026-01-02",
+        {"close_date": "2026-01-02", "next_day_session_seed": {}},
+        at="2026-01-02",
+        dedupe_key="l2:close_handoff:2026-01-02",
+    )
+    store.upsert_l2_scenario(
+        "week_open_overlay",
+        active_mon,
+        {"week_start": active_mon, "week_end": "2026-09-19", "enabled": True},
+        at=active_mon,
+        dedupe_key=f"l2:week_open_overlay:{active_mon}",
+    )
+    store.upsert_l2_scenario(
+        "forecast",
+        active_mon,
+        {"week_start": active_mon, "week_end": "2026-09-19", "summary": "active"},
+        at=active_mon,
+        dedupe_key=f"l2:forecast:{active_mon}",
+    )
+
+    dry = prune_l2_database(settings=settings, dry_run=True)
+    assert dry.get("would_delete_rows", 0) >= 1
+
+    applied = prune_l2_database(settings=settings, dry_run=False)
+    assert applied.get("deleted_rows", 0) >= 1
+
+    remaining = {row["kind"] for row in store.query_l2_scenarios(limit=20)}
+    assert "harness_snapshot" in remaining
+    assert "week_open_overlay" in remaining
+    assert "forecast" in remaining
+    rows = store.query_l2_scenarios(kind="harness_snapshot", limit=10)
+    assert any("fresh" in str(row.get("scenario_key") or "") for row in rows)
+    assert not any("old_snap" in str(row.get("scenario_key") or "") for row in rows)
+
+
 def test_render_prune_markdown_and_forecast_hook(storage_env):
     from agent_reach.daily_run.storage.prune import render_prune_markdown, run_scheduled_prune
 
@@ -399,6 +464,7 @@ def test_render_prune_markdown_and_forecast_hook(storage_env):
     assert "周日存储维护" in md
     assert "安全策略" in md
     assert "trade" in md
+    assert "L2" in md
     assert "pip cache" in md
     assert "磁盘空间" in md
 

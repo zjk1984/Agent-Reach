@@ -945,6 +945,50 @@ class SqliteDailyRunStore:
             )
         return out
 
+    def delete_l2_scenarios(
+        self,
+        ids: list[int],
+        *,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        id_list = [int(i) for i in ids if int(i) > 0]
+        if not id_list:
+            return {
+                "deleted_rows": 0,
+                "bytes_estimate": 0,
+                "by_kind": {},
+                "dry_run": dry_run,
+            }
+        placeholders = ",".join("?" for _ in id_list)
+        with self._conn() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT kind, COUNT(*) AS c, SUM(length(payload_json)) AS bytes
+                FROM l2_scenarios
+                WHERE id IN ({placeholders})
+                GROUP BY kind
+                """,
+                id_list,
+            ).fetchall()
+            by_kind = {
+                str(row["kind"]): {"rows": int(row["c"]), "bytes": int(row["bytes"] or 0)}
+                for row in rows
+            }
+            total_rows = sum(v["rows"] for v in by_kind.values())
+            total_bytes = sum(v["bytes"] for v in by_kind.values())
+            if not dry_run and total_rows > 0:
+                conn.execute(
+                    f"DELETE FROM l2_scenarios WHERE id IN ({placeholders})",
+                    id_list,
+                )
+        return {
+            "deleted_rows": 0 if dry_run else total_rows,
+            "would_delete_rows": total_rows,
+            "bytes_estimate": total_bytes,
+            "by_kind": by_kind,
+            "dry_run": dry_run,
+        }
+
     def get_l3_document(self, kind: str, doc_key: str) -> Optional[dict[str, Any]]:
         with self._conn() as conn:
             row = conn.execute(
