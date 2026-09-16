@@ -349,6 +349,50 @@ def collect_morning_predictions(ctx: Any, action_rows: list[dict[str, Any]]) -> 
     return items[:6]
 
 
+def _morning_positions_from_ctx(ctx: Any) -> tuple[dict[str, dict[str, Any]], Optional[float]]:
+    """Morning weights using the same portfolio total denominator as action checklist (F2)."""
+    from agent_reach.daily_run.morning_cards import _holding_weight_pct, _portfolio_total
+
+    portfolio = getattr(ctx, "portfolio", None) or {}
+    total = _portfolio_total(portfolio)
+    positions: dict[str, dict[str, Any]] = {}
+    for sym in getattr(ctx, "symbol_rows", []) or []:
+        holding = sym.holding or {}
+        code = _normalize_code(str(getattr(sym, "code", "") or ""))
+        shares = int(holding.get("shares") or 0)
+        if not code or shares <= 0:
+            continue
+        positions[code] = {
+            "name": str(getattr(sym, "name", "") or holding.get("name") or code),
+            "weight_pct": _holding_weight_pct(holding, portfolio),
+            "shares": shares,
+            "morning_price": _optional_float(holding.get("price") or holding.get("cost")),
+        }
+    return positions, total if total > 0 else None
+
+
+def _expected_passive_weight_pct(
+    *,
+    morning_positions: dict[str, dict[str, Any]],
+    close_positions: dict[str, dict[str, Any]],
+    code: str,
+    end_total: Optional[float],
+) -> Optional[float]:
+    """Shares-constant weight at close (passive hold, no rebalance)."""
+    if not end_total or end_total <= 0:
+        return None
+    pos = morning_positions.get(code) or {}
+    close_pos = close_positions.get(code) or {}
+    shares = pos.get("shares") or close_pos.get("shares")
+    close_price = _optional_float(close_pos.get("close_price"))
+    if shares is None or close_price is None:
+        return None
+    try:
+        return round(int(shares) * float(close_price) / float(end_total) * 100.0, 1)
+    except (TypeError, ValueError):
+        return None
+
+
 def build_morning_handoff(
     ctx: Any,
     action_rows: list[dict[str, Any]],
@@ -367,13 +411,31 @@ def build_morning_handoff(
         code = _normalize_code(getattr(sym, "code", "") if sym else "")
         current = _optional_float(row.get("current_weight_pct"))
         target = _optional_float(row.get("target_weight_pct"))
-        checklist.append({**row, "code": code, "current_weight_pct": current, "target_weight_pct": target})
+        target_position = str(row.get("target_position") or "")
+        if target is not None and current is not None:
+            from agent_reach.daily_run.morning_signals import _target_position_label
+
+            target_position = _target_position_label(current, target)
+        checklist.append(
+            {
+                **row,
+                "code": code,
+                "current_weight_pct": current,
+                "target_weight_pct": target,
+                "target_position": target_position,
+            }
+        )
+
+    morning_positions, morning_total = _morning_positions_from_ctx(ctx)
+    if not morning_positions:
+        morning_positions = dict(close_handoff.get("positions") or {})
 
     payload = {
         "morning_date": today_shanghai().isoformat(),
         "source_close_date": close_handoff.get("close_date"),
         "action_checklist": checklist,
-        "positions_at_morning": dict(close_handoff.get("positions") or {}),
+        "positions_at_morning": morning_positions,
+        "portfolio_total_at_morning": morning_total,
         "morning_predictions": collect_morning_predictions(ctx, action_rows),
     }
     if am_open_overlay:
@@ -591,6 +653,9 @@ def validate_morning_action_lines(ctx: Any) -> list[str]:
         return []
 
     close_positions = collect_close_positions(ctx)
+    pf = ctx.portfolio_summary or {}
+    end_total = _optional_float(pf.get("end_total") or pf.get("total"))
+    morning_positions = dict(handoff.get("positions_at_morning") or {})
     lines: list[str] = []
     for action in handoff.get("action_checklist") or []:
         if not isinstance(action, dict):
@@ -610,16 +675,31 @@ def validate_morning_action_lines(ctx: Any) -> list[str]:
             lines.append(f"- **{name}** {operation} → ⚠️ 无收盘仓位数据")
             continue
 
+        expected_passive = _expected_passive_weight_pct(
+            morning_positions=morning_positions,
+            close_positions=close_positions,
+            code=code,
+            end_total=end_total,
+        )
         hit = _action_executed(
             operation=operation,
             morning_current=morning_current,
             morning_target=morning_target,
             actual_weight=actual,
+            expected_passive_weight=expected_passive,
         )
         mark = "✅" if hit else "❌"
-        target_s = f"{morning_target:.0f}%" if morning_target is not None else "—"
+        if operation in ("持有", "观望") and morning_current is not None:
+            target_s = f"锚定 {morning_current:.1f}%"
+            if expected_passive is not None and abs(expected_passive - actual) <= 1.2:
+                detail = f"（被动漂移预期 {expected_passive:.1f}%）"
+            else:
+                detail = ""
+        else:
+            target_s = f"{morning_target:.1f}%" if morning_target is not None else "—"
+            detail = ""
         lines.append(
-            f"- **{name}** 早盘建议 {operation}（目标 {target_s}）→ {mark} 收盘仓位 **{actual:.1f}%**"
+            f"- **{name}** 早盘建议 {operation}（目标 {target_s}）→ {mark} 收盘仓位 **{actual:.1f}%**{detail}"
         )
     return lines[:6]
 
@@ -630,6 +710,7 @@ def _action_executed(
     morning_current: Optional[float],
     morning_target: Optional[float],
     actual_weight: float,
+    expected_passive_weight: Optional[float] = None,
 ) -> bool:
     if morning_target is None and morning_current is None:
         return True
@@ -642,6 +723,8 @@ def _action_executed(
     if operation == "加仓":
         return actual_weight >= target - 0.6 or (current is not None and actual_weight > current + 0.4)
     if operation in ("观望", "持有"):
+        if expected_passive_weight is not None:
+            return abs(actual_weight - expected_passive_weight) <= 1.2
         anchor = current if current is not None else target
         return abs(actual_weight - anchor) <= 1.2
     return abs(actual_weight - target) <= 1.2

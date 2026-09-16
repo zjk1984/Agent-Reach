@@ -46,6 +46,7 @@ def technical_watch_cfg(settings: Optional[dict[str, Any]] = None) -> dict[str, 
             "recovery_turnover_multiplier": float(liquidity.get("recovery_turnover_multiplier", 1.5)),
             "recovery_volume_ratio": float(liquidity.get("recovery_volume_ratio", 1.0)),
             "shrink_turnover_multiplier": float(liquidity.get("shrink_turnover_multiplier", 0.85)),
+            "long_hold_trim_days": int(liquidity.get("long_hold_trim_days", 365)),
         },
         "mss_trend": {
             "enabled": mss_trend.get("enabled", True),
@@ -952,6 +953,7 @@ def evaluate_scenario(
     mss: Optional[float] = None,
     min_cash_ratio: Optional[float] = None,
     cash_ratio: Optional[float] = None,
+    days_held: Optional[int] = None,
     settings: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     scenario_type = str(scenario.get("scenario_type") or "upper_shadow")
@@ -970,6 +972,7 @@ def evaluate_scenario(
             change_pct=change_pct,
             volume_ratio=volume_ratio,
             turnover=turnover,
+            days_held=days_held,
             settings=settings,
         )
     if scenario_type == "mss_trend":
@@ -1156,6 +1159,7 @@ def _evaluate_liquidity_shrink(
     change_pct: Optional[float] = None,
     volume_ratio: Optional[float] = None,
     turnover: Optional[float] = None,
+    days_held: Optional[int] = None,
     settings: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     cfg = technical_watch_cfg(settings)
@@ -1222,6 +1226,22 @@ def _evaluate_liquidity_shrink(
 
     still_shrinking = to is not None and to <= setup_turnover * shrink_mult
     price_weak = (chg is not None and chg < 0) or px < setup_close
+    long_hold_days = int(liq_cfg.get("long_hold_trim_days", 365))
+    long_hold = days_held is not None and int(days_held) >= long_hold_days
+    if long_hold and still_shrinking:
+        held = int(days_held) if days_held is not None else 0
+        result.update(
+            {
+                "status": "long_hold_liquidity_trim",
+                "headline": (
+                    f"{name} 长持 {held} 日 + 流动性持续萎缩（成交额 {_format_turnover_yi(to or setup_turnover)}），"
+                    "建议防御性减仓"
+                ),
+                "action_hint": "长持深套+低流动性，执行可卖则 trim（不足一手则告警）",
+            }
+        )
+        return result
+
     if still_shrinking and price_weak:
         result.update(
             {
@@ -1461,6 +1481,17 @@ def evaluate_active_scenarios(
             cash_ratio_val = float(raw_cash)
         except (TypeError, ValueError):
             cash_ratio_val = None
+    days_held_val: Optional[int] = None
+    norm_code = _normalize_code(code)
+    for holding in pf_block.get("holdings") or []:
+        if not isinstance(holding, dict):
+            continue
+        if _normalize_code(str(holding.get("code") or "")) != norm_code:
+            continue
+        from agent_reach.daily_run.portfolio_manager import effective_days_held
+
+        days_held_val = effective_days_held(holding, settings=settings)
+        break
     results = [
         evaluate_scenario(
             row,
@@ -1472,6 +1503,7 @@ def evaluate_active_scenarios(
             mss=mss_f,
             min_cash_ratio=effective_min_cash,
             cash_ratio=cash_ratio_val,
+            days_held=days_held_val,
             settings=settings,
         )
         for row in _active_scenarios(code=code, as_of=as_of, path=path)

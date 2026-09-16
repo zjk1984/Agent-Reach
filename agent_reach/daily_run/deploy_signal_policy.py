@@ -154,3 +154,60 @@ def liquidity_execution_hint(turnover_cny: Optional[float], *, settings: Optiona
     if tier == "high":
         return "高流动性"
     return ""
+
+
+def apply_buy_budget_verdict_gate(
+    verdict: Any,
+    snapshot: dict[str, Any],
+    settings: dict[str, Any],
+) -> Any:
+    """Downgrade 可做→观察 when deploy budget cannot cover one min lot (F1)."""
+    from agent_reach.daily_run.verdict import VerdictResult
+
+    if not isinstance(verdict, VerdictResult) or verdict.label_key != "buy":
+        return verdict
+
+    code = str(snapshot.get("code") or "").strip()
+    portfolio = snapshot.get("portfolio") or {}
+    if not code or not portfolio:
+        return verdict
+
+    from agent_reach.daily_run.portfolio_manager import simulate_buy_analysis
+    from agent_reach.daily_run.snapshot_builder import _normalize_code
+
+    norm = _normalize_code(code)
+    enriched = {norm: dict(snapshot)}
+    analysis = simulate_buy_analysis(portfolio, enriched, settings, prefer_code=norm)
+    if analysis.get("allowed"):
+        return verdict
+
+    labels = settings.get("verdict_labels", {})
+    watch_label = labels.get("watch", "观察")
+    block = str(analysis.get("block_reason") or "单笔预算不足一手")
+    budget = analysis.get("buy_budget")
+    min_cost = analysis.get("min_lot_cost")
+    if budget is not None and min_cost is not None:
+        note = f"预算不可达：一手约 ¥{float(min_cost):,.0f} > 单笔预算 ¥{float(budget):,.0f}"
+    else:
+        note = f"预算不可达：{block}"
+
+    downgrade = list(verdict.downgrade_reasons)
+    if note not in downgrade:
+        downgrade.append(note)
+
+    confidence = verdict.confidence
+    if confidence == "高":
+        confidence = "中"
+
+    return VerdictResult(
+        verdict=watch_label,
+        confidence=confidence,
+        mss_final=verdict.mss_final,
+        entry_price=verdict.entry_price,
+        stop_loss_price=verdict.stop_loss_price,
+        invalidation=verdict.invalidation,
+        reasoning=verdict.reasoning,
+        downgrade_reasons=downgrade,
+        blocked=verdict.blocked,
+        label_key="watch",
+    )
