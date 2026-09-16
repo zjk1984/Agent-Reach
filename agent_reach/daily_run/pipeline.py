@@ -36,6 +36,9 @@ def evaluate_snapshot(
     verdict = compute_verdict(enriched, cfg)
     if enriched.get("team_review") or enriched.get("team_consensus_label"):
         verdict = fuse_verdict_with_team(verdict, enriched, cfg)
+    from agent_reach.daily_run.deploy_signal_policy import apply_buy_budget_verdict_gate
+
+    verdict = apply_buy_budget_verdict_gate(verdict, enriched, cfg)
     report = build_report(enriched, audit, verdict, cfg)
     gate = validate_report(report, cfg, snapshot=enriched, workflow=_workflow_from_snapshot(enriched))
 

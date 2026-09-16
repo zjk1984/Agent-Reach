@@ -275,12 +275,21 @@ def intraday_audit_block_reason(
     return None
 
 
-def kronos_buy_block_reason(settings: dict[str, Any], code: str) -> Optional[str]:
+def kronos_buy_block_reason(
+    settings: dict[str, Any],
+    code: str,
+    *,
+    mss: Optional[float] = None,
+) -> Optional[str]:
     cfg = _intraday_cfg(settings)
     if cfg.get("kronos_bearish_block_buy") is False:
         return None
     norm = _normalize_code(str(code or ""))
     if not norm:
+        return None
+    from agent_reach.daily_run.kronos_inference_policy import kronos_mc_divergence_day
+
+    if kronos_mc_divergence_day(settings, norm, mss=mss):
         return None
     runtime = settings.get("harness_runtime") or {}
     bearish = runtime.get("kronos_bearish") or {}

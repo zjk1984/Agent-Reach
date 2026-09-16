@@ -36,6 +36,17 @@ def forecast_mss_range(
     spread = float(forecast_int_default(settings, "base_spread")) + vol_hint * float(
         forecast_int_default(settings, "vol_multiplier")
     )
+    spread += _emotion_spread_bonus(breakdown, cfg)
+    technical = breakdown.get("technical")
+    if technical is not None:
+        try:
+            tech_f = float(technical)
+            if tech_f >= 70:
+                spread += float(cfg.get("technical_high_spread_bonus", 8))
+            elif tech_f >= 55:
+                spread += float(cfg.get("technical_mid_spread_bonus", 4))
+        except (TypeError, ValueError):
+            pass
 
     rng = random.Random(int(base * 100) % 9973)
     samples: list[float] = []
@@ -72,3 +83,23 @@ def _volatility_hint(snapshot: dict[str, Any]) -> float:
     if len(scans) >= 2:
         return min(3.0, abs(float(scans[-1]) - float(scans[-2])) / 5)
     return 1.0
+
+
+def _emotion_spread_bonus(breakdown: dict[str, Any], cfg: dict[str, Any]) -> float:
+    ref = (breakdown or {}).get("_emotion_fusion_ref") or {}
+    rating = str(ref.get("rating") or "")
+    if rating == "强":
+        return float(cfg.get("emotion_spread_bonus", 10))
+    if rating == "弱":
+        return float(cfg.get("emotion_weak_spread_bonus", 6))
+    return 0.0
+
+
+def refresh_intraday_mss_range(
+    snapshot: dict[str, Any],
+    settings: dict[str, Any],
+) -> list[float]:
+    """Recompute MSS interval from latest breakdown (F4 intraday refresh)."""
+    mss_range, _meta = forecast_mss_range(snapshot, settings)
+    snapshot["mss_intraday_range"] = mss_range
+    return mss_range

@@ -477,6 +477,35 @@ def _collect_sector_risks(ctx: Any) -> list[str]:
     return risks[:4]
 
 
+def render_budget_affordability_markdown(ctx: Any) -> str:
+    """Morning deploy budget vs min-lot costs for watchlist (F1)."""
+    from agent_reach.daily_run.portfolio_manager import watchlist_affordability_markdown
+    from agent_reach.daily_run.settings import effective_settings
+
+    portfolio = getattr(ctx, "portfolio", None) or {}
+    watchlist = list(portfolio.get("watchlist") or [])
+    if not watchlist:
+        return ""
+
+    cfg = effective_settings(getattr(ctx, "settings", None))
+    enriched: dict[str, dict[str, Any]] = {}
+    for sym in getattr(ctx, "symbol_rows", []) or []:
+        code = _normalize_code(str(getattr(sym, "code", "") or ""))
+        if code:
+            enriched[code] = {**(sym.snapshot or {}), **(sym.holding or {})}
+    for row in watchlist:
+        if not isinstance(row, dict):
+            continue
+        code = _normalize_code(str(row.get("code") or ""))
+        if code and code not in enriched:
+            enriched[code] = dict(row)
+
+    lines = watchlist_affordability_markdown(portfolio, enriched, cfg, watchlist)
+    if not lines:
+        return ""
+    return "**部署预算可达性**\n\n" + "\n".join(lines)
+
+
 def render_today_risk_markdown(ctx: Any) -> str:
     from agent_reach.daily_run.close_morning_handoff import render_risk_tracking_markdown
 
@@ -484,10 +513,14 @@ def render_today_risk_markdown(ctx: Any) -> str:
     market = _collect_market_risks(ctx)
     sector = _collect_sector_risks(ctx)
     tracked = render_risk_tracking_markdown(ctx)
-    if not holding and not market and not sector and not tracked:
+    budget_md = render_budget_affordability_markdown(ctx)
+    if not holding and not market and not sector and not tracked and not budget_md:
         return ""
 
     lines = ["**⚠️ 今日风险**", ""]
+    if budget_md:
+        lines.append(budget_md)
+        lines.append("")
     if tracked:
         lines.append("**风险跟踪（昨收→今晨）**")
         lines.extend(tracked)

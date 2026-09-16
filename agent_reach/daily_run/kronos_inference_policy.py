@@ -232,13 +232,71 @@ def _kronos_symbol_blend(settings: Optional[dict[str, Any]] = None) -> dict[str,
     return resolve_harness_kronos_symbol_blend(load_harness(), settings=cfg)
 
 
+def kronos_divergence_blend_multiplier(code: str, settings: Optional[dict[str, Any]] = None) -> float:
+    """Reduce Kronos blend when ledger shows repeated direction misses (F3)."""
+    cfg = settings or {}
+    kronos = cfg.get("kronos") or {}
+    if kronos.get("enabled") is False:
+        return 1.0
+    if kronos_inference_mode(cfg) == "fixed":
+        return 1.0
+
+    from agent_reach.daily_run.kronos_calibration import load_kronos_error_ledger, summarize_kronos_ledger
+    from agent_reach.daily_run.snapshot_builder import _normalize_code
+    from agent_reach.daily_run.trade_calendar import today_shanghai
+
+    norm = _normalize_code(str(code or ""))
+    if not norm:
+        return 1.0
+    summary = summarize_kronos_ledger(load_kronos_error_ledger(limit=120), lookback_days=14)
+    heavy = {_normalize_code(str(c)) for c in (summary.get("divergence_heavy_codes") or [])}
+    if norm in heavy:
+        return 0.5
+    today = today_shanghai().isoformat()
+    for row in reversed(load_kronos_error_ledger(limit=40)):
+        if _normalize_code(str(row.get("code") or "")) != norm:
+            continue
+        if str(row.get("date") or "") != today:
+            break
+        if row.get("direction_hit") is False:
+            return 0.6
+        break
+    return 1.0
+
+
+def kronos_mc_divergence_day(settings: dict[str, Any], code: str, *, mss: Optional[float] = None) -> bool:
+    """True when MC is strong but Kronos direction missed today (F3 gate)."""
+    from agent_reach.daily_run.kronos_calibration import load_kronos_error_ledger
+    from agent_reach.daily_run.snapshot_builder import _normalize_code
+    from agent_reach.daily_run.trade_calendar import today_shanghai
+
+    norm = _normalize_code(str(code or ""))
+    if not norm:
+        return False
+    today = today_shanghai().isoformat()
+    for row in reversed(load_kronos_error_ledger(limit=40)):
+        if _normalize_code(str(row.get("code") or "")) != norm:
+            continue
+        if str(row.get("date") or "") != today:
+            return False
+        if row.get("direction_hit") is not False:
+            return False
+        mc_strong = mss is not None and float(mss) >= 48.0
+        actual_up = str(row.get("actual_direction") or "") == "up"
+        kronos_down = str(row.get("kronos_direction") or "") == "down"
+        return mc_strong and actual_up and kronos_down
+    return False
+
+
 def resolve_symbol_blend_weight(code: str, settings: Optional[dict[str, Any]] = None) -> float:
     """Effective MC/Kronos blend weight for one symbol (global or per-symbol overlay)."""
     sym = str(code or "").strip()
     per_symbol = _kronos_symbol_blend(settings)
     if sym in per_symbol:
-        return float(per_symbol[sym])
-    return float(_kronos_inference_policy(settings).get("week_forecast_blend_weight", 0.35))
+        base = float(per_symbol[sym])
+    else:
+        base = float(_kronos_inference_policy(settings).get("week_forecast_blend_weight", 0.35))
+    return round(base * kronos_divergence_blend_multiplier(sym, settings), 3)
 
 
 def kronos_effective_cfg(settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:

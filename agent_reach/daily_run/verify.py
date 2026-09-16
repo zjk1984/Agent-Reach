@@ -123,7 +123,7 @@ def verify_snapshots(
     if vc is None:
         vc = compute_verdict(current, cfg).verdict
 
-    mss_range = _parse_mss_range(baseline)
+    mss_range, range_source = _resolve_verify_mss_range(baseline, current)
     within = None
     deviations: list[str] = []
     if mss_range and mc is not None:
@@ -169,6 +169,9 @@ def verify_snapshots(
         parts.append(f"MSS {mb:.0f}→{mc:.0f} ({mss_delta:+.0f})")
     if within is not None:
         parts.append("预测命中" if within else "预测偏离")
+    if mss_range and range_source == "intraday":
+        lo, hi = mss_range
+        parts.append(f"验证区间=盘中 [{lo:.0f},{hi:.0f}]")
 
     return VerifyResult(
         code=code,
@@ -290,6 +293,20 @@ def _parse_mss_range(snapshot: dict[str, Any]) -> Optional[tuple[float, float]]:
         if match:
             return float(match.group(1)), float(match.group(2))
     return None
+
+
+def _resolve_verify_mss_range(
+    baseline: dict[str, Any],
+    current: dict[str, Any],
+) -> tuple[Optional[tuple[float, float]], str]:
+    """Prefer intraday-refreshed range when present (F4)."""
+    intraday = _parse_mss_range({"mss_intraday_range": current.get("mss_intraday_range")})
+    if intraday is not None:
+        return intraday, "intraday"
+    baseline_rng = _parse_mss_range(baseline)
+    if baseline_rng is not None:
+        return baseline_rng, "morning"
+    return None, "none"
 
 
 def _f(value: Any) -> Optional[float]:

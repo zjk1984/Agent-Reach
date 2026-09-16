@@ -179,10 +179,24 @@ def optimize_calibration(
     lr = float(cfg.get("calibration_learning_rate", 0.15))
     max_bias = float(cfg.get("max_bias_pct", 3.0))
     min_vol, max_vol = float(cfg.get("min_vol_scale", 0.6)), float(cfg.get("max_vol_scale", 1.6))
+    low_threshold = float(cfg.get("low_hit_threshold", 0.5))
+    streak_trigger = int(cfg.get("low_hit_streak_trigger", 3))
 
     cal = dict(calibration)
+    streak = int(cal.get("low_hit_streak") or 0)
+    acc = review.accuracy
+    if acc < low_threshold:
+        streak += 1
+    else:
+        streak = 0
+    cal["low_hit_streak"] = streak
+    if streak >= streak_trigger:
+        lr = min(lr * 1.5, 0.35)
+        notes: list[str] = [f"连续 {streak} 日命中率<{low_threshold:.0%}，加速校准 lr→{lr:.2f}"]
+    else:
+        notes = []
+
     errors = [e.error_pct for e in review.symbol_evals if e.error_pct is not None]
-    notes: list[str] = []
 
     if errors:
         mean_err = sum(errors) / len(errors)

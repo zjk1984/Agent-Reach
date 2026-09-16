@@ -408,6 +408,10 @@ def record_scan(
     enriched.setdefault("as_of", datetime.now(timezone.utc).isoformat())
 
     evaluation = evaluate_snapshot(enriched, cfg, doctor_channels=doctor_channels)
+    from agent_reach.daily_run.mss_forecast import refresh_intraday_mss_range
+
+    refresh_intraday_mss_range(enriched, cfg)
+    evaluation["report"]["mss_intraday_range"] = enriched.get("mss_intraday_range")
     from agent_reach.daily_run.session_verdict_guards import apply_session_pullback_verdict_downgrade
 
     apply_session_pullback_verdict_downgrade(
@@ -764,6 +768,10 @@ def evaluate_trade(
         )
         enriched.setdefault("report_type", "intraday")
         evaluation = evaluate_snapshot(enriched, cfg, doctor_channels=doctor_channels)
+        from agent_reach.daily_run.mss_forecast import refresh_intraday_mss_range
+
+        refresh_intraday_mss_range(enriched, cfg)
+        evaluation["report"]["mss_intraday_range"] = enriched.get("mss_intraday_range")
 
     report = evaluation["report"]
     verdict = evaluation["verdict"]
@@ -1665,7 +1673,11 @@ def _decide_trade(
                 friction_blocked=friction_blocked,
                 expected_return_pct=exp_ret,
             )
-        kronos_block = kronos_buy_block_reason(settings, symbol_code)
+        kronos_block = kronos_buy_block_reason(
+            settings,
+            symbol_code,
+            mss=_optional_float(report.get("mss_final")),
+        )
         if kronos_block:
             return TradeDecision(
                 action="hold",
