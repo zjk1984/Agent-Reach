@@ -152,9 +152,9 @@
 
 ---
 
-## 技能对齐修复建议（仅建议 · 未改代码）
+## 技能对齐修复建议（已实施 · 2026-09-18）
 
-> 对齐 `daily-run-code-walk` / harness 进化方向；需用户批准后实施。
+> 对齐 `daily-run-code-walk` / harness 进化方向；Phase 0/1 harness memory 已写入，Phase 2 代码已合入分支。
 
 ### P0 — sector rally 与 defensive trim 冲突（000725）
 
@@ -223,4 +223,14 @@ T2 10:16 CST  sell 000725  200 @ 5.7243  realized -70.68
 
 ---
 
-*Generated: 2026-09-18 · manual trigger · no code changes*
+### 实施状态（2026-09-18）
+
+| 项 | 状态 | 模块 |
+|----|------|------|
+| sector rally 暂停 falling trim | ✅ | `defensive_trim_guards.sector_outperform_guard` |
+| session 高点回吐失效 hold_debounce | ✅ | `plan_invalidation` + `intraday.session_highs`（阈值 2.5%） |
+| 午盘 giveback re-eval | ✅ | `midday.giveback_review` |
+| harness experience / close_improve / sell_rules_whatif | ✅ | prod harness refine（9/17 episode） |
+| buy_budget（688981） | 维持不变 | 行为正确 |
+
+*Generated: 2026-09-18 · manual trigger · guards implemented*
