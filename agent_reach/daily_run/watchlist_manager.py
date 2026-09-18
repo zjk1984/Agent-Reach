@@ -9,7 +9,9 @@ from typing import Any, Literal, Optional
 from agent_reach.daily_run.portfolio_manager import (
     max_total_symbols,
     unique_symbol_count,
+    watchlist_candidate_affordable,
     watchlist_capacity,
+    watchlist_require_affordable_lot,
 )
 from agent_reach.daily_run.symbols import build_enriched_symbols, copy_portfolio
 from agent_reach.daily_run.snapshot_builder import _normalize_code
@@ -202,6 +204,20 @@ def adjust_watchlist(
                 WatchlistChange("remove", code, str(w.get("name", code)), f"评分 {score:.0f} 低于否决线")
             )
             continue
+        if watchlist_require_affordable_lot(settings) and w.get("source") != "sold_recycle":
+            affordable, budget_reason = watchlist_candidate_affordable(
+                pf, enriched, settings, code
+            )
+            if not affordable:
+                changes.append(
+                    WatchlistChange(
+                        "remove",
+                        code,
+                        str(w.get("name", code)),
+                        budget_reason or "单笔预算不足一手，移出观察池",
+                    )
+                )
+                continue
         kept.append(dict(w))
 
     pf["watchlist"] = kept
@@ -668,6 +684,11 @@ def _add_candidates(
                     f"quality-screen 未通过：{gate_reason}",
                 )
             )
+            continue
+        affordable, budget_reason = watchlist_candidate_affordable(
+            pf, enriched, settings, code
+        )
+        if not affordable:
             continue
         entry = _watchlist_entry_from_candidate(
             cand,

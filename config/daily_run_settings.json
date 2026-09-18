@@ -1012,6 +1012,7 @@
 
   "watchlist": {
     "mode": "harness",
+    "require_affordable_lot": true,
     "auto_adjust_enabled": true,
     "harness_evolve": true,
     "adjust_phases": ["morning", "close"],
