@@ -23,6 +23,9 @@ _DEFENSIVE_TRIM_NEUTRAL: dict[str, Any] = {
     "block_sell_near_day_low": True,
     "near_day_low_tolerance_pct": 0.5,
     "near_day_low_bypass_deep_loss": True,
+    "sector_outperform_guard": True,
+    "min_outperform_sector_pct": 2.0,
+    "min_symbol_change_without_sector_pct": 4.0,
 }
 
 
@@ -208,6 +211,85 @@ def defensive_trim_blocked_by_near_day_low(
     )
 
 
+def _holding_sector(snapshot: dict[str, Any], code: Any) -> str:
+    norm = _normalize_code(str(code or ""))
+    if not norm:
+        return ""
+    pf = snapshot.get("portfolio") or {}
+    for holding in pf.get("holdings") or []:
+        if _normalize_code(str(holding.get("code", ""))) == norm:
+            return str(holding.get("sector") or holding.get("industry") or "").strip()
+    for row in snapshot.get("symbols") or []:
+        if _normalize_code(str(row.get("code", ""))) == norm:
+            return str(row.get("sector") or row.get("industry") or "").strip()
+    return ""
+
+
+def _sector_change_pct(sector_name: str, *, review_date: Optional[str] = None) -> Optional[float]:
+    if not sector_name:
+        return None
+    try:
+        from agent_reach.daily_run.market_review import load_market_review
+        from agent_reach.daily_run.trade_calendar import today_shanghai
+
+        ds = review_date or today_shanghai().isoformat()
+        review = load_market_review(ds)
+        if not isinstance(review, dict):
+            return None
+        for value in review.values():
+            if not isinstance(value, list):
+                continue
+            for row in value:
+                if not isinstance(row, dict):
+                    continue
+                name = str(row.get("name") or row.get("sector") or "").strip()
+                if not name:
+                    continue
+                if name == sector_name or sector_name in name or name in sector_name:
+                    chg = row.get("change_pct")
+                    if chg is not None:
+                        return float(chg)
+    except Exception:
+        return None
+    return None
+
+
+def defensive_trim_blocked_by_sector_outperform(
+    settings: dict[str, Any],
+    *,
+    trend: str,
+    code: Any,
+    snapshot: dict[str, Any],
+) -> Optional[str]:
+    """Block defensive trim when the symbol outperforms a rallying sector (even on falling MSS trend)."""
+    cfg = defensive_trim_cfg(settings)
+    if not cfg.get("sector_outperform_guard", True):
+        return None
+
+    change_pct = _symbol_change_pct(snapshot, code)
+    if change_pct is None:
+        return None
+
+    min_outperform = float(cfg.get("min_outperform_sector_pct", 2.0))
+    min_standalone = float(cfg.get("min_symbol_change_without_sector_pct", 4.0))
+    sector_name = _holding_sector(snapshot, code)
+    sector_chg = _sector_change_pct(sector_name) if sector_name else None
+
+    if sector_chg is not None and sector_chg > 0:
+        outperform = float(change_pct) - float(sector_chg)
+        if outperform >= min_outperform and float(change_pct) > 0:
+            return (
+                f"标的 {change_pct:+.2f}% 强于 {sector_name or '板块'} {sector_chg:+.2f}%"
+                f"（超额 {outperform:.2f}%），板块 rally 日暂缓 falling-trend 防御减仓"
+            )
+    elif float(change_pct) >= min_standalone:
+        return (
+            f"标的日内 {change_pct:+.2f}% ≥ {min_standalone:.1f}%，"
+            f"趋势 {trend} 下暂缓防御减仓以免卖在板块/个股 rally"
+        )
+    return None
+
+
 def defensive_trim_blocked_by_strength(
     settings: dict[str, Any],
     *,
@@ -307,6 +389,12 @@ def evaluate_defensive_trim_sell(
         ),
         lambda: defensive_trim_blocked_by_daily_cap(
             settings, prior_trades=prior_trades, code=report.get("code")
+        ),
+        lambda: defensive_trim_blocked_by_sector_outperform(
+            settings,
+            trend=trend,
+            code=report.get("code"),
+            snapshot=snapshot,
         ),
         lambda: defensive_trim_blocked_by_strength(
             settings,

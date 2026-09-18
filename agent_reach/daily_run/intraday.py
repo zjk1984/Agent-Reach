@@ -260,6 +260,7 @@ class IntradayState:
     scans: list[dict[str, Any]] = field(default_factory=list)
     trades: list[dict[str, Any]] = field(default_factory=list)
     hold_debounce_strikes: dict[str, int] = field(default_factory=dict)
+    session_highs: dict[str, float] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -269,6 +270,8 @@ class IntradayState:
         }
         if self.hold_debounce_strikes:
             payload["hold_debounce_strikes"] = dict(self.hold_debounce_strikes)
+        if self.session_highs:
+            payload["session_highs"] = {str(k): float(v) for k, v in self.session_highs.items()}
         return payload
 
     @classmethod
@@ -279,12 +282,58 @@ class IntradayState:
             for k, v in raw_strikes.items()
             if str(k).strip() and v is not None
         }
+        raw_highs = data.get("session_highs") or {}
+        highs: dict[str, float] = {}
+        for key, val in raw_highs.items():
+            norm = str(key).strip()
+            if not norm or val is None:
+                continue
+            try:
+                highs[norm] = float(val)
+            except (TypeError, ValueError):
+                continue
         return cls(
             date=str(data.get("date", _today_str())),
             scans=list(data.get("scans") or []),
             trades=list(data.get("trades") or []),
             hold_debounce_strikes=strikes,
+            session_highs=highs,
         )
+
+
+def touch_session_highs(
+    state: IntradayState,
+    snapshot: dict[str, Any],
+    *,
+    code: Optional[str] = None,
+) -> None:
+    """Track per-symbol session high quotes for giveback / hold_debounce invalidation."""
+    from agent_reach.daily_run.snapshot_builder import _normalize_code
+
+    def _touch(norm: str, price: Any) -> None:
+        if not norm or price is None:
+            return
+        try:
+            px = float(price)
+        except (TypeError, ValueError):
+            return
+        if px <= 0:
+            return
+        prev = state.session_highs.get(norm)
+        state.session_highs[norm] = max(float(prev or 0.0), px)
+
+    primary = _normalize_code(str(snapshot.get("code") or code or ""))
+    if primary:
+        _touch(primary, snapshot.get("price"))
+    pf = snapshot.get("portfolio") or {}
+    for holding in pf.get("holdings") or []:
+        if not isinstance(holding, dict):
+            continue
+        _touch(_normalize_code(str(holding.get("code") or "")), holding.get("price"))
+    for row in snapshot.get("symbols") or []:
+        if not isinstance(row, dict):
+            continue
+        _touch(_normalize_code(str(row.get("code") or "")), row.get("price"))
 
 
 def default_state_path(code: Optional[str] = None) -> Path:
@@ -436,6 +485,7 @@ def record_scan(
         "price": enriched.get("price"),
         "audit_passed": evaluation["audit"].passed,
     }
+    touch_session_highs(st, enriched, code=str(entry.get("code") or ""))
     st.scans.append(entry)
     save_state(st, state_path)
     try:
@@ -556,6 +606,7 @@ def record_scan_from_evaluation(
             entry["trend_excluded"] = True
             entry["quote_stale"] = True
             entry["lookback_weight_scale"] = float(mcfg.get("lookback_weight_scale", 0.25))
+    touch_session_highs(st, enriched, code=str(entry.get("code") or sym or ""))
     st.scans.append(entry)
     save_state(st, resolved_path)
 

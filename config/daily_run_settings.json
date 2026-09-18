@@ -184,8 +184,12 @@
       "hold_debounce": {
         "enabled": true,
         "invalidate_below_plan_stop": true,
-        "invalidate_below_forecast_low": false
+        "invalidate_below_forecast_low": false,
+        "invalidate_on_session_giveback_pct": 2.5
       },
+      "sector_outperform_guard": true,
+      "min_outperform_sector_pct": 2.0,
+      "min_symbol_change_without_sector_pct": 4.0,
       "block_sell_near_day_low": true,
       "near_day_low_tolerance_pct": 0.5,
       "near_day_low_bypass_deep_loss": true
@@ -600,6 +604,12 @@
     "exclude_from_trend": true,
     "lookback_weight_scale": 0.25,
     "record_scan": false,
+    "giveback_review": {
+      "enabled": true,
+      "morning_min_change_pct": 5.0,
+      "midday_max_change_pct": 0.0,
+      "session_giveback_min_pct": 4.0
+    },
     "pm_session": {
       "enabled": true,
       "weak_am_mss_delta": -5.0,
