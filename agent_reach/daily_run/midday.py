@@ -44,7 +44,10 @@ def build_morning_giveback_review(
         if not code:
             continue
         name = str(holding.get("name") or code)
-        morning = load_morning_baseline(code=code) or {}
+        try:
+            morning = load_morning_baseline(code=code) or {}
+        except FileNotFoundError:
+            morning = {}
         morning_price = morning.get("price")
         if morning_price is None:
             report = (morning.get("report") or {}) if isinstance(morning, dict) else {}
