@@ -160,7 +160,7 @@ def test_watchlist_candidate_affordable(monkeypatch):
 
 def test_job_checkpoint(tmp_path, monkeypatch):
     monkeypatch.setattr(
-        "agent_reach.daily_run.job_checkpoint.checkpoint_dir",
+        "agent_reach.daily_run.job_checkpoint.step_checkpoint_dir",
         lambda: tmp_path,
     )
     monkeypatch.setattr(

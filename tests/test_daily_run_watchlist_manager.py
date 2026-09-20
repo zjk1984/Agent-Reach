@@ -56,6 +56,7 @@ def settings():
     s["watchlist"]["hot_topic_adjust_enabled"] = False
     s["watchlist"]["hot_topic_fetch_if_missing"] = False
     s["watchlist"]["announcement_intel_enabled"] = False
+    s["watchlist"]["require_affordable_lot"] = False
     return s
 
 

@@ -77,7 +77,7 @@ class TestScheduleEntries:
         assert INTRADAY_MAX_SCANS == 13
 
     def test_default_entries_count(self):
-        assert len(default_entries()) == 16  # premarket + morning + midday + 10 scans + close + weekly + forecast
+        assert len(default_entries()) == 17  # premarket + morning + midday + 10 scans + close + weekly + forecast + alerts
 
 
 class TestMacroCollector:

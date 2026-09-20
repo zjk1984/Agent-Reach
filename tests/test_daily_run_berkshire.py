@@ -64,6 +64,7 @@ def settings(tmp_path, monkeypatch):
         "watchlist": {
             "min_size": 3,
             "max_size": 8,
+            "require_affordable_lot": False,
             "candidates": [
                 {"code": "603986", "name": "兆易创新", "keywords": ["存储"]},
                 {"code": "002415", "name": "海康威视", "keywords": ["安防"]},
