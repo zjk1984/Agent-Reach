@@ -127,6 +127,7 @@ def test_render_alert_contains_cookie_steps():
     assert "Cookie-Editor" in md
     assert "xueqiu_cookie" in md
     assert "configure --from-browser chrome" in md
+    assert "daily-run xueqiu login" in md
 
 
 def test_render_alert_expiring_title():

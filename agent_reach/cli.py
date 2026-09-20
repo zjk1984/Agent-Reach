@@ -355,6 +355,13 @@ def main():
     p_dr_kronos_bt.add_argument("--holdout", type=int, default=0, help="Hold-out days (default from settings)")
     p_dr_kronos_bt.add_argument("--folds", type=int, default=0, help="Walk-back folds (default from settings)")
     p_dr_kronos_bt.add_argument("--json", action="store_true", help="JSON output only")
+    p_dr_xueqiu = p_daily_sub.add_parser("xueqiu", help="Xueqiu cookie utilities")
+    p_dr_xueqiu_sub = p_dr_xueqiu.add_subparsers(dest="xueqiu_action", required=True)
+    p_dr_xueqiu_login = p_dr_xueqiu_sub.add_parser(
+        "login",
+        help="Headed Playwright login (ticket-sniper pattern); saves profile + session + config",
+    )
+    p_dr_xueqiu_login.add_argument("--json", action="store_true", help="JSON output only")
     p_daily_sub.add_parser("sample", help="Print example snapshot JSON to stdout")
     p_dr_berk = p_daily_sub.add_parser(
         "berkshire",
@@ -2441,6 +2448,31 @@ def _cmd_daily_run(args):
             print("\n--- Markdown ---\n")
             print(render_kronos_holdout_markdown(result))
         if not result.get("available"):
+            sys.exit(1)
+        return
+
+    if args.daily_action == "xueqiu":
+        import json as _json
+
+        from agent_reach.config import Config
+        from agent_reach.daily_run.settings import load_settings
+        from agent_reach.daily_run.xueqiu_cookie_playwright import run_xueqiu_interactive_login
+
+        if args.xueqiu_action != "login":
+            print("Usage: agent-reach daily-run xueqiu login [--json]")
+            sys.exit(1)
+
+        settings = load_settings()
+        result = run_xueqiu_interactive_login(settings=settings, config=Config())
+        if args.json:
+            print(_json.dumps(result, ensure_ascii=False, indent=2))
+        elif result.get("success"):
+            print(f"✅ {result.get('message', '雪球 Cookie 已更新')}")
+        elif result.get("skipped"):
+            print(f"⏭ 跳过 — {result.get('message') or result.get('reason')}")
+        else:
+            print(f"❌ {result.get('message') or result.get('reason') or '登录失败'}")
+        if not result.get("success"):
             sys.exit(1)
         return
 
