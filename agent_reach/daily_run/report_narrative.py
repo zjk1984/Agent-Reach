@@ -510,6 +510,8 @@ def _generate_narrative(
             if isinstance(payload, dict) and payload.get("summary"):
                 payload = _compact_narrative_payload(payload, limits)
                 payload["planner"] = "llm"
+                if payload.get("_llm_provider"):
+                    payload["llm_provider"] = payload.pop("_llm_provider")
                 payload["skipped"] = False
                 payload["job"] = job
                 return payload

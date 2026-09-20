@@ -1481,6 +1481,88 @@ def buy_budget_precheck_reason(
     )
 
 
+def watchlist_require_affordable_lot(settings: dict[str, Any]) -> bool:
+    wl = settings.get("watchlist") or {}
+    return wl.get("require_affordable_lot", True) is not False
+
+
+def watchlist_per_trade_budget(
+    pf: dict[str, Any],
+    enriched: dict[str, dict[str, Any]],
+    settings: dict[str, Any],
+) -> Optional[dict[str, Any]]:
+    from agent_reach.daily_run.harness_policy import _position_policy
+
+    holdings = list(pf.get("holdings") or [])
+    budget_ctx = _buy_budget_context(pf, enriched, settings, holdings)
+    if isinstance(budget_ctx, ApplyResult):
+        return None
+
+    total, cash, deployable, _min_deploy, min_cash_ratio, commission_rate = budget_ctx
+    position = _position_policy(settings)
+    deploy_ratio = float(position.get("deploy_ratio", 1.0))
+    budget_gross = harness_buy_budget(total=total, deployable=deployable, settings=settings)
+    per_budget = budget_gross / (1 + commission_rate)
+    return {
+        "per_budget": per_budget,
+        "deploy_ratio": deploy_ratio,
+        "min_cash_ratio": min_cash_ratio,
+        "commission_rate": commission_rate,
+        "deployable": deployable,
+        "total": total,
+        "cash": cash,
+    }
+
+
+def watchlist_min_lot_cost(
+    code: str,
+    pf: dict[str, Any],
+    enriched: dict[str, dict[str, Any]],
+    *,
+    commission_rate: float = 0.0015,
+) -> Optional[tuple[float, float, str]]:
+    code = _normalize_code(code)
+    target = _resolve_buy_row(code, pf, enriched)
+    if target is None:
+        return None
+    price = _price_for(target, enriched)
+    if price is None or price <= 0:
+        return None
+    min_lot = _min_lot(code)
+    min_cost = min_lot * float(price) * (1 + commission_rate)
+    return min_cost, float(price), str(target.get("name") or code)
+
+
+def watchlist_candidate_affordable(
+    pf: dict[str, Any],
+    enriched: dict[str, dict[str, Any]],
+    settings: dict[str, Any],
+    code: str,
+) -> tuple[bool, Optional[str]]:
+    if not watchlist_require_affordable_lot(settings):
+        return True, None
+    budget = watchlist_per_trade_budget(pf, enriched, settings)
+    if budget is None:
+        return False, "可部署现金不足，无法评估观察池预算"
+    lot = watchlist_min_lot_cost(
+        code, pf, enriched, commission_rate=float(budget["commission_rate"])
+    )
+    if lot is None:
+        return False, "缺少报价，无法评估一手成本"
+    min_cost, _price, name = lot
+    per_budget = float(budget["per_budget"])
+    if min_cost <= per_budget + 0.01:
+        return True, None
+    deploy_ratio = float(budget["deploy_ratio"])
+    return (
+        False,
+        (
+            f"deploy {deploy_ratio:.0%} 单笔预算 ¥{per_budget:,.0f} 不足一手"
+            f"（{name} 一手约 ¥{min_cost:,.0f}）"
+        ),
+    )
+
+
 def watchlist_affordability_markdown(
     pf: dict[str, Any],
     enriched: dict[str, dict[str, Any]],
@@ -1491,35 +1573,26 @@ def watchlist_affordability_markdown(
     if not watchlist:
         return []
 
-    from agent_reach.daily_run.harness_policy import _position_policy
-
-    holdings = list(pf.get("holdings") or [])
-    budget_ctx = _buy_budget_context(pf, enriched, settings, holdings)
-    if isinstance(budget_ctx, ApplyResult):
+    budget = watchlist_per_trade_budget(pf, enriched, settings)
+    if budget is None:
         return []
 
-    total, _cash, deployable, _min_deploy, min_cash_ratio, commission_rate = budget_ctx
-    position = _position_policy(settings)
-    deploy_ratio = float(position.get("deploy_ratio", 1.0))
-    budget_gross = harness_buy_budget(total=total, deployable=deployable, settings=settings)
-    per_budget = budget_gross / (1 + commission_rate)
+    per_budget = float(budget["per_budget"])
+    deploy_ratio = float(budget["deploy_ratio"])
+    min_cash_ratio = float(budget["min_cash_ratio"])
+    commission_rate = float(budget["commission_rate"])
 
     unaffordable: list[str] = []
     for row in watchlist:
         code = _normalize_code(str(row.get("code", "")))
         if not code:
             continue
-        target = _resolve_buy_row(code, pf, enriched)
-        if target is None:
+        lot = watchlist_min_lot_cost(code, pf, enriched, commission_rate=commission_rate)
+        if lot is None:
             continue
-        price = _price_for(target, enriched)
-        if price is None or price <= 0:
-            continue
-        min_lot = _min_lot(code)
-        min_cost = min_lot * float(price) * (1 + commission_rate)
+        min_cost, _price, name = lot
         if min_cost <= per_budget + 0.01:
             continue
-        name = str(target.get("name") or code)
         unaffordable.append(
             f"**{name}** ({code}) 一手约 ¥{min_cost:,.0f} > 单笔预算 ¥{per_budget:,.0f}"
         )

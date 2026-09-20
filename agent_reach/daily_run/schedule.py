@@ -165,6 +165,15 @@ def default_entries() -> list[CronEntry]:
     entries.append(
         CronEntry("30", "8", "0", _cron_run_cmd("forecast"), "daily-run 下周预测 周日 8:30")
     )
+    entries.append(
+        CronEntry(
+            "*/15",
+            "9-15",
+            "1-5",
+            _cron_run_cmd("alerts"),
+            "daily-run 价位告警 9-15 每15分钟",
+        )
+    )
     return entries
 
 
@@ -269,7 +278,7 @@ def run_scheduled(
 
     from agent_reach.daily_run.trade_calendar import is_trading_day
 
-    if job not in ("weekly", "forecast"):
+    if job not in ("weekly", "forecast", "alerts"):
         trading_ok, trading_reason = is_trading_day(settings=settings)
         if not trading_ok and not force:
             result = {"job": job, "skipped": True, "reason": trading_reason}
@@ -283,6 +292,11 @@ def run_scheduled(
         check_duplicate_job,
         job_run_lock,
     )
+
+    if force and job in ("close", "morning", "intraday"):
+        from agent_reach.daily_run.job_checkpoint import clear_checkpoint
+
+        clear_checkpoint(job)
 
     dup_reason = check_duplicate_job(job, force=force, settings=settings)
     if dup_reason:
@@ -707,6 +721,18 @@ def _run_job_body(
             )
             result = {"job": job, "snapshot_path": str(path), "result": run_result}
             feishu = run_result.get("feishu")
+
+    elif job == "alerts":
+        from agent_reach.daily_run.price_alerts import check_price_alerts
+
+        with StepTimer("schedule.alerts"):
+            alert_result = check_price_alerts(
+                settings=settings,
+                push=push,
+                config=config,
+            )
+            result = {"job": job, "result": alert_result}
+            feishu = alert_result.get("feishu")
 
     elif job == "forecast":
         from agent_reach.daily_run.workflows import run_forecast
