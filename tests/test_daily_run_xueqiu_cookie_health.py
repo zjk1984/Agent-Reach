@@ -11,7 +11,12 @@ from agent_reach.daily_run.xueqiu_cookie_health import (
     render_xueqiu_cookie_alert_markdown,
 )
 
-_LEGACY_WF = {"week_forecast": {"xueqiu_cookie_use_browser_use": False}}
+_LEGACY_WF = {
+    "week_forecast": {
+        "xueqiu_cookie_use_playwright": False,
+        "xueqiu_cookie_use_browser_use": False,
+    }
+}
 
 
 def test_check_missing_cookie():

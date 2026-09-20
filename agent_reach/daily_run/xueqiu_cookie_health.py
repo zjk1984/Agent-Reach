@@ -311,7 +311,7 @@ def ensure_xueqiu_browser_session(
     """
     wf = _week_forecast_settings(settings)
     browser_name = str(browser or wf.get("xueqiu_cookie_refresh_browser") or "chrome").strip().lower()
-    url = str(wf.get("xueqiu_cookie_browser_login_url") or "https://xueqiu.com").strip()
+    url = str(wf.get("xueqiu_cookie_browser_login_url") or "https://xueqiu.com/user/login").strip()
     headed = wf.get("xueqiu_cookie_browser_login_headed", True) is not False
     try:
         timeout_sec = max(10, int(wf.get("xueqiu_cookie_browser_login_timeout_sec", 120)))
@@ -469,6 +469,11 @@ def ensure_xueqiu_browser_session(
     }
 
 
+def _use_playwright(settings: Optional[dict[str, Any]] = None) -> bool:
+    wf = _week_forecast_settings(settings)
+    return wf.get("xueqiu_cookie_use_playwright", True) is not False
+
+
 def _use_browser_use(settings: Optional[dict[str, Any]] = None) -> bool:
     wf = _week_forecast_settings(settings)
     return wf.get("xueqiu_cookie_use_browser_use", True) is not False
@@ -536,12 +541,31 @@ def refresh_xueqiu_cookie_from_browser(
     Sync Xueqiu cookie from a logged-in local browser into agent-reach config.
 
     Used before Sunday forecast when ``week_forecast.xueqiu_cookie_auto_refresh_from_browser``
-    is enabled. Prefers browser-use (Chrome CDP) when ``xueqiu_cookie_use_browser_use`` is
-    true; otherwise opens Chrome via subprocess and extracts via rookiepy / browser_cookie3.
+    is enabled. Prefers Playwright headed login (ticket-sniper pattern) when
+    ``xueqiu_cookie_use_playwright`` is true; then browser-use (Chrome CDP); otherwise
+    opens Chrome via subprocess and extracts via rookiepy / browser_cookie3.
     """
     wf = _week_forecast_settings(settings)
     if wf.get("xueqiu_cookie_auto_refresh_from_browser", True) is False:
         return {"skipped": True, "reason": "disabled", "job": "xueqiu_cookie_refresh"}
+
+    if _use_playwright(settings):
+        from agent_reach.daily_run.xueqiu_cookie_playwright import (
+            playwright_available,
+            refresh_xueqiu_cookie_via_playwright,
+        )
+
+        if playwright_available():
+            pw_result = refresh_xueqiu_cookie_via_playwright(settings=settings, config=config)
+            if pw_result.get("success"):
+                return pw_result
+            if pw_result.get("skipped") and pw_result.get("reason") == "playwright_not_installed":
+                pass
+            elif pw_result.get("skipped") and pw_result.get("reason") == "no_display":
+                pass
+            else:
+                # Playwright ran but login timed out or errored — surface result (login page was opened).
+                return pw_result
 
     if _use_browser_use(settings):
         from agent_reach.daily_run.xueqiu_cookie_browser_use import (
