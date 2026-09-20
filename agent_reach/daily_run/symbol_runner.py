@@ -664,8 +664,14 @@ def run_close_for_symbols(
     errors: list[str] = []
     shared_state = load_state()
 
+    from agent_reach.daily_run.job_checkpoint import is_step_done, mark_step_done
+
     total = len(targets)
     for idx, code in enumerate(targets, start=1):
+        step_key = f"symbol:{code}"
+        if is_step_done("close", step_key):
+            print(f"[daily-run] close skip checkpoint {code}", flush=True)
+            continue
         pf = load_portfolio()
         name = symbol_display_name(pf, code)
         print(f"[daily-run] close {idx}/{total} {code} {name}", flush=True)
@@ -718,6 +724,7 @@ def run_close_for_symbols(
                     "feishu": run_result.get("feishu"),
                 }
             )
+            mark_step_done("close", step_key, summary={"code": code, "name": name})
         except Exception as exc:
             errors.append(f"{code}: {exc}")
 
@@ -1012,6 +1019,11 @@ def run_close_for_symbols(
             template=cfg.get("report", {}).get("feishu_template_verify", "purple"),
             split=split_push_enabled(cfg, report_kind="close"),
         )
+
+    if not errors:
+        from agent_reach.daily_run.job_checkpoint import clear_checkpoint
+
+        clear_checkpoint("close")
 
     return {
         "job": "close",

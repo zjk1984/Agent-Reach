@@ -331,7 +331,7 @@ class TestSchedule:
         assert block.count("daily-run-local-cron.sh intraday") == 11
 
     def test_default_entries_count(self):
-        assert len(default_entries()) == 16  # premarket + morning + midday + 10 scans + close + weekly + forecast
+        assert len(default_entries()) == 17  # premarket + morning + midday + 10 scans + close + weekly + forecast + alerts
 
     @patch("agent_reach.daily_run.trade_calendar.is_trading_day", return_value=(True, ""))
     @patch("agent_reach.daily_run.midday_harness.apply_midday_harness_refinement")

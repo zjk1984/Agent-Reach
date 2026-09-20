@@ -249,6 +249,28 @@ def main():
     p_dr_build.add_argument("--code", default="", help="Override primary stock code")
     p_dr_build.add_argument("--no-enrich", action="store_true",
                             help="Skip live quote fetch (use portfolio static prices)")
+    p_dr_alerts = p_daily_sub.add_parser("alerts", help="Price target alerts (ABOVE/BELOW)")
+    p_dr_alerts_sub = p_dr_alerts.add_subparsers(dest="alerts_action", required=True)
+    p_dr_alerts_list = p_dr_alerts_sub.add_parser("list", help="List active alerts")
+    p_dr_alerts_list.add_argument("--json", action="store_true")
+    p_dr_alerts_add = p_dr_alerts_sub.add_parser("add", help="Add price alert")
+    p_dr_alerts_add.add_argument("--code", required=True)
+    p_dr_alerts_add.add_argument("--price", type=float, required=True)
+    p_dr_alerts_add.add_argument("--condition", choices=["ABOVE", "BELOW"], required=True)
+    p_dr_alerts_add.add_argument("--name", default="")
+    p_dr_alerts_add.add_argument("--note", default="")
+    p_dr_alerts_rm = p_dr_alerts_sub.add_parser("remove", help="Remove alert by id")
+    p_dr_alerts_rm.add_argument("--id", required=True)
+    p_dr_alerts_check = p_dr_alerts_sub.add_parser("check", help="Evaluate alerts now")
+    p_dr_alerts_check.add_argument("--push", action="store_true", help="Push Feishu on trigger")
+    p_dr_profile = p_daily_sub.add_parser("profile", help="User investment profile for watchlist")
+    p_dr_profile_sub = p_dr_profile.add_subparsers(dest="profile_action", required=True)
+    p_dr_profile_show = p_dr_profile_sub.add_parser("show", help="Show profile")
+    p_dr_profile_show.add_argument("--json", action="store_true")
+    p_dr_profile_set = p_dr_profile_sub.add_parser("set", help="Update profile fields")
+    p_dr_profile_set.add_argument("--risk", default="", help="conservative|moderate|aggressive")
+    p_dr_profile_set.add_argument("--sectors", default="", help="Comma-separated preferred sectors")
+    p_dr_profile_set.add_argument("--goals", default="", help="Investment goals text")
     p_dr_sched = p_daily_sub.add_parser("schedule", help="Cron schedule for morning/intraday/close")
     p_dr_sched.add_argument(
         "schedule_action",
@@ -266,7 +288,7 @@ def main():
     p_dr_sched.add_argument(
         "--job",
         default="",
-        choices=["morning", "midday", "intraday", "close", "weekly", "forecast"],
+        choices=["morning", "midday", "intraday", "close", "weekly", "forecast", "alerts"],
         help="Job for schedule run (alternative to positional job_name)",
     )
     p_dr_sched.add_argument("--dry-run", action="store_true",
@@ -2143,6 +2165,78 @@ def _cmd_daily_run(args):
             print(out_text)
         return
 
+    if args.daily_action == "alerts":
+        import json as _json
+        from agent_reach.config import Config
+        from agent_reach.daily_run.price_alerts import (
+            active_alerts,
+            add_alert,
+            check_price_alerts,
+            load_alerts,
+            remove_alert,
+        )
+        from agent_reach.daily_run.settings import effective_settings, load_settings
+
+        cfg = effective_settings(load_settings())
+        if args.alerts_action == "list":
+            rows = active_alerts(cfg)
+            if args.json:
+                print(_json.dumps([a.to_dict() for a in rows], ensure_ascii=False, indent=2))
+            else:
+                for a in rows:
+                    op = "≥" if a.condition == "ABOVE" else "≤"
+                    print(f"{a.id}  {a.code} {a.name}  {op} {a.target_price:.2f}")
+            return
+        if args.alerts_action == "add":
+            alert = add_alert(
+                code=args.code,
+                target_price=args.price,
+                condition=args.condition,
+                name=args.name,
+                note=args.note,
+                settings=cfg,
+            )
+            print(f"✅ alert {alert.id}  {alert.code} {alert.condition} {alert.target_price}")
+            return
+        if args.alerts_action == "remove":
+            ok = remove_alert(args.id)
+            print("✅ removed" if ok else "❌ not found")
+            return
+        if args.alerts_action == "check":
+            result = check_price_alerts(settings=cfg, push=args.push, config=Config())
+            print(_json.dumps(result, ensure_ascii=False, indent=2))
+            return
+        print("Usage: daily-run alerts {list|add|remove|check}")
+        sys.exit(1)
+
+    if args.daily_action == "profile":
+        import json as _json
+        from agent_reach.daily_run.user_profile import load_user_profile, save_user_profile
+
+        if args.profile_action == "show":
+            prof = load_user_profile()
+            if args.json:
+                print(_json.dumps(prof, ensure_ascii=False, indent=2))
+            else:
+                sectors = ", ".join(prof.get("preferred_sectors") or []) or "—"
+                print(f"risk_tolerance: {prof.get('risk_tolerance')}")
+                print(f"preferred_sectors: {sectors}")
+                print(f"investment_goals: {prof.get('investment_goals') or '—'}")
+            return
+        if args.profile_action == "set":
+            prof = load_user_profile()
+            if args.risk:
+                prof["risk_tolerance"] = args.risk
+            if args.sectors:
+                prof["preferred_sectors"] = [s.strip() for s in args.sectors.split(",") if s.strip()]
+            if args.goals:
+                prof["investment_goals"] = args.goals
+            save_user_profile(prof)
+            print("✅ profile updated")
+            return
+        print("Usage: daily-run profile {show|set}")
+        sys.exit(1)
+
     if args.daily_action == "schedule":
         from agent_reach.config import Config
         from agent_reach.daily_run.schedule import install_crontab, render_crontab_block, run_scheduled
@@ -2167,8 +2261,8 @@ def _cmd_daily_run(args):
 
         if args.schedule_action == "run":
             job = args.job or args.job_name or "intraday"
-            if job not in ("morning", "midday", "intraday", "close", "weekly", "forecast"):
-                print("❌ job must be morning, midday, intraday, close, weekly, or forecast")
+            if job not in ("morning", "midday", "intraday", "close", "weekly", "forecast", "alerts"):
+                print("❌ job must be morning, midday, intraday, close, weekly, forecast, or alerts")
                 sys.exit(1)
             try:
                 result = run_scheduled(job, push=not args.dry_run, config=Config(), force=args.force)

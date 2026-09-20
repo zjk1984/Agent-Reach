@@ -685,6 +685,11 @@ def _add_candidates(
                 )
             )
             continue
+        from agent_reach.daily_run.user_profile import watchlist_blocked_by_profile
+
+        profile_block = watchlist_blocked_by_profile(cand, settings=settings)
+        if profile_block:
+            continue
         affordable, budget_reason = watchlist_candidate_affordable(
             pf, enriched, settings, code
         )
@@ -823,6 +828,10 @@ def _symbol_score(
         score = base
         if chg is not None:
             score += float(chg) * 0.5
+    if settings is not None:
+        from agent_reach.daily_run.user_profile import watchlist_profile_score_adjustment
+
+        score += watchlist_profile_score_adjustment(row, settings=settings)
     if snapshot and settings and watchlist_intel_enabled(settings):
         from agent_reach.daily_run.snapshot_builder import _normalize_code
         from agent_reach.daily_run.watchlist_intel import intel_score_adjustment

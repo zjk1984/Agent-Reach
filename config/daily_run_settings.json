@@ -1020,6 +1020,20 @@
     }
   },
 
+  "price_alerts": {
+    "enabled": true,
+    "default_expiry_days": 90,
+    "push_feishu": true,
+    "feishu_template": "orange",
+    "include_watchlist_codes": true,
+    "include_holding_codes": true
+  },
+  "user_profile": {
+    "enabled": true,
+    "sector_match_boost": 3.0,
+    "sector_mismatch_penalty": 2.0,
+    "filter_non_preferred": false
+  },
   "watchlist": {
     "mode": "harness",
     "require_affordable_lot": true,

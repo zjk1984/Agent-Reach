@@ -682,6 +682,31 @@ def render_key_signals_markdown(ctx: CloseCardContext) -> str:
             f"跌停 {int(vs_y.get('limit_down_delta') or 0):+d} · "
             f"{north_s}"
         )
+
+    from agent_reach.daily_run.sentiment_alignment import (
+        build_portfolio_sentiment_alignment,
+        render_sentiment_alignment_markdown,
+    )
+
+    alignment_items = build_portfolio_sentiment_alignment(
+        symbol_rows=ctx.symbol_rows,
+        primary_snapshot=ctx.primary_snapshot,
+        market_review=ctx.market_review,
+    )
+    align_md = render_sentiment_alignment_markdown(alignment_items)
+    if align_md:
+        if lines:
+            lines.append("")
+        lines.append(align_md)
+
+    from agent_reach.daily_run.price_alerts import render_alerts_markdown
+
+    alerts_md = render_alerts_markdown(ctx.settings)
+    if alerts_md:
+        if lines:
+            lines.append("")
+        lines.append(alerts_md)
+
     return "\n".join(lines).strip() or "暂无额外关键信号"
 
 
