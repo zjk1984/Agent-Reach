@@ -239,6 +239,36 @@ def test_decide_trade_skips_hold_debounce_for_watchlist_zero_position(patch_week
     assert strikes["601138"] == 0
 
 
+def test_session_giveback_invalidates_hold_debounce(tmp_path, monkeypatch):
+    from agent_reach.daily_run.plan_invalidation import hold_debounce_invalidated
+
+    state_path = tmp_path / "intraday" / "000725.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(
+        '{"date": "2026-09-17", "scans": [], "trades": [], "session_highs": {"000725": 199.89}}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("agent_reach.daily_run.intraday._today_str", lambda: "2026-09-17")
+    monkeypatch.setattr(
+        "agent_reach.daily_run.intraday.default_state_path",
+        lambda code=None: state_path,
+    )
+    settings = {
+        "intraday": {
+            "defensive_trim": {
+                "hold_debounce": {"invalidate_on_session_giveback_pct": 2.5},
+            }
+        }
+    }
+    invalidated, reason = hold_debounce_invalidated(
+        "000725",
+        194.67,
+        settings=settings,
+    )
+    assert invalidated is True
+    assert "回落" in reason
+
+
 def test_harness_evolution_tightens_debounce_on_premature_trim_memory(monkeypatch):
     from agent_reach.daily_run.harness import HarnessEntry, HarnessState
     from agent_reach.daily_run.harness_policy import (

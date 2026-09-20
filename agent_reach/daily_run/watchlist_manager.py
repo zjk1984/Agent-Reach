@@ -690,7 +690,7 @@ def _add_candidates(
         profile_block = watchlist_blocked_by_profile(cand, settings=settings)
         if profile_block:
             continue
-        affordable, _budget_reason = watchlist_candidate_affordable(
+        affordable, budget_reason = watchlist_candidate_affordable(
             pf, enriched, settings, code
         )
         if not affordable:

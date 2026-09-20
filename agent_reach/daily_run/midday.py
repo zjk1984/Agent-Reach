@@ -9,6 +9,102 @@ from agent_reach.daily_run.pipeline import evaluate_snapshot
 from agent_reach.daily_run.settings import effective_settings, load_settings
 
 
+def giveback_review_cfg(settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    cfg = effective_settings(settings or load_settings())
+    raw = dict((cfg.get("midday") or {}).get("giveback_review") or {})
+    return {
+        "enabled": raw.get("enabled", True) is not False,
+        "morning_min_change_pct": float(raw.get("morning_min_change_pct", 5.0)),
+        "midday_max_change_pct": float(raw.get("midday_max_change_pct", 0.0)),
+        "session_giveback_min_pct": float(raw.get("session_giveback_min_pct", 4.0)),
+    }
+
+
+def build_morning_giveback_review(
+    enriched: dict[str, Any],
+    *,
+    settings: Optional[dict[str, Any]] = None,
+    state: Optional[dict[str, Any]] = None,
+) -> list[dict[str, Any]]:
+    """Flag holdings that rallied in the morning then gave back gains by midday."""
+    gcfg = giveback_review_cfg(settings)
+    if not gcfg["enabled"]:
+        return []
+
+    from agent_reach.daily_run.snapshot_builder import _normalize_code
+    from agent_reach.daily_run.workflows import load_morning_baseline
+
+    alerts: list[dict[str, Any]] = []
+    pf = enriched.get("portfolio") or {}
+    session_highs = dict((state or {}).get("session_highs") or {})
+    for holding in pf.get("holdings") or []:
+        if not isinstance(holding, dict):
+            continue
+        code = _normalize_code(str(holding.get("code") or ""))
+        if not code:
+            continue
+        name = str(holding.get("name") or code)
+        morning = load_morning_baseline(code=code) or {}
+        morning_price = morning.get("price")
+        if morning_price is None:
+            report = (morning.get("report") or {}) if isinstance(morning, dict) else {}
+            morning_price = report.get("price")
+        try:
+            morning_px = float(morning_price) if morning_price is not None else None
+        except (TypeError, ValueError):
+            morning_px = None
+        try:
+            current_px = float(holding.get("price")) if holding.get("price") is not None else None
+        except (TypeError, ValueError):
+            current_px = None
+        change_pct = holding.get("change_pct")
+        try:
+            chg = float(change_pct) if change_pct is not None else None
+        except (TypeError, ValueError):
+            chg = None
+
+        session_high = session_highs.get(code)
+        if session_high is None and morning_px is not None:
+            session_high = morning_px
+        giveback_pct = None
+        if session_high and current_px and session_high > 0:
+            giveback_pct = (float(session_high) - float(current_px)) / float(session_high) * 100.0
+
+        morning_rally = False
+        if morning_px and current_px and morning_px > 0:
+            morning_rally = (morning_px - current_px) / morning_px * 100.0 >= gcfg[
+                "session_giveback_min_pct"
+            ] or (chg is not None and chg <= gcfg["midday_max_change_pct"])
+        if chg is not None and chg >= gcfg["morning_min_change_pct"]:
+            morning_rally = True
+
+        if giveback_pct is not None and giveback_pct >= gcfg["session_giveback_min_pct"]:
+            alerts.append(
+                {
+                    "code": code,
+                    "name": name,
+                    "session_high": round(float(session_high or 0.0), 2),
+                    "current_price": round(float(current_px or 0.0), 2),
+                    "giveback_pct": round(float(giveback_pct), 2),
+                    "change_pct": chg,
+                    "action_hint": "午盘 re-eval：考虑 trim / 下调 verdict，勿仅依赖 week_open 持有 debounce",
+                }
+            )
+        elif morning_rally and chg is not None and chg <= gcfg["midday_max_change_pct"]:
+            alerts.append(
+                {
+                    "code": code,
+                    "name": name,
+                    "session_high": round(float(session_high or morning_px or 0.0), 2),
+                    "current_price": round(float(current_px or 0.0), 2),
+                    "giveback_pct": round(float(giveback_pct or 0.0), 2),
+                    "change_pct": chg,
+                    "action_hint": "早强午弱：关注 hold_debounce 让位与 defensive_trim 窗口",
+                }
+            )
+    return alerts
+
+
 def midday_cfg(settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     cfg = effective_settings(settings or load_settings())
     raw = cfg.get("midday") or {}
@@ -182,6 +278,7 @@ def render_midday_markdown(
     enriched = scan_result.get("enriched") or {}
     xueqiu_cross = scan_result.get("xueqiu_cross") or {}
     macro_only = bool(scan_result.get("macro_only"))
+    giveback_alerts = list(scan_result.get("giveback_review") or [])
 
     trend_map = {
         "rising": "上升",
@@ -212,6 +309,14 @@ def render_midday_markdown(
             "",
             "**说明：** 12:30 不写入 intraday 扫描（11:30 停价）；仅刷新宏观/舆情，13:05 起常规扫描确认。",
         ]
+        if giveback_alerts:
+            lines.extend(["", "**⚠️ 早强午弱 re-eval**"])
+            for row in giveback_alerts[:5]:
+                lines.append(
+                    f"- **{row.get('name')} ({row.get('code')})** 高 {row.get('session_high')} → "
+                    f"现 {row.get('current_price')}（回吐 {row.get('giveback_pct')}%）· "
+                    f"{row.get('action_hint')}"
+                )
     else:
         lines = [
             f"**☀️ 午盘分析 · {scan.get('scan_id', '—')}**",
@@ -399,6 +504,15 @@ def run_midday(
     else:
         scan_result = _build_macro_only_scan_result(enriched, st, settings=cfg)
         steps.append("macro_only")
+
+    giveback = build_morning_giveback_review(
+        enriched,
+        settings=cfg,
+        state=st.to_dict(),
+    )
+    if giveback:
+        scan_result["giveback_review"] = giveback
+        steps.append("giveback_review")
 
     scan = scan_result.get("scan") or {}
     anchor_trend = scan_result.get("anchor_trend") or scan_result.get("trend") or "flat"

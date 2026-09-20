@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from agent_reach.daily_run.midday import (
     apply_midday_macro_refresh,
+    build_morning_giveback_review,
     midday_cfg,
     render_midday_markdown,
     run_midday,
@@ -252,3 +253,29 @@ def test_render_midday_markdown_sections():
     assert "午休宏观刷新" in md
     assert "午后 Lookback" in md
     assert "午休锚点" in md
+
+
+def test_build_morning_giveback_review_flags_intraday_reversal():
+    with patch(
+        "agent_reach.daily_run.workflows.load_morning_baseline",
+        return_value={"price": 199.89, "report": {"mss_final": 52.0}},
+    ):
+        alerts = build_morning_giveback_review(
+            {
+                "portfolio": {
+                    "holdings": [
+                        {
+                            "code": "688008",
+                            "name": "澜起科技",
+                            "price": 194.67,
+                            "change_pct": -2.61,
+                        }
+                    ]
+                }
+            },
+            settings={"midday": {"giveback_review": {"enabled": True}}},
+            state={"session_highs": {"688008": 199.89}},
+        )
+    assert len(alerts) == 1
+    assert alerts[0]["code"] == "688008"
+    assert alerts[0]["giveback_pct"] >= 2.5

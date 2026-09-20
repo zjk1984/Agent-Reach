@@ -16,6 +16,9 @@ def plan_invalidation_cfg(settings: Optional[dict[str, Any]] = None) -> dict[str
     return {
         "invalidate_below_plan_stop": raw.get("invalidate_below_plan_stop", True) is not False,
         "invalidate_below_forecast_low": raw.get("invalidate_below_forecast_low", False) is True,
+        "invalidate_on_session_giveback_pct": float(
+            raw.get("invalidate_on_session_giveback_pct", 2.5)
+        ),
     }
 
 
@@ -88,6 +91,23 @@ def symbol_forecast_low_price(code: str, *, settings: Optional[dict[str, Any]] =
     return None
 
 
+def _session_high_price(code: str) -> Optional[float]:
+    norm = _normalize_code(code)
+    if not norm:
+        return None
+    try:
+        from agent_reach.daily_run.intraday import default_state_path, load_state
+
+        st = load_state(default_state_path(norm), code=norm)
+        highs = getattr(st, "session_highs", None) or {}
+        val = highs.get(norm)
+        if val is not None:
+            return float(val)
+    except Exception:
+        return None
+    return None
+
+
 def hold_debounce_invalidated(
     code: str,
     price: Optional[float],
@@ -106,6 +126,17 @@ def hold_debounce_invalidated(
         low = symbol_forecast_low_price(code, settings=settings)
         if low is not None and px <= low:
             return True, f"现价 {px:.2f} ≤ 预测下沿 {low:.2f}，hold_debounce 让位"
+    giveback_pct = float(cfg.get("invalidate_on_session_giveback_pct", 0.0) or 0.0)
+    if giveback_pct > 0:
+        session_high = _session_high_price(code)
+        if session_high is not None and session_high > px:
+            drop_pct = (session_high - px) / session_high * 100.0
+            if drop_pct >= giveback_pct:
+                return (
+                    True,
+                    f"自 session 高点 {session_high:.2f} 回落 {drop_pct:.1f}%"
+                    f" ≥ {giveback_pct:.1f}%，hold_debounce 让位",
+                )
     return False, ""
 
 

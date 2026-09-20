@@ -1482,6 +1482,7 @@ def buy_budget_precheck_reason(
 
 
 def watchlist_require_affordable_lot(settings: dict[str, Any]) -> bool:
+    """When True, watchlist selection skips names whose min lot exceeds per-trade deploy budget."""
     wl = settings.get("watchlist") or {}
     return wl.get("require_affordable_lot", True) is not False
 
@@ -1491,6 +1492,7 @@ def watchlist_per_trade_budget(
     enriched: dict[str, dict[str, Any]],
     settings: dict[str, Any],
 ) -> Optional[dict[str, Any]]:
+    """Per-trade gross budget after deploy_ratio / harness caps (net of commission divisor)."""
     from agent_reach.daily_run.harness_policy import _position_policy
 
     holdings = list(pf.get("holdings") or [])
@@ -1521,6 +1523,7 @@ def watchlist_min_lot_cost(
     *,
     commission_rate: float = 0.0015,
 ) -> Optional[tuple[float, float, str]]:
+    """Return (min_lot_cost, price, name) or None when quote is unavailable."""
     code = _normalize_code(code)
     target = _resolve_buy_row(code, pf, enriched)
     if target is None:
@@ -1539,20 +1542,28 @@ def watchlist_candidate_affordable(
     settings: dict[str, Any],
     code: str,
 ) -> tuple[bool, Optional[str]]:
+    """True when deploy_ratio-scoped per-trade budget can cover one exchange min lot."""
     if not watchlist_require_affordable_lot(settings):
         return True, None
+
     budget = watchlist_per_trade_budget(pf, enriched, settings)
     if budget is None:
         return False, "可部署现金不足，无法评估观察池预算"
+
     lot = watchlist_min_lot_cost(
-        code, pf, enriched, commission_rate=float(budget["commission_rate"])
+        code,
+        pf,
+        enriched,
+        commission_rate=float(budget["commission_rate"]),
     )
     if lot is None:
         return False, "缺少报价，无法评估一手成本"
+
     min_cost, _price, name = lot
     per_budget = float(budget["per_budget"])
     if min_cost <= per_budget + 0.01:
         return True, None
+
     deploy_ratio = float(budget["deploy_ratio"])
     return (
         False,

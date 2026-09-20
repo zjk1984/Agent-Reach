@@ -7,6 +7,7 @@ from pathlib import Path
 from agent_reach.daily_run.defensive_trim_guards import (
     defensive_trim_blocked_by_near_day_low,
     defensive_trim_blocked_by_recovery_zone,
+    defensive_trim_blocked_by_sector_outperform,
     defensive_trim_blocked_by_strength,
     evaluate_defensive_trim_sell,
     mixed_early_mss_recovery,
@@ -73,6 +74,27 @@ def test_mixed_early_recovery_at_lookback_51(tmp_path, monkeypatch):
     reading = resolve_harness_reading_signals(settings)
     assert reading.get("mixed_early_recovery") is True
     assert reading.get("mss_recovery") is True
+
+
+def test_sector_outperform_blocks_falling_trend_trim(monkeypatch):
+    monkeypatch.setattr(
+        "agent_reach.daily_run.defensive_trim_guards._sector_change_pct",
+        lambda sector, **kwargs: 1.55 if sector == "面板" else None,
+    )
+    reason = defensive_trim_blocked_by_sector_outperform(
+        {"intraday": {"defensive_trim": {"sector_outperform_guard": True}}},
+        trend="falling",
+        code="000725",
+        snapshot={
+            "portfolio": {
+                "holdings": [
+                    {"code": "000725", "name": "京东方Ａ", "sector": "面板", "change_pct": 5.5}
+                ]
+            }
+        },
+    )
+    assert reason is not None
+    assert "面板" in reason
 
 
 def test_strength_filter_blocks_trim_on_strong_symbol(tmp_path, monkeypatch):
