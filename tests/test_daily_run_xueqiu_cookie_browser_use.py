@@ -122,8 +122,11 @@ def test_refresh_via_browser_use_library_fallback():
     assert result["browser_login"]["method"] == "browser-use-library"
 
 
-def test_refresh_prefers_browser_use_when_enabled():
+def test_refresh_prefers_browser_use_when_playwright_disabled():
     with patch(
+        "agent_reach.daily_run.xueqiu_cookie_playwright.playwright_available",
+        return_value=False,
+    ), patch(
         "agent_reach.daily_run.xueqiu_cookie_browser_use.browser_use_available",
         return_value=True,
     ), patch(
@@ -135,7 +138,12 @@ def test_refresh_prefers_browser_use_when_enabled():
         from agent_reach.daily_run.xueqiu_cookie_health import refresh_xueqiu_cookie_from_browser
 
         out = refresh_xueqiu_cookie_from_browser(
-            settings={"week_forecast": {"xueqiu_cookie_use_browser_use": True}}
+            settings={
+                "week_forecast": {
+                    "xueqiu_cookie_use_playwright": False,
+                    "xueqiu_cookie_use_browser_use": True,
+                }
+            }
         )
     mock_bu.assert_called_once()
     mock_legacy.assert_not_called()

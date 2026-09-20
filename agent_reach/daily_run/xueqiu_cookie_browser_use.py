@@ -141,7 +141,7 @@ def _refresh_via_browser_use_cli(
     config=None,
 ) -> dict[str, Any]:
     wf = _week_forecast_settings(settings)
-    url = str(wf.get("xueqiu_cookie_browser_login_url") or "https://xueqiu.com").strip()
+    url = str(wf.get("xueqiu_cookie_browser_login_url") or "https://xueqiu.com/user/login").strip()
     profile = str(
         wf.get("xueqiu_cookie_browser_use_profile")
         or wf.get("xueqiu_cookie_browser_profile")
@@ -292,7 +292,7 @@ async def _async_refresh_xueqiu_cookie_library(
     from browser_use import Browser
 
     wf = _week_forecast_settings(settings)
-    url = str(wf.get("xueqiu_cookie_browser_login_url") or "https://xueqiu.com").strip()
+    url = str(wf.get("xueqiu_cookie_browser_login_url") or "https://xueqiu.com/user/login").strip()
     profile = str(
         wf.get("xueqiu_cookie_browser_use_profile")
         or wf.get("xueqiu_cookie_browser_profile")

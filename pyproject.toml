@@ -43,6 +43,7 @@ cookies = ["browser-cookie3>=0.19"]
 daily-run = [
     "akshare>=1.12",
     "browser-use @ git+https://github.com/zjk1984/browser-use.git",
+    "playwright>=1.40",
 ]
 daily-run-kronos = [
     "akshare>=1.12",
