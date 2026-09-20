@@ -541,9 +541,13 @@ def refresh_xueqiu_cookie_from_browser(
     Sync Xueqiu cookie from a logged-in local browser into agent-reach config.
 
     Used before Sunday forecast when ``week_forecast.xueqiu_cookie_auto_refresh_from_browser``
-    is enabled. Prefers Playwright headed login (ticket-sniper pattern) when
-    ``xueqiu_cookie_use_playwright`` is true; then browser-use (Chrome CDP); otherwise
-    opens Chrome via subprocess and extracts via rookiepy / browser_cookie3.
+    is enabled. Order (ticket-sniper / Playwright first):
+
+    1. ``xueqiu_session.json`` (saved headed login)
+    2. Playwright persistent profile (headless read — cron-safe)
+    3. Playwright headed login (desktop / ``daily-run xueqiu login``)
+    4. browser-use CDP (optional, off by default)
+    5. Chrome subprocess + cookie extract fallback
     """
     wf = _week_forecast_settings(settings)
     if wf.get("xueqiu_cookie_auto_refresh_from_browser", True) is False:
@@ -552,8 +556,18 @@ def refresh_xueqiu_cookie_from_browser(
     if _use_playwright(settings):
         from agent_reach.daily_run.xueqiu_cookie_playwright import (
             playwright_available,
+            refresh_xueqiu_cookie_from_profile_headless,
+            refresh_xueqiu_cookie_from_session_file,
             refresh_xueqiu_cookie_via_playwright,
         )
+
+        session_result = refresh_xueqiu_cookie_from_session_file(settings=settings, config=config)
+        if session_result.get("success"):
+            return session_result
+
+        profile_result = refresh_xueqiu_cookie_from_profile_headless(settings=settings, config=config)
+        if profile_result.get("success"):
+            return profile_result
 
         if playwright_available():
             pw_result = refresh_xueqiu_cookie_via_playwright(settings=settings, config=config)
@@ -562,9 +576,20 @@ def refresh_xueqiu_cookie_from_browser(
             if pw_result.get("skipped") and pw_result.get("reason") == "playwright_not_installed":
                 pass
             elif pw_result.get("skipped") and pw_result.get("reason") == "no_display":
-                pass
+                # Cron/headless: do not fall through to browser-use (needs Chrome remote debugging).
+                return {
+                    "skipped": True,
+                    "success": False,
+                    "reason": "no_display",
+                    "engine": pw_result.get("engine"),
+                    "browser_login": pw_result.get("browser_login"),
+                    "message": (
+                        "无图形界面，无法 headed 登录。"
+                        "请在本机运行: python3 -m agent_reach.cli daily-run xueqiu login"
+                    ),
+                    "job": "xueqiu_cookie_refresh",
+                }
             else:
-                # Playwright ran but login timed out or errored — surface result (login page was opened).
                 return pw_result
 
     if _use_browser_use(settings):
@@ -700,14 +725,22 @@ def render_xueqiu_cookie_alert_markdown(health: Optional[dict[str, Any]] = None,
         'xueqiu_cookie: "xq_a_token=...; u=...; ..."',
         "```",
         "",
-        "**方式 B — 本地 Chrome 一键提取**（需本机已登录雪球）",
+        "**方式 B — Playwright 网页登录**（推荐，借鉴 ticket-sniper）",
+        "",
+        "```bash",
+        "python3 -m playwright install chromium   # 首次需安装浏览器",
+        "python3 -m agent_reach.cli daily-run xueqiu login",
+        "python3 -m agent_reach.cli doctor",
+        "```",
+        "",
+        "**方式 C — 本地 Chrome Cookie 提取**（需本机已登录雪球）",
         "",
         "```bash",
         "python3 -m agent_reach.cli configure --from-browser chrome",
         "python3 -m agent_reach.cli doctor",
         "```",
         "",
-        "**方式 C — 环境变量**（Cloud Agent / cron）",
+        "**方式 D — 环境变量**（Cloud Agent / cron）",
         "",
         "```bash",
         "export XUEQIU_COOKIE='xq_a_token=...; u=...; ...'",
