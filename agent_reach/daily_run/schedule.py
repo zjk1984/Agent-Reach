@@ -317,6 +317,25 @@ def run_scheduled(
             )
     except JobBusyError as exc:
         result = {"job": job, "skipped": True, "reason": str(exc), "guard": "lock"}
+        try:
+            from agent_reach.daily_run.decision_trace import (
+                append_decision_event,
+                build_late_scan_event,
+            )
+
+            append_decision_event(
+                build_late_scan_event(
+                    job=job,
+                    scan_id="LOCK",
+                    code="SYSTEM",
+                    name="run_guard",
+                    reason=str(exc),
+                    settings=settings,
+                ),
+                settings=settings,
+            )
+        except Exception:
+            pass
         _apply_scheduled_guard_harness(job, str(exc), "lock", settings, result=result)
         _attach_manifest_harness_summary(result)
         save_run_manifest(job, result, duration_ms=0)
