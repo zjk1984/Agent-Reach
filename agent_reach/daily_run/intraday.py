@@ -208,6 +208,10 @@ TRADE_BLOCK_MESSAGES: dict[str, str] = {
         "⚠️ **风控阻断：** 周日计划为「持有」，defensive_trim 需连续确认后再减仓"
     ),
     "sell_profit_lock": "⚠️ **风控阻断：** 动态止盈条件未满足或今日已执行，维持观望",
+    "playbook_no_add": "⚠️ **Playbook 阻断：** 今日计划禁止加仓或非观察池标的",
+    "playbook_weight_ceiling": "⚠️ **Playbook 阻断：** 加仓后将超过 playbook 单票权重上限",
+    "playbook_total_cap": "⚠️ **Playbook 阻断：** 加仓后将超过总股票仓位 37% 上限",
+    "playbook_weight_floor": "⚠️ **Playbook 阻断：** 防御减仓将跌破 playbook 仓位下限（硬止损除外）",
 }
 
 
@@ -1263,6 +1267,13 @@ def infer_trade_block_kind(decision: TradeDecision | dict[str, Any]) -> Optional
         return "buy_cash"
     if "可部署买入预算" in reasoning or "不足一手" in reasoning:
         return "buy_budget"
+    if "Playbook 契约" in reasoning or block_kind in (
+        "playbook_no_add",
+        "playbook_weight_ceiling",
+        "playbook_total_cap",
+        "playbook_weight_floor",
+    ):
+        return str(block_kind) if block_kind else "playbook_no_add"
     if "审计" in reasoning:
         return "audit"
     if "阻断买入" in reasoning or ("标签" in reasoning and "阻断" in reasoning):
@@ -1865,6 +1876,31 @@ def _decide_trade(
                 max_position_pct_override=max_pos_override,
                 watchlist_breakout=breakout.eligible,
             )
+        from agent_reach.daily_run.playbook_contract_guard import playbook_contract_buy_block
+
+        playbook_block = playbook_contract_buy_block(
+            settings=settings,
+            portfolio=portfolio,
+            snapshot=snapshot,
+            code=symbol_code,
+            cash_limit_bypass=cash_limit_bypass,
+            max_position_pct_override=max_pos_override,
+        )
+        if playbook_block:
+            return TradeDecision(
+                action="buy",
+                trade_id=trade_id,
+                lookback_mss=lookback_mss,
+                lookback_detail=[],
+                trend=trend,
+                reasoning=f"{playbook_block.reason}{overlay_note}",
+                blocked=True,
+                block_kind=playbook_block.block_kind,
+                friction_blocked=False,
+                expected_return_pct=exp_ret,
+                max_position_pct_override=max_pos_override,
+                watchlist_breakout=breakout.eligible,
+            )
         if friction_blocked and not breakout.eligible:
             return TradeDecision(
                 action="hold",
@@ -2042,6 +2078,40 @@ def _decide_trade(
                     expected_return_pct=exp_ret,
                 )
             if _decision_symbol_sellable(snapshot, settings, report.get("code")):
+                from agent_reach.daily_run.playbook_contract_guard import (
+                    estimate_defensive_trim_sell_shares,
+                    playbook_contract_sell_block,
+                )
+
+                symbol_code = str(report.get("code") or "")
+                est_shares = estimate_defensive_trim_sell_shares(
+                    portfolio,
+                    symbol_code,
+                    settings,
+                    sell_ratio_override=hold_sell_ratio_cap,
+                )
+                floor_block = playbook_contract_sell_block(
+                    settings=settings,
+                    portfolio=portfolio,
+                    snapshot=snapshot,
+                    code=symbol_code,
+                    sell_shares=est_shares,
+                    sell_kind="defensive_trim",
+                    price=_optional_float(report.get("price")),
+                )
+                if floor_block:
+                    return TradeDecision(
+                        action="hold",
+                        trade_id=trade_id,
+                        lookback_mss=lookback_mss,
+                        lookback_detail=[],
+                        trend=trend,
+                        reasoning=f"{floor_block.reason}{overlay_note}",
+                        blocked=True,
+                        block_kind=floor_block.block_kind,
+                        friction_blocked=False,
+                        expected_return_pct=exp_ret,
+                    )
                 return TradeDecision(
                     action="sell",
                     trade_id=trade_id,

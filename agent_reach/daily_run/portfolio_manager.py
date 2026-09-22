@@ -790,6 +790,32 @@ def apply_auto_adjust(
 
     if action == "sell":
         prefer_code = _normalize_code(str(snapshot.get("code") or ""))
+        sell_kind = (
+            getattr(decision, "sell_kind", None)
+            if not isinstance(decision, dict)
+            else decision.get("sell_kind")
+        )
+        sell_preview = _preview_sell_shares(
+            pf,
+            enriched,
+            settings,
+            decision,
+            prefer_code=prefer_code or None,
+        )
+        if sell_preview > 0:
+            from agent_reach.daily_run.playbook_contract_guard import playbook_contract_sell_block
+
+            floor_block = playbook_contract_sell_block(
+                settings=settings,
+                portfolio=pf,
+                snapshot=snapshot,
+                code=prefer_code,
+                sell_shares=sell_preview,
+                sell_kind=sell_kind,
+                price=_optional_float(snapshot.get("price")),
+            )
+            if floor_block:
+                return ApplyResult(applied=False, portfolio=portfolio, message=floor_block.reason)
         return _apply_sell(
             pf,
             enriched,
@@ -805,6 +831,19 @@ def apply_auto_adjust(
             if not isinstance(decision, dict)
             else decision.get("max_position_pct_override")
         )
+        from agent_reach.daily_run.playbook_contract_guard import playbook_contract_buy_block
+
+        playbook_block = playbook_contract_buy_block(
+            settings=settings,
+            portfolio=pf,
+            snapshot=snapshot,
+            enriched=enriched,
+            code=prefer_code,
+            cash_limit_bypass=cash_limit_bypass,
+            max_position_pct_override=max_position_pct_override,
+        )
+        if playbook_block:
+            return ApplyResult(applied=False, portfolio=portfolio, message=playbook_block.reason)
         return _apply_buy(
             pf,
             enriched,
@@ -830,6 +869,65 @@ def _sell_oco_group_id(sell_kind: Optional[str], sell_analysis: dict[str, Any]) 
     if ratio < 0.999:
         return "partial_sell_oco"
     return ""
+
+
+def _preview_sell_shares(
+    pf: dict[str, Any],
+    enriched: dict[str, dict[str, Any]],
+    settings: dict[str, Any],
+    decision: Any,
+    *,
+    prefer_code: Optional[str] = None,
+) -> int:
+    """Estimate sell share count for playbook guard (mirrors _apply_sell sizing)."""
+    code = _normalize_code(str(prefer_code or ""))
+    if not code:
+        return 0
+    holdings = list(pf.get("holdings") or [])
+    target = None
+    for h in holdings:
+        if _normalize_code(str(h.get("code", ""))) == code:
+            target = dict(h)
+            break
+    if target is None:
+        return 0
+    target.update(enriched.get(code, {}))
+    sellable = holding_sellable_shares(target)
+    if sellable <= 0:
+        return 0
+
+    sell_ratio_override = None
+    sell_kind = None
+    if hasattr(decision, "sell_ratio_override"):
+        sell_ratio_override = getattr(decision, "sell_ratio_override", None)
+        sell_kind = getattr(decision, "sell_kind", None)
+    elif isinstance(decision, dict):
+        sell_ratio_override = decision.get("sell_ratio_override")
+        sell_kind = decision.get("sell_kind")
+
+    sell_analysis = deep_loss_sell_analysis(
+        pf,
+        target,
+        enriched,
+        settings,
+        sell_kind=sell_kind,
+    )
+    if not sell_analysis.get("allowed"):
+        return 0
+
+    if sell_kind == "defensive_trim" and sell_ratio_override is not None:
+        capped = min(float(sell_analysis.get("sell_ratio") or 1.0), float(sell_ratio_override))
+        sell_shares = resolve_deep_loss_sell_shares(
+            min(int(target.get("shares") or 0), sellable),
+            code,
+            settings,
+            is_deep_loss=bool(sell_analysis.get("is_deep_loss")),
+            sell_ratio_override=capped,
+        )
+        sell_analysis = {**sell_analysis, "sell_shares": sell_shares}
+
+    shares = min(int(sell_analysis.get("sell_shares") or 0), sellable)
+    return _round_lot(code, shares, total_shares=sellable)
 
 
 def _apply_sell(

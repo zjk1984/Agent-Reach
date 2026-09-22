@@ -53,6 +53,10 @@ def verify_to_harness_evidence(verify: dict[str, Any]) -> dict[str, Any]:
         if "观望正确" in text or ("观望" in text and "正确" in text):
             memory.append("观望正确：session_verdict 维持或略收紧冲高回落阈值")
             playbook.append("session_verdict：正样本观望，保留 S4+ 降级 guard")
+        if "stock_weight" in text or "总仓" in text or "37%" in text:
+            plan.append("close：Friday stock_weight ≤37%")
+        if "碎步" in text or "6.3%" in text or "7%" in text:
+            plan.append("intraday：海能达无碎步 partial sell")
 
     if verify.get("mss_within_prediction") is False:
         memory.append("MSS 预测偏离：下日调低进攻阈值或缩窄仓位")
@@ -78,6 +82,12 @@ def verify_to_harness_evidence(verify: dict[str, Any]) -> dict[str, Any]:
         policy.append("卡片脚注 Harness 有效参数 ≠ 宏观否决触发次数")
     elif block_kind == "sell_defensive_trim":
         memory.append("防御减仓被 rebound/recovery 保护阻断时，检查 hold_debounce 与 plan 一致性")
+    elif block_kind == "playbook_weight_floor":
+        memory.append("海能达类碎步减仓：defensive_trim 触发但 playbook 仓位下限阻断")
+        plan.append("intraday：海能达 partial sell 后权重 ≥7% 或硬止损触发")
+    elif block_kind in ("playbook_no_add", "playbook_weight_ceiling", "playbook_total_cap"):
+        memory.append(f"Playbook 加仓阻断 ({block_kind})：非观察池或超总仓/单票上限")
+        plan.append("intraday：非观察池 buy 须 morning 计划允许或 guard playbook_no_add")
 
     open_dev = len(verify.get("deviations") or [])
     summary = f"verify {name} deviations={open_dev} hit={verify.get('mss_within_prediction')}"
