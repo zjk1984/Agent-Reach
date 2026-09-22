@@ -325,6 +325,18 @@
     "harness_evolve": true
   },
 
+  "decision_trace": {
+    "enabled": true,
+    "jsonl_dir": "~/.agent-reach/daily_run/logs",
+    "ring_buffer_scans": 60,
+    "include_probabilities": false,
+    "llm_usd_per_mtok": 0.14
+  },
+
+  "decision_model": {
+    "backend": "rule"
+  },
+
   "pnl_overview": {
     "harness_evolve": true,
     "large_unrealized_loss_cny": 5000,

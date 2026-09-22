@@ -928,6 +928,35 @@ def evaluate_trade(
     )
     markdown = markdown + "\n\n---\n\n" + render_apply_markdown(apply_result, decision=decision)
 
+    decision_trace_event = None
+    decision_trace_md = ""
+    try:
+        from agent_reach.daily_run.decision_trace import (
+            append_decision_event,
+            build_event_from_trade_eval,
+            render_decision_trace_markdown,
+        )
+
+        scan_id = str(st.scans[-1].get("scan_id") or "S?") if st.scans else "S?"
+        decision_trace_event = build_event_from_trade_eval(
+            job="intraday",
+            scan_id=scan_id,
+            report=report,
+            snapshot=enriched,
+            decision=decision,
+            apply_result=apply_result,
+            lookback_mss=lookback_mss,
+            trend=trend,
+            scans=st.scans,
+            settings=cfg,
+        )
+        append_decision_event(decision_trace_event, settings=cfg)
+        decision_trace_md = render_decision_trace_markdown(decision_trace_event)
+        if decision_trace_md:
+            markdown = markdown + "\n\n---\n\n" + decision_trace_md
+    except Exception:
+        pass
+
     return {
         "decision": decision.to_dict(),
         "trade": trade_record,
@@ -935,6 +964,10 @@ def evaluate_trade(
         "evaluation": evaluation,
         "portfolio_apply": apply_result.to_dict(),
         "markdown": markdown,
+        "decision_trace": (
+            decision_trace_event.to_dict() if decision_trace_event is not None else None
+        ),
+        "decision_trace_markdown": decision_trace_md or None,
     }
 
 
@@ -1094,6 +1127,9 @@ def run_intraday(
             md_parts.insert(0, "\n".join(warn_lines) + "\n\n---\n\n")
         if trade_result:
             md_parts.append("\n---\n\n" + trade_result["markdown"])
+            trace_md = trade_result.get("decision_trace_markdown")
+            if trace_md and trace_md not in (trade_result.get("markdown") or ""):
+                md_parts.append("\n---\n\n" + trace_md)
         try:
             feishu_result = send_card(cfg_obj, card_title, "\n".join(md_parts), template=tpl)
             steps.append("push")

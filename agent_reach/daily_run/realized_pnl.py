@@ -1021,6 +1021,14 @@ def render_pnl_overview_markdown(overview: PnlOverview | dict[str, Any]) -> str:
     lines.append(
         f"- **总收益** {total:+,.0f} = **历史已实现** {realized:+,.0f} + **当前持股** {unrealized:+,.0f}"
     )
+    try:
+        from agent_reach.daily_run.decision_trace import render_daily_llm_cost_line
+
+        cost_line = render_daily_llm_cost_line(daily_pnl=total if total else None)
+        if cost_line:
+            lines.append(f"- {cost_line}")
+    except Exception:
+        pass
     wins = int(data.get("win_count") or 0)
     losses = int(data.get("loss_count") or 0)
     if wins or losses:
