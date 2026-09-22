@@ -225,6 +225,14 @@ def intraday_to_harness_evidence(
                 "buy_max_holdings",
             ):
                 playbook.append(f"正面摩擦：{name} 买入预算/仓位上限阻断，避免过度加仓")
+            block_kind = str(decision.get("block_kind") or "")
+            if block_kind == "playbook_weight_floor":
+                policy.append(f"Playbook 仓位下限：{name} defensive_trim 碎步减仓被阻断")
+                plan.append("intraday：海能达 partial sell 后权重 ≥7% 或硬止损触发")
+            elif block_kind in ("playbook_no_add", "playbook_weight_ceiling", "playbook_total_cap"):
+                playbook.append(f"Playbook 契约阻断 {name} 加仓（{block_kind}）")
+            elif block_kind == "buy_budget" and "688008" in str(scan.get("code") or ""):
+                playbook.append("澜起 MSS可做 + apply=hold + 预算不足一手（verify #8 可 grep）")
 
     _append_profit_lock_harness_evidence(
         memory,

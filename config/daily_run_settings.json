@@ -333,6 +333,38 @@
     "llm_usd_per_mtok": 0.14
   },
 
+  "playbook_contract": {
+    "enabled": true,
+    "require_morning_handoff": true,
+    "total_stock_weight_cap_pct": 37.0,
+    "target_tolerance_pp": 2.0,
+    "watchlist_buy_codes": ["603986"],
+    "block_add_operations": ["持有", "观望"],
+    "hard_stop_prices": {
+      "002583": 8.0
+    },
+    "symbols": {
+      "688008": {
+        "block_add": true,
+        "max_weight_pct": 25.0,
+        "target_weight_pct": 19.0
+      },
+      "002583": {
+        "min_weight_pct": 7.0,
+        "target_weight_pct": 10.0
+      },
+      "002415": {
+        "block_add": true,
+        "max_weight_pct": 13.0,
+        "target_weight_pct": 13.0
+      },
+      "000725": {
+        "block_add": true,
+        "target_weight_pct": 2.0
+      }
+    }
+  },
+
   "decision_model": {
     "backend": "rule"
   },
