@@ -92,6 +92,72 @@ def effective_watchlist_min(settings: dict[str, Any], portfolio: dict[str, Any])
     return min(minimum, max_watchlist_size(settings, portfolio))
 
 
+def enrich_snapshot_with_watchlist_candidate_quotes(
+    snapshot: dict[str, Any],
+    portfolio: dict[str, Any],
+    settings: dict[str, Any],
+    *,
+    config=None,
+) -> None:
+    """Batch-fetch quotes for config watchlist candidates missing from snapshot."""
+    from agent_reach.daily_run.portfolio_manager import _price_for
+    from agent_reach.daily_run.quote_fetch import fetch_quotes_map
+
+    if not watchlist_require_affordable_lot(settings):
+        return
+
+    held = {
+        _normalize_code(str(h.get("code", "")))
+        for h in portfolio.get("holdings") or []
+        if h.get("code")
+    }
+    candidates = effective_watchlist_candidates(settings)
+    candidate_codes = [
+        _normalize_code(str(c.get("code", "")))
+        for c in candidates
+        if c.get("code")
+    ]
+    need = [c for c in dict.fromkeys(candidate_codes) if c and c not in held]
+    if not need:
+        return
+
+    prelim = build_enriched_symbols(snapshot)
+    missing = [
+        code
+        for code in need
+        if _price_for(prelim.get(code, {}), prelim) is None
+    ]
+    if not missing:
+        return
+
+    result = fetch_quotes_map(missing, config, settings=settings)
+    name_by_code = {
+        _normalize_code(str(c.get("code", ""))): str(c.get("name") or "")
+        for c in candidates
+        if c.get("code")
+    }
+    wl_by_code = {
+        _normalize_code(str(w.get("code", ""))): dict(w)
+        for w in snapshot.get("watchlist") or []
+        if w.get("code")
+    }
+    for code in missing:
+        quote = result.quotes.get(code) or {}
+        if quote.get("price") is None:
+            continue
+        row = wl_by_code.get(code) or {"code": code}
+        row = {
+            **row,
+            "code": code,
+            "name": quote.get("name") or row.get("name") or name_by_code.get(code) or code,
+        }
+        for key in ("price", "change_pct", "sector", "industry", "volume", "turnover"):
+            if quote.get(key) is not None:
+                row[key] = quote[key]
+        wl_by_code[code] = row
+    snapshot["watchlist"] = list(wl_by_code.values())
+
+
 def adjust_watchlist(
     portfolio: dict[str, Any],
     snapshot: dict[str, Any],
@@ -113,6 +179,9 @@ def adjust_watchlist(
         )
     if not is_watchlist_adjust_enabled(settings):
         return WatchlistAdjustResult(applied=False, portfolio=portfolio, message="watchlist.auto_adjust 未启用")
+
+    if phase == "morning":
+        enrich_snapshot_with_watchlist_candidate_quotes(snapshot, portfolio, settings)
 
     pf = copy_portfolio(portfolio)
     enriched = build_enriched_symbols(snapshot)

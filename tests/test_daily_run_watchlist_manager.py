@@ -14,6 +14,7 @@ from agent_reach.daily_run.watchlist_manager import (
     adjust_watchlist,
     can_adjust_watchlist,
     collect_intraday_sold_codes,
+    enrich_snapshot_with_watchlist_candidate_quotes,
 )
 
 
@@ -391,3 +392,97 @@ class TestWatchlistAffordableLot:
         result = adjust_watchlist(portfolio, snapshot, settings, "morning")
         codes = {w["code"] for w in result.portfolio["watchlist"]}
         assert "688981" in codes
+
+
+class TestMorningCandidateQuoteEnrich:
+    def test_enrich_snapshot_fetches_missing_candidate_quotes(self, portfolio, settings, monkeypatch):
+        settings["watchlist"]["require_affordable_lot"] = True
+        settings["watchlist"]["candidates"] = [
+            {"code": "000725", "name": "京东方A", "keywords": ["京东方"]},
+            {"code": "688981", "name": "中芯国际", "keywords": ["中芯"]},
+        ]
+        snapshot = {
+            "code": "688008",
+            "price": 247.15,
+            "portfolio": {"holdings": portfolio["holdings"]},
+            "watchlist": [],
+        }
+
+        def _fake_fetch(codes, config=None, *, settings=None):
+            from agent_reach.daily_run.quote_fetch import QuoteFetchResult
+
+            quotes = {
+                "000725": {"code": "000725", "name": "京东方A", "price": 5.75, "change_pct": 1.0},
+                "688981": {"code": "688981", "name": "中芯国际", "price": 119.0, "change_pct": -1.0},
+            }
+            return QuoteFetchResult(quotes={c: quotes[c] for c in codes if c in quotes})
+
+        monkeypatch.setattr(
+            "agent_reach.daily_run.quote_fetch.fetch_quotes_map",
+            _fake_fetch,
+        )
+        enrich_snapshot_with_watchlist_candidate_quotes(snapshot, portfolio, settings)
+        by_code = {w["code"]: w for w in snapshot["watchlist"]}
+        assert by_code["000725"]["price"] == 5.75
+        assert by_code["688981"]["price"] == 119.0
+
+    def test_morning_adjust_adds_candidates_after_quote_enrich(
+        self, portfolio, settings, monkeypatch
+    ):
+        settings["watchlist"]["require_affordable_lot"] = True
+        settings["watchlist"]["min_size"] = 1
+        settings["watchlist"]["hot_topic_adjust_enabled"] = False
+        settings["watchlist"]["candidates"] = [
+            {"code": "000725", "name": "京东方A", "keywords": ["京东方"]},
+        ]
+        portfolio = {
+            **portfolio,
+            "watchlist": [],
+            "cash": 61000,
+            "total": 100000,
+        }
+        snapshot = {
+            "mss_final": 48.0,
+            "mss_breakdown": {"fx": 47, "flow": 48, "global": 46, "sentiment": 53},
+            "code": "688008",
+            "price": 247.15,
+            "portfolio": {
+                "holdings": [
+                    {"code": "688008", "name": "澜起科技", "price": 247.15, "change_pct": -2.39},
+                ],
+            },
+            "watchlist": [],
+        }
+        monkeypatch.setattr(
+            "agent_reach.daily_run.quote_fetch.fetch_quotes_map",
+            lambda codes, config=None, *, settings=None: __import__(
+                "agent_reach.daily_run.quote_fetch", fromlist=["QuoteFetchResult"]
+            ).QuoteFetchResult(
+                quotes={
+                    "000725": {
+                        "code": "000725",
+                        "name": "京东方A",
+                        "price": 5.75,
+                        "change_pct": 1.0,
+                    }
+                }
+            ),
+        )
+        monkeypatch.setattr(
+            "agent_reach.daily_run.portfolio_manager.watchlist_per_trade_budget",
+            lambda *a, **k: {
+                "per_budget": 15_000,
+                "deploy_ratio": 0.25,
+                "min_cash_ratio": 0.1,
+                "commission_rate": 0.0015,
+            },
+        )
+        monkeypatch.setattr(
+            "agent_reach.daily_run.berkshire.quality_screen.passes_watchlist_gate",
+            lambda *a, **k: (True, "ok"),
+        )
+        result = adjust_watchlist(portfolio, snapshot, settings, "morning")
+        codes = {w["code"] for w in result.portfolio["watchlist"]}
+        assert result.applied is True
+        assert "000725" in codes
+        assert any(c.action == "add" and c.code == "000725" for c in result.changes)
