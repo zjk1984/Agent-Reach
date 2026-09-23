@@ -387,7 +387,10 @@ def test_prune_distilled_l0_detaches_l1_fk(storage_env):
 
 
 def test_prune_l2_scenarios_respects_protection(storage_env):
+    from datetime import datetime, timedelta, timezone
+
     from agent_reach.daily_run.storage.prune import prune_l2_database
+    from agent_reach.daily_run.storage.prune_policy import active_trading_week_start
 
     store = SqliteDailyRunStore(Path(storage_env["db_path"]))
     settings = dict(storage_env["settings"])
@@ -399,39 +402,50 @@ def test_prune_l2_scenarios_respects_protection(storage_env):
         "close_handoff_keep_days": 15,
     }
 
-    active_mon = "2026-09-15"
+    now = datetime.now(timezone.utc)
+    fresh_day = (now - timedelta(days=3)).date()
+    old_snap_day = (now - timedelta(days=30)).date()
+    old_handoff_day = (now - timedelta(days=20)).date()
+    week_start = active_trading_week_start(settings=settings)
+    active_mon = week_start.isoformat()
+    week_end = (week_start + timedelta(days=4)).isoformat()
+
+    fresh_at = f"{fresh_day.isoformat()}T00:00:00+00:00"
+    old_snap_at = f"{old_snap_day.isoformat()}T00:00:00+00:00"
+    old_handoff_day_s = old_handoff_day.isoformat()
+
     store.upsert_l2_scenario(
         "harness_snapshot",
         "old_snap.json",
-        {"saved_at": "2026-01-01T00:00:00+00:00", "job": "close"},
-        at="2026-01-01T00:00:00+00:00",
+        {"saved_at": old_snap_at, "job": "close"},
+        at=old_snap_at,
         dedupe_key="l2:harness_snapshot:old",
     )
     store.upsert_l2_scenario(
         "harness_snapshot",
         "fresh_snap.json",
-        {"saved_at": "2026-09-13T00:00:00+00:00", "job": "close"},
-        at="2026-09-13T00:00:00+00:00",
+        {"saved_at": fresh_at, "job": "close"},
+        at=fresh_at,
         dedupe_key="l2:harness_snapshot:fresh",
     )
     store.upsert_l2_scenario(
         "close_handoff",
-        "2026-01-02",
-        {"close_date": "2026-01-02", "next_day_session_seed": {}},
-        at="2026-01-02",
-        dedupe_key="l2:close_handoff:2026-01-02",
+        old_handoff_day_s,
+        {"close_date": old_handoff_day_s, "next_day_session_seed": {}},
+        at=old_handoff_day_s,
+        dedupe_key=f"l2:close_handoff:{old_handoff_day_s}",
     )
     store.upsert_l2_scenario(
         "week_open_overlay",
         active_mon,
-        {"week_start": active_mon, "week_end": "2026-09-19", "enabled": True},
+        {"week_start": active_mon, "week_end": week_end, "enabled": True},
         at=active_mon,
         dedupe_key=f"l2:week_open_overlay:{active_mon}",
     )
     store.upsert_l2_scenario(
         "forecast",
         active_mon,
-        {"week_start": active_mon, "week_end": "2026-09-19", "summary": "active"},
+        {"week_start": active_mon, "week_end": week_end, "summary": "active"},
         at=active_mon,
         dedupe_key=f"l2:forecast:{active_mon}",
     )
