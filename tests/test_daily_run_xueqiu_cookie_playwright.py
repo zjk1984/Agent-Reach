@@ -170,12 +170,43 @@ def test_refresh_prefers_session_file_over_browser_use():
                 "week_forecast": {
                     "xueqiu_cookie_use_playwright": True,
                     "xueqiu_cookie_use_browser_use": True,
+                    "xueqiu_cookie_refresh_every_forecast": False,
                 }
             }
         )
     mock_session.assert_called_once()
     mock_profile.assert_not_called()
     mock_pw.assert_not_called()
+    mock_bu.assert_not_called()
+    assert out["engine"] == PLAYWRIGHT_ENGINE
+
+
+def test_refresh_every_forecast_skips_session_for_headed_playwright():
+    with patch(
+        "agent_reach.daily_run.xueqiu_cookie_playwright.refresh_xueqiu_cookie_from_session_file",
+    ) as mock_session, patch(
+        "agent_reach.daily_run.xueqiu_cookie_playwright.refresh_xueqiu_cookie_from_profile_headless",
+    ) as mock_profile, patch(
+        "agent_reach.daily_run.xueqiu_cookie_playwright.playwright_available",
+        return_value=True,
+    ), patch(
+        "agent_reach.daily_run.xueqiu_cookie_playwright.refresh_xueqiu_cookie_via_playwright",
+        return_value={"success": True, "engine": PLAYWRIGHT_ENGINE, "job": "xueqiu_cookie_refresh"},
+    ) as mock_pw, patch(
+        "agent_reach.daily_run.xueqiu_cookie_browser_use.refresh_xueqiu_cookie_via_browser_use",
+    ) as mock_bu:
+        out = refresh_xueqiu_cookie_from_browser(
+            settings={
+                "week_forecast": {
+                    "xueqiu_cookie_use_playwright": True,
+                    "xueqiu_cookie_use_browser_use": True,
+                    "xueqiu_cookie_refresh_every_forecast": True,
+                }
+            }
+        )
+    mock_session.assert_not_called()
+    mock_profile.assert_not_called()
+    mock_pw.assert_called_once()
     mock_bu.assert_not_called()
     assert out["engine"] == PLAYWRIGHT_ENGINE
 
@@ -209,6 +240,7 @@ def test_refresh_playwright_timeout_skips_browser_use():
                 "week_forecast": {
                     "xueqiu_cookie_use_playwright": True,
                     "xueqiu_cookie_use_browser_use": True,
+                    "xueqiu_cookie_refresh_every_forecast": False,
                 }
             }
         )
@@ -248,6 +280,7 @@ def test_refresh_no_display_does_not_fall_through_to_browser_use():
                 "week_forecast": {
                     "xueqiu_cookie_use_playwright": True,
                     "xueqiu_cookie_use_browser_use": True,
+                    "xueqiu_cookie_refresh_every_forecast": False,
                 }
             }
         )
