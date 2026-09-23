@@ -559,7 +559,7 @@
   },
 
   "quote_fetch": {
-    "sources": ["eastmoney", "akshare", "xueqiu"],
+    "sources": ["eastmoney", "xueqiu", "akshare"],
     "max_retries": 2
   },
 

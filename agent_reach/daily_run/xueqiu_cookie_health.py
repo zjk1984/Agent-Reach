@@ -541,10 +541,13 @@ def refresh_xueqiu_cookie_from_browser(
     Sync Xueqiu cookie from a logged-in local browser into agent-reach config.
 
     Used before Sunday forecast when ``week_forecast.xueqiu_cookie_auto_refresh_from_browser``
-    is enabled. Order (ticket-sniper / Playwright first):
+    is enabled. When ``xueqiu_cookie_refresh_every_forecast`` is true (default), skip
+    session-file / headless-profile shortcuts and open the headed browser first.
 
-    1. ``xueqiu_session.json`` (saved headed login)
-    2. Playwright persistent profile (headless read — cron-safe)
+    Order (ticket-sniper / Playwright first):
+
+    1. ``xueqiu_session.json`` (saved headed login) — skipped when refresh_every_forecast
+    2. Playwright persistent profile (headless read) — skipped when refresh_every_forecast
     3. Playwright headed login (desktop / ``daily-run xueqiu login``)
     4. browser-use CDP (optional, off by default)
     5. Chrome subprocess + cookie extract fallback
@@ -552,6 +555,8 @@ def refresh_xueqiu_cookie_from_browser(
     wf = _week_forecast_settings(settings)
     if wf.get("xueqiu_cookie_auto_refresh_from_browser", True) is False:
         return {"skipped": True, "reason": "disabled", "job": "xueqiu_cookie_refresh"}
+
+    force_headed = _refresh_every_forecast(settings)
 
     if _use_playwright(settings):
         from agent_reach.daily_run.xueqiu_cookie_playwright import (
@@ -561,13 +566,14 @@ def refresh_xueqiu_cookie_from_browser(
             refresh_xueqiu_cookie_via_playwright,
         )
 
-        session_result = refresh_xueqiu_cookie_from_session_file(settings=settings, config=config)
-        if session_result.get("success"):
-            return session_result
+        if not force_headed:
+            session_result = refresh_xueqiu_cookie_from_session_file(settings=settings, config=config)
+            if session_result.get("success"):
+                return session_result
 
-        profile_result = refresh_xueqiu_cookie_from_profile_headless(settings=settings, config=config)
-        if profile_result.get("success"):
-            return profile_result
+            profile_result = refresh_xueqiu_cookie_from_profile_headless(settings=settings, config=config)
+            if profile_result.get("success"):
+                return profile_result
 
         if playwright_available():
             pw_result = refresh_xueqiu_cookie_via_playwright(settings=settings, config=config)
