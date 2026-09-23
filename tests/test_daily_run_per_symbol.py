@@ -196,16 +196,24 @@ class TestPerSymbolBaselines:
 
 
 class TestSymbolRunner:
+    @patch("agent_reach.daily_run.berkshire.pipeline.maybe_adjust_watchlist_morning")
     @patch("agent_reach.daily_run.intraday.record_morning_scan", return_value={"scan": {"scan_id": "S1"}})
     @patch("agent_reach.daily_run.workflows.run_morning")
     @patch("agent_reach.daily_run.symbol_runner.build_and_save")
     @patch("agent_reach.daily_run.symbol_runner.load_portfolio")
-    def test_run_morning_for_symbols(self, mock_pf, mock_build, mock_run, mock_morning_scan, tmp_path):
+    def test_run_morning_for_symbols(
+        self, mock_pf, mock_build, mock_run, mock_morning_scan, mock_wl_adjust, tmp_path
+    ):
         mock_pf.return_value = PORTFOLIO
         mock_build.side_effect = [
+            ({"code": "688008", "name": "澜起科技"}, tmp_path / "preview.json"),
             ({"code": "688008", "name": "澜起科技"}, tmp_path / "a.json"),
             ({"code": "002273", "name": "水晶光电"}, tmp_path / "b.json"),
         ]
+        mock_wl_adjust.return_value = (
+            PORTFOLIO,
+            {"applied": True, "message": "观察池调整 1 项（morning）", "changes": []},
+        )
         mock_run.side_effect = [
             {"snapshot": {"code": "688008"}, "evaluation": {"report": {}}, "feishu": {"ok": 1}},
             {"snapshot": {"code": "002273"}, "evaluation": {"report": {}}, "feishu": {"ok": 2}},
@@ -218,6 +226,8 @@ class TestSymbolRunner:
         result = run_morning_for_symbols(settings=cfg, push=False, symbols=["688008", "002273"])
         assert len(result["symbol_results"]) == 2
         assert mock_run.call_count == 2
+        assert result["watchlist_adjust"]["applied"] is True
+        mock_wl_adjust.assert_called_once()
 
     @patch("agent_reach.daily_run.intraday.load_state")
     @patch("agent_reach.daily_run.midday.run_midday")

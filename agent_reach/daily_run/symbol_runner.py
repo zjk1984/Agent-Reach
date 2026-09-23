@@ -101,6 +101,7 @@ def run_morning_for_symbols(
     from agent_reach.daily_run.berkshire.pipeline import maybe_adjust_watchlist_morning
     from agent_reach.daily_run.snapshot_builder import build_and_save as _build_preview
 
+    watchlist_adjust: dict[str, Any] | None = None
     if targets:
         preview_snap, _ = _build_preview(
             report_type="premarket",
@@ -108,7 +109,9 @@ def run_morning_for_symbols(
             primary_code=targets[0],
             portfolio=pf,
         )
-        pf, _wl = maybe_adjust_watchlist_morning(pf, preview_snap, cfg)
+        pf, wl_result = maybe_adjust_watchlist_morning(pf, preview_snap, cfg)
+        if wl_result is not None:
+            watchlist_adjust = wl_result
         targets = symbols or resolve_target_symbols(pf, cfg, workflow="morning")
 
     merge_push = _should_merge_push(cfg)
@@ -335,6 +338,7 @@ def run_morning_for_symbols(
         "symbols": targets,
         "symbol_results": symbol_results,
         "errors": errors,
+        "watchlist_adjust": watchlist_adjust,
         "feishu": feishu_result or (symbol_results[-1]["feishu"] if symbol_results else None),
     }
 
