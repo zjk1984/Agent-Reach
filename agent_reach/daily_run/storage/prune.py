@@ -162,6 +162,65 @@ def _daily_run_root(root: Optional[Path] = None) -> Path:
     return Path(root or Path.home() / ".agent-reach" / "daily_run").expanduser()
 
 
+def _vacuum_sqlite_safe(
+    store: Any,
+    *,
+    settings: Optional[dict[str, Any]] = None,
+    min_free_ratio: float = 1.05,
+) -> dict[str, Any]:
+    """Run VACUUM only when enough free disk exists; never raise on failure."""
+    from agent_reach.daily_run.storage.config import prune_settings, sqlite_db_path
+
+    vacuum_fn = getattr(store, "vacuum", None)
+    if not callable(vacuum_fn):
+        return {"skipped": True, "reason": "backend_no_vacuum"}
+
+    db_size = int(getattr(store, "db_file_size_bytes", lambda: 0)() or 0)
+    db_path = sqlite_db_path(settings)
+    anchor = db_path.parent if db_path.parent.exists() else _daily_run_root()
+    try:
+        free_bytes = int(shutil.disk_usage(anchor).free)
+    except OSError as exc:
+        return {"skipped": True, "reason": "disk_usage_unavailable", "error": str(exc)}
+
+    # SQLite VACUUM rebuilds the file; need roughly one full DB of *additional* free space.
+    required = int(db_size * max(1.0, float(min_free_ratio or 2.0)))
+    if db_size > 0 and free_bytes < required:
+        return {
+            "skipped": True,
+            "reason": "insufficient_free_space",
+            "free_bytes": free_bytes,
+            "required_bytes": required,
+            "db_bytes": db_size,
+            "message": (
+                f"可用 {format_storage_bytes(free_bytes)} < VACUUM 所需 "
+                f"{format_storage_bytes(required)}，已跳过（请先清理文件或扩容）"
+            ),
+        }
+
+    db_mid = db_size
+    try:
+        vacuum_fn()
+    except Exception as exc:
+        return {
+            "skipped": False,
+            "success": False,
+            "reason": "vacuum_failed",
+            "error": str(exc),
+            "db_bytes_before": db_mid,
+        }
+
+    db_after = int(getattr(store, "db_file_size_bytes", lambda: 0)() or 0)
+    return {
+        "skipped": False,
+        "success": True,
+        "reason": "vacuum_ok",
+        "db_bytes_before": db_mid,
+        "db_bytes_after": db_after,
+        "vacuum_bytes_freed": max(0, db_mid - db_after),
+    }
+
+
 def prune_files(
     *,
     root: Optional[Path] = None,
@@ -434,16 +493,19 @@ def prune_database(
     l0_result = prune_l0(cutoff_iso=cutoff_l0, kinds=kinds_l0, dry_run=dry_run)
     l2_result = prune_l2_database(settings=settings, dry_run=dry_run)
 
-    vacuum_bytes = 0
+    vacuum_result: dict[str, Any] = {"skipped": True, "reason": "vacuum_disabled"}
     if vacuum and not dry_run:
-        vacuum_fn = getattr(store, "vacuum", None)
-        if callable(vacuum_fn):
-            db_mid = getattr(store, "db_file_size_bytes", lambda: 0)()
-            vacuum_fn()
-            db_after = getattr(store, "db_file_size_bytes", lambda: 0)()
-            vacuum_bytes = max(0, db_mid - db_after)
+        from agent_reach.daily_run.storage.config import prune_settings
+
+        pcfg = prune_settings(settings)
+        vacuum_result = _vacuum_sqlite_safe(
+            store,
+            settings=settings,
+            min_free_ratio=float(pcfg.get("vacuum_min_free_ratio") or 1.05),
+        )
 
     db_after = getattr(store, "db_file_size_bytes", lambda: 0)()
+    vacuum_bytes = int(vacuum_result.get("vacuum_bytes_freed") or 0)
     return {
         **l0_result,
         "l1": l1_result,
@@ -453,6 +515,7 @@ def prune_database(
         "db_bytes_before": db_before,
         "db_bytes_after": db_after,
         "vacuum_bytes_freed": vacuum_bytes,
+        "vacuum": vacuum_result,
     }
 
 
@@ -762,7 +825,20 @@ def render_prune_markdown(result: dict[str, Any], *, settings: Optional[dict[str
         after_mb = round(float(db.get("db_bytes_after") or 0) / 1024 / 1024, 1)
         if before_mb > 0:
             lines.append(f"- daily_run.db：**{before_mb} MB → {after_mb} MB**")
-        if db.get("vacuum_bytes_freed"):
+        vacuum = db.get("vacuum") or {}
+        if vacuum.get("success"):
+            freed = float(vacuum.get("vacuum_bytes_freed") or db.get("vacuum_bytes_freed") or 0)
+            if freed > 0:
+                lines.append(f"- VACUUM 释放：**{freed / 1024 / 1024:.2f} MB**")
+            else:
+                lines.append("- VACUUM：已完成（文件大小无明显变化）")
+        elif vacuum.get("reason") == "insufficient_free_space":
+            lines.append(f"- VACUUM：⚠️ 跳过 — {vacuum.get('message') or '磁盘可用空间不足'}")
+        elif vacuum.get("reason") == "vacuum_failed":
+            lines.append(f"- VACUUM：❌ 失败 — {vacuum.get('error') or '未知错误'}")
+        elif vacuum.get("reason") not in (None, "vacuum_disabled", "backend_no_vacuum"):
+            lines.append(f"- VACUUM：跳过（{vacuum.get('reason')}）")
+        elif db.get("vacuum_bytes_freed"):
             lines.append(f"- VACUUM 释放：**{db['vacuum_bytes_freed'] / 1024 / 1024:.2f} MB**")
 
     total_mb = float(files.get("mb_freed") or 0)

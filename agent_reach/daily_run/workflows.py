@@ -2258,9 +2258,6 @@ def run_forecast(
     except Exception as exc:
         _workflow_harness_error(harness_errors, "week_open_overlay", exc)
 
-    path = persist_week_forecast(forecast)
-    steps.append("persist")
-
     prune_result = None
     prune_feishu = None
     try:
@@ -2286,6 +2283,9 @@ def run_forecast(
                     steps.append("push_storage_prune")
     except Exception as exc:
         _workflow_harness_error(harness_errors, "storage_prune", exc)
+
+    path = persist_week_forecast(forecast)
+    steps.append("persist")
 
     md = render_forecast_markdown(forecast)
     from agent_reach.daily_run.berkshire.news_pulse import append_news_pulse_markdown
