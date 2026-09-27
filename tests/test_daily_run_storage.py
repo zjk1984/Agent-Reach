@@ -499,6 +499,25 @@ def test_purge_pip_cache_dry_run(tmp_path):
     assert (cache / "wheel.bin").exists()
 
 
+def test_vacuum_skips_when_disk_space_insufficient(storage_env, monkeypatch):
+    from agent_reach.daily_run.storage.prune import _vacuum_sqlite_safe
+
+    class _Store:
+        def db_file_size_bytes(self):
+            return 10 * 1024 * 1024 * 1024
+
+        def vacuum(self):
+            raise AssertionError("vacuum should not run")
+
+    monkeypatch.setattr(
+        "agent_reach.daily_run.storage.prune.shutil.disk_usage",
+        lambda _path: type("U", (), {"free": 1024 * 1024})(),
+    )
+    result = _vacuum_sqlite_safe(_Store(), settings=storage_env["settings"], min_free_ratio=2.0)
+    assert result["skipped"] is True
+    assert result["reason"] == "insufficient_free_space"
+
+
 def test_run_scheduled_prune_calls_pip_cache(storage_env, monkeypatch):
     from agent_reach.daily_run.storage.prune import run_scheduled_prune
 

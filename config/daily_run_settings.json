@@ -1323,6 +1323,7 @@
       "harness_snapshot_keep_days": 14,
       "close_handoff_keep_days": 15,
       "vacuum": true,
+      "vacuum_min_free_ratio": 2.0,
       "push_card": true,
       "include_in_forecast_markdown": true
     }

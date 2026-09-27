@@ -155,6 +155,7 @@ def prune_settings(settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         "handoff_intraday_keep_days": max(7, int(block.get("handoff_intraday_keep_days") or 21)),
         "snapshot_keep": max(3, int(block.get("snapshot_keep") or 20)),
         "vacuum": block.get("vacuum", True) is not False,
+        "vacuum_min_free_ratio": float(block.get("vacuum_min_free_ratio") or 2.0),
         "push_card": block.get("push_card", True) is not False,
         "include_in_forecast_markdown": block.get("include_in_forecast_markdown", True) is not False,
         "pip_cache_on_forecast": block.get("pip_cache_on_forecast", True) is not False,
