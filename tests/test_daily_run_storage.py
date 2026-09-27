@@ -300,6 +300,59 @@ def test_storage_disabled_by_default(monkeypatch):
     assert storage_enabled(settings) is False
 
 
+def test_dual_write_tiered_defaults():
+    from agent_reach.daily_run.storage.config import dual_write_settings, storage_dual_write_enabled
+
+    tiered = {
+        "storage": {
+            "enabled": True,
+            "dual_write": {
+                "trade": True,
+                "harness_diff": False,
+                "harness_snapshot_l2": False,
+                "job_run": False,
+            },
+        }
+    }
+    cfg = dual_write_settings(tiered)
+    assert cfg["trade"] is True
+    assert cfg["harness_diff"] is False
+    assert cfg["harness_snapshot_l2"] is False
+    assert storage_dual_write_enabled(tiered, l0_kind="harness_overlay_diff") is False
+    assert storage_dual_write_enabled(tiered, l0_kind="trade") is True
+    assert storage_dual_write_enabled(tiered, l2_kind="harness_snapshot") is False
+
+    legacy = {"storage": {"enabled": True, "dual_write": True}}
+    assert all(dual_write_settings(legacy).values())
+
+
+def test_dual_write_hooks_skip_harness_diff(storage_env):
+    from agent_reach.daily_run.storage.hooks import on_harness_diff
+    from agent_reach.daily_run.storage import get_store
+
+    settings = storage_env["settings"]
+    settings["storage"] = dict(settings["storage"])
+    settings["storage"]["dual_write"] = {
+        "trade": True,
+        "portfolio": True,
+        "experience": True,
+        "harness_state": True,
+        "harness_refinement": True,
+        "harness_diff": False,
+        "harness_snapshot_l2": False,
+        "harness_audit": False,
+        "job_run": False,
+        "session_overlay": False,
+    }
+    on_harness_diff(
+        {"at": "2026-09-27T00:00:00+00:00", "job": "close", "operations": {}},
+        kind="harness_overlay_diff",
+        source_path="/tmp/x.jsonl",
+    )
+    store = get_store(settings)
+    assert store.status()["counts"]["l0_events"] == 0
+
+
 def test_prune_distilled_l0_and_files(storage_env):
     from agent_reach.daily_run.storage.prune import prune_database, prune_files
 

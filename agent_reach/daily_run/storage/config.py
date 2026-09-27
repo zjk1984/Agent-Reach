@@ -49,6 +49,37 @@ def storage_db_reads_allowed(
     return False
 
 
+# Skill-aligned defaults: evolve + memory in DB; audit/jsonl file is canonical.
+_DEFAULT_DUAL_WRITE: dict[str, bool] = {
+    "trade": True,
+    "portfolio": True,
+    "experience": True,
+    "harness_state": True,
+    "harness_refinement": True,
+    "harness_diff": False,
+    "harness_snapshot_l2": False,
+    "harness_audit": False,
+    "job_run": False,
+    "session_overlay": False,
+}
+
+_L0_KIND_DUAL_WRITE: dict[str, str] = {
+    "trade": "trade",
+    "portfolio": "portfolio",
+    "experience": "experience",
+    "harness_refinement": "harness_refinement",
+    "harness_overlay_diff": "harness_diff",
+    "harness_memory_diff": "harness_diff",
+    "harness_audit": "harness_audit",
+    "session_overlay": "session_overlay",
+    "job_run": "job_run",
+}
+
+_L2_KIND_DUAL_WRITE: dict[str, str] = {
+    "harness_snapshot": "harness_snapshot_l2",
+}
+
+
 def storage_settings(settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     if settings is None:
         from agent_reach.daily_run.settings import load_settings
@@ -56,6 +87,41 @@ def storage_settings(settings: Optional[dict[str, Any]] = None) -> dict[str, Any
         settings = load_settings()
     block = dict((settings or {}).get("storage") or {})
     return block
+
+
+def dual_write_settings(settings: Optional[dict[str, Any]] = None) -> dict[str, bool]:
+    """Resolve per-stream SQLite dual-write flags (see ``storage.dual_write``)."""
+    cfg = storage_settings(settings)
+    raw = cfg.get("dual_write")
+    if raw is False:
+        return {key: False for key in _DEFAULT_DUAL_WRITE}
+    if raw is True or raw is None:
+        # Legacy ``true``: keep all streams enabled for backward compatibility.
+        return {key: True for key in _DEFAULT_DUAL_WRITE}
+    out = dict(_DEFAULT_DUAL_WRITE)
+    if isinstance(raw, dict):
+        for key, val in raw.items():
+            if key in out:
+                out[key] = val is not False
+    return out
+
+
+def storage_dual_write_enabled(
+    settings: Optional[dict[str, Any]] = None,
+    *,
+    key: str = "",
+    l0_kind: str = "",
+    l2_kind: str = "",
+) -> bool:
+    """Return whether a storage hook should write for the given stream/kind."""
+    resolved = key
+    if not resolved and l0_kind:
+        resolved = _L0_KIND_DUAL_WRITE.get(l0_kind, "")
+    if not resolved and l2_kind:
+        resolved = _L2_KIND_DUAL_WRITE.get(l2_kind, "")
+    if not resolved:
+        return True
+    return dual_write_settings(settings).get(resolved, True)
 
 
 def storage_read_prefer_db(settings: Optional[dict[str, Any]] = None) -> bool:
