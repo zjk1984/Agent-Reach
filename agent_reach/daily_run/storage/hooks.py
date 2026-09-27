@@ -26,7 +26,11 @@ def _allow_storage_write(
     payload: Any = None,
     source: str = "",
     settings: Optional[dict[str, Any]] = None,
+    dual_write_key: str = "",
+    l0_kind: str = "",
+    l2_kind: str = "",
 ) -> bool:
+    from agent_reach.daily_run.storage.config import storage_dual_write_enabled
     from agent_reach.daily_run.storage.guard import storage_write_blocked_reason
 
     reason = storage_write_blocked_reason(
@@ -40,6 +44,13 @@ def _allow_storage_write(
     if reason:
         logger.warning("daily-run storage write blocked ({}): {}", reason, kind)
         return False
+    if not storage_dual_write_enabled(
+        settings,
+        key=dual_write_key,
+        l0_kind=l0_kind or kind,
+        l2_kind=l2_kind or kind,
+    ):
+        return False
     return True
 
 
@@ -51,7 +62,9 @@ def on_trade_ledger(
 ) -> None:
     from agent_reach.daily_run.storage import get_store
 
-    if not _allow_storage_write(kind="trade", payload=entry, settings=settings):
+    if not _allow_storage_write(
+        kind="trade", payload=entry, settings=settings, dual_write_key="trade",
+    ):
         return
     at = str(entry.get("at") or "")
     trade_id = str(entry.get("trade_id") or "")
@@ -83,6 +96,7 @@ def on_portfolio_save(
         payload=portfolio,
         source=source,
         settings=settings,
+        dual_write_key="portfolio",
     ):
         return
 
@@ -106,7 +120,7 @@ def on_portfolio_save(
 def on_experience_entry(entry: dict[str, Any], *, source_path: str = "") -> None:
     from agent_reach.daily_run.storage import get_store
 
-    if not _allow_storage_write(kind="experience", payload=entry):
+    if not _allow_storage_write(kind="experience", payload=entry, dual_write_key="experience"):
         return
     at = str(entry.get("at") or entry.get("date") or "")
     code = str(entry.get("code") or "")
@@ -128,7 +142,9 @@ def on_experience_entry(entry: dict[str, Any], *, source_path: str = "") -> None
 def on_harness_refinement(event: dict[str, Any], *, source_path: str = "") -> None:
     from agent_reach.daily_run.storage import get_store
 
-    if not _allow_storage_write(kind="harness_refinement", payload=event):
+    if not _allow_storage_write(
+        kind="harness_refinement", payload=event, dual_write_key="harness_refinement",
+    ):
         return
     event_id = str(event.get("id") or "")
     at = str(event.get("created_at") or "")
@@ -160,7 +176,9 @@ def on_harness_refinement(event: dict[str, Any], *, source_path: str = "") -> No
 def on_harness_state_save(state_payload: dict[str, Any]) -> None:
     from agent_reach.daily_run.storage import get_store
 
-    if not _allow_storage_write(kind="harness_state", payload=state_payload):
+    if not _allow_storage_write(
+        kind="harness_state", payload=state_payload, dual_write_key="harness_state",
+    ):
         return
 
     def _write() -> None:
@@ -174,7 +192,7 @@ def on_harness_state_save(state_payload: dict[str, Any]) -> None:
 def on_harness_diff(diff: dict[str, Any], *, kind: str, source_path: str = "") -> None:
     from agent_reach.daily_run.storage import get_store
 
-    if not _allow_storage_write(kind=kind, payload=diff):
+    if not _allow_storage_write(kind=kind, payload=diff, dual_write_key="harness_diff", l0_kind=kind):
         return
     at = str(diff.get("at") or "")
     job = str(diff.get("job") or kind)
@@ -196,7 +214,9 @@ def on_harness_diff(diff: dict[str, Any], *, kind: str, source_path: str = "") -
 def on_apply_audit(event: dict[str, Any], *, source_path: str = "") -> None:
     from agent_reach.daily_run.storage import get_store
 
-    if not _allow_storage_write(kind="harness_audit", payload=event):
+    if not _allow_storage_write(
+        kind="harness_audit", payload=event, dual_write_key="harness_audit",
+    ):
         return
     at = str(event.get("at") or "")
     job = str(event.get("job") or "apply")
@@ -234,10 +254,11 @@ def on_l0_event(
     at: str = "",
     source_path: str = "",
     dedupe_key: str = "",
+    settings: Optional[dict[str, Any]] = None,
 ) -> None:
     from agent_reach.daily_run.storage import get_store
 
-    if not _allow_storage_write(kind=kind, payload=payload):
+    if not _allow_storage_write(kind=kind, payload=payload, settings=settings, l0_kind=kind):
         return
 
     def _write() -> None:
@@ -287,7 +308,9 @@ def on_l2_scenario(
 ) -> None:
     from agent_reach.daily_run.storage import get_store
 
-    if not _allow_storage_write(kind=kind, payload=payload, settings=settings):
+    if not _allow_storage_write(
+        kind=kind, payload=payload, settings=settings, l2_kind=kind,
+    ):
         return
 
     def _write() -> None:
@@ -545,6 +568,10 @@ def on_forecast(forecast: dict[str, Any], *, source_path: str = "") -> None:
 
 
 def on_harness_snapshot(payload: dict[str, Any], *, snapshot_path: str = "") -> None:
+    from agent_reach.daily_run.storage.config import storage_dual_write_enabled
+
+    if not storage_dual_write_enabled(l2_kind="harness_snapshot"):
+        return
     name = snapshot_path.rsplit("/", 1)[-1] if snapshot_path else "snapshot"
     on_l2_scenario(
         "harness_snapshot",
@@ -598,7 +625,9 @@ def on_session_overlay_event(
 ) -> None:
     from agent_reach.daily_run.storage import get_store
 
-    if not _allow_storage_write(kind="session_overlay", payload=snap):
+    if not _allow_storage_write(
+        kind="session_overlay", payload=snap, dual_write_key="session_overlay",
+    ):
         return
 
     at = str(snap.get("scan_at") or day or "")
@@ -622,6 +651,10 @@ def on_session_overlay_daily(
     *,
     source_path: str = "",
 ) -> None:
+    from agent_reach.daily_run.storage.config import storage_dual_write_enabled
+
+    if not storage_dual_write_enabled(key="session_overlay"):
+        return
     day_key = str(day or daily.get("date") or "")[:10]
     if not day_key:
         return

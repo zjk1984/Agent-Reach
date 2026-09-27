@@ -79,7 +79,9 @@ def cmd_storage(args: argparse.Namespace) -> None:
         block = dict(data.get("storage") or {})
         block["enabled"] = True
         block["backend"] = args.backend
-        block.setdefault("dual_write", True)
+        from agent_reach.daily_run.storage.config import _DEFAULT_DUAL_WRITE
+
+        block.setdefault("dual_write", dict(_DEFAULT_DUAL_WRITE))
         block.setdefault(
             "distill",
             {"enabled": True, "auto_after_close": False},
