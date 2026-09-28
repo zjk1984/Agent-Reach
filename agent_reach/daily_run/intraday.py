@@ -493,6 +493,17 @@ def record_scan(
         "price": enriched.get("price"),
         "audit_passed": evaluation["audit"].passed,
     }
+    try:
+        from agent_reach.daily_run.symbols import build_scan_enriched_payload
+
+        entry["enriched"] = build_scan_enriched_payload(
+            str(entry.get("code") or ""),
+            enriched,
+            entry,
+            settings=cfg,
+        )
+    except Exception:
+        pass
     touch_session_highs(st, enriched, code=str(entry.get("code") or ""))
     st.scans.append(entry)
     save_state(st, state_path)

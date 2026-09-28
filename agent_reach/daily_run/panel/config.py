@@ -294,6 +294,24 @@ def panel_card_link_enabled(settings: Optional[dict[str, Any]] = None) -> bool:
     return bool(cfg.get("enabled", True) and cfg.get("card_link_enabled", True))
 
 
+def panel_provenance_in_cards_enabled(settings: Optional[dict[str, Any]] = None) -> bool:
+    """Whether Feishu cards should include the compact D1~D6 provenance strip."""
+    cfg = panel_cfg(settings)
+    return bool(cfg.get("enabled", True) and cfg.get("provenance_in_cards", True))
+
+
+def format_data_provenance_line(settings: Optional[dict[str, Any]] = None) -> Optional[str]:
+    """Compact D1~D6 feed status for Feishu card headers."""
+    if not panel_provenance_in_cards_enabled(settings):
+        return None
+    try:
+        from agent_reach.daily_run.data_router import format_provenance_compact_line
+
+        return format_provenance_compact_line(settings=settings)
+    except Exception:
+        return None
+
+
 def format_panel_card_header(
     settings: Optional[dict[str, Any]] = None,
     reports_dir: Optional[Path | str] = None,
@@ -303,7 +321,11 @@ def format_panel_card_header(
     if not panel_card_link_enabled(settings):
         return None
     url = panel_url(settings, reports_dir=reports_dir, repo_root=repo_root)
-    return f"🖥️ 实时大屏：[{url}]({url})"
+    header = f"🖥️ 实时大屏：[{url}]({url})"
+    prov_line = format_data_provenance_line(settings)
+    if prov_line:
+        return f"{header}\n{prov_line}"
+    return header
 
 
 def prepend_panel_card_header(
@@ -319,11 +341,13 @@ def prepend_panel_card_header(
     if not header:
         return markdown
 
-    # Strip any existing 实时大屏 lines anywhere in markdown to prevent duplication
+    # Strip any existing 实时大屏 / 数据源 lines anywhere in markdown to prevent duplication
     clean_lines: list[str] = []
     for line in markdown.splitlines():
         stripped = line.strip()
         if "实时大屏" in stripped and ("http://" in stripped or "https://" in stripped):
+            continue
+        if stripped.startswith("📡 数据源："):
             continue
         clean_lines.append(line)
 

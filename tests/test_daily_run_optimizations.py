@@ -199,18 +199,17 @@ class TestIntradayMacroRefresh:
         assert "大盘 +1.50%" in merged["macro_summary"]
         assert "早盘舆情" in merged["macro_summary"]
 
+    @patch("agent_reach.daily_run.data_router.get_market_data_router")
     @patch("agent_reach.daily_run.snapshot_builder.resolve_intraday_macro_context")
     @patch("agent_reach.daily_run.snapshot_builder.load_daily_cache")
-    @patch("agent_reach.daily_run.snapshot_builder.collect_macro_context")
-    @patch("agent_reach.daily_run.snapshot_builder.fetch_quotes_result")
     def test_build_snapshot_intraday_calls_macro_refresh(
         self,
-        mock_fetch_result,
-        mock_collect,
         mock_cache,
         mock_resolve,
+        mock_get_router,
     ):
-        from agent_reach.daily_run.quote_fetch import QuoteFetchResult
+        from unittest.mock import MagicMock
+
         from agent_reach.daily_run.snapshot_builder import build_snapshot
 
         portfolio = {
@@ -233,14 +232,14 @@ class TestIntradayMacroRefresh:
             "sources": {"flow": {"summary": "北向"}},
             "macro_summary": "live macro",
         }
-        mock_fetch_result.return_value = QuoteFetchResult(
-            quotes={
-                "688008": {"code": "688008", "price": 260.0, "change_pct": 1.0, "source": "xueqiu"},
-                "002273": {"code": "002273", "price": 27.0, "change_pct": 0.2, "source": "xueqiu"},
-                "603986": {"code": "603986", "price": 450.0, "change_pct": -1.0, "source": "xueqiu"},
-            },
-            sources_used=["xueqiu"],
-        )
+        router = MagicMock()
+        router.get_live_quotes.return_value = {
+            "688008": {"code": "688008", "price": 260.0, "change_pct": 1.0, "source": "xueqiu"},
+            "002273": {"code": "002273", "price": 27.0, "change_pct": 0.2, "source": "xueqiu"},
+            "603986": {"code": "603986", "price": 450.0, "change_pct": -1.0, "source": "xueqiu"},
+        }
+        router.get_provenance_status.return_value = {"d1_quotes": {"status": "healthy"}}
+        mock_get_router.return_value = router
         with patch(
             "agent_reach.daily_run.snapshot_builder._backfill_missing_technicals",
             side_effect=lambda codes, quote_map, cached, **kwargs: cached,
@@ -251,17 +250,17 @@ class TestIntradayMacroRefresh:
                 settings={"snapshot": {"intraday_enrich_level": "quotes", "intraday_refresh_macro": "flow_index"}},
             )
         mock_resolve.assert_called_once()
-        mock_collect.assert_not_called()
+        router.get_macro_context.assert_not_called()
         assert snap["mss_breakdown"]["sentiment"] == 60
         assert snap["mss_breakdown"]["flow"] == 58
 
-    @patch("agent_reach.daily_run.snapshot_builder.fetch_quotes_result")
-    @patch("agent_reach.daily_run.snapshot_builder.collect_macro_context")
+    @patch("agent_reach.daily_run.data_router.get_market_data_router")
     @patch("agent_reach.daily_run.snapshot_builder.load_daily_cache")
     def test_incomplete_macro_cache_backfills_from_portfolio_overrides(
-        self, mock_cache, mock_collect, mock_fetch
+        self, mock_cache, mock_get_router
     ):
-        from agent_reach.daily_run.quote_fetch import QuoteFetchResult
+        from unittest.mock import MagicMock
+
         from agent_reach.daily_run.snapshot_builder import build_snapshot
 
         portfolio = {
@@ -281,23 +280,19 @@ class TestIntradayMacroRefresh:
                 },
             }
         }
-        mock_collect.return_value = {
-            "mss_breakdown": {"fx": 41, "flow": 51, "global": 46, "sentiment": 49},
-            "sources": {"quote": {"summary": "上证 +0.5%", "backend": "macro_collector"}},
-            "macro_summary": "live macro",
-            "macro_signals": {"index_change_pct": 0.5},
+        router = MagicMock()
+        router.get_live_quotes.return_value = {
+            "688008": {"code": "688008", "price": 260.0, "change_pct": 1.0, "source": "xueqiu"},
         }
-        mock_fetch.return_value = QuoteFetchResult(
-            quotes={"688008": {"code": "688008", "price": 260.0, "change_pct": 1.0, "source": "xueqiu"}},
-            sources_used=["xueqiu"],
-        )
+        router.get_provenance_status.return_value = {"d1_quotes": {"status": "healthy"}}
+        mock_get_router.return_value = router
         with patch("agent_reach.daily_run.snapshot_builder.save_daily_cache") as mock_save:
             snap = build_snapshot(
                 portfolio,
                 report_type="intraday",
                 settings={"snapshot": {"intraday_enrich_level": "quotes"}},
             )
-        mock_collect.assert_not_called()
+        router.get_macro_context.assert_not_called()
         assert snap["sources"]["flow"]["summary"] == "北向资金净流入 12 亿"
         assert snap["sources"]["sentiment"]["summary"] == "DDR5 讨论活跃"
         assert snap["sources"]["quote"]["backend"] == "snapshot_builder"

@@ -374,15 +374,21 @@ def test_prepend_panel_card_header():
     prepended = prepend_panel_card_header(raw_md, settings=settings)
     lines = prepended.split("\n")
     assert lines[0].startswith("🖥️ 实时大屏：")
+    assert any(line.startswith("📡 数据源：") for line in lines)
     assert "## 标题" in prepended
 
     # Legacy markdown with panel link at bottom
     legacy_md = "## 标题\n内容正文\n- 🖥️ 实时大屏：[http://127.0.0.1:8788](http://127.0.0.1:8788)\n- 其它条目"
     cleaned = prepend_panel_card_header(legacy_md, settings=settings)
     assert cleaned.count("实时大屏") == 1
+    assert cleaned.count("📡 数据源：") == 1
     assert cleaned.split("\n")[0].startswith("🖥️ 实时大屏：")
     assert "http://127.0.0.1:8788" not in cleaned
     assert "- 其它条目" in cleaned
+
+    legacy_with_prov = legacy_md + "\n📡 数据源：D1✓ D2· D3· D4· D5· D6✓"
+    cleaned_prov = prepend_panel_card_header(legacy_with_prov, settings=settings)
+    assert cleaned_prov.count("📡 数据源：") == 1
 
 
 def test_panel_cli(isolated_panel_env, capsys, tmp_path):
