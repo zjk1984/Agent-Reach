@@ -26,6 +26,15 @@ from agent_reach.daily_run.tsp.deviation_monitor import (
     format_deviation_alert_lines,
 )
 from agent_reach.daily_run.tsp.config import tsp_quant_cfg
+from agent_reach.daily_run.tsp.intraday_sentinel import (
+    TSPMainlineMatch,
+    check_intraday_retreat_risk,
+    clear_intraday_sentinel_cache,
+    format_tsp_intraday_card_markdown,
+    get_live_market_breadth_and_phase,
+    is_symbol_in_top_n_mainlines,
+    match_symbol_tsp_mainline,
+)
 
 __all__ = [
     "classify_tsp_market_phase",
@@ -38,4 +47,11 @@ __all__ = [
     "compute_exchange_deviation_risk",
     "format_deviation_alert_lines",
     "tsp_quant_cfg",
+    "TSPMainlineMatch",
+    "get_live_market_breadth_and_phase",
+    "match_symbol_tsp_mainline",
+    "is_symbol_in_top_n_mainlines",
+    "check_intraday_retreat_risk",
+    "clear_intraday_sentinel_cache",
+    "format_tsp_intraday_card_markdown",
 ]

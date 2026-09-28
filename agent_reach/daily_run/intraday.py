@@ -200,6 +200,7 @@ TRADE_BLOCK_MESSAGES: dict[str, str] = {
     "buy_cash": "⚠️ **风控阻断：** 现金比例不足，不允许加仓",
     "buy_budget": "⚠️ **风控阻断：** 可部署买入预算不足一手，维持观望",
     "tsp_deviation": "⚠️ **风控阻断：** 3日涨跌幅接近交易所异动偏离监管红线，禁止追高买入",
+    "tsp_retreat": "⚠️ **风控阻断：** 盘中情绪退潮（高炸板率且跌停扩增），禁止追高买入",
     "buy_deep_loss": "⚠️ **风控阻断：** 深度套牢标的需连续 3 次买入建议才允许加仓",
     "sell_deep_loss": "⚠️ **风控阻断：** 深度套牢且组合覆盖不足，暂不允许卖出",
     "sell_defensive_trim": (
@@ -1242,19 +1243,19 @@ def render_intraday_scan_markdown(
     if report.get("reasoning"):
         lines.extend(["", f"**研判：** {report['reasoning']}"])
 
-    # TSP Deviation Sentinel for current symbol
+    # TSP Quant Intraday Monitor (Sentinels, Mainline & Phase)
     tsp_cfg = dict((settings or {}).get("tsp_quant") or {})
-    if tsp_cfg.get("enabled", True) is not False and tsp_cfg.get("deviation_enabled", True) is not False:
+    if tsp_cfg.get("enabled", True) is not False:
         try:
-            from agent_reach.daily_run.tsp.deviation_monitor import compute_exchange_deviation_risk
-            risk = compute_exchange_deviation_risk(
-                enriched if isinstance(enriched, dict) else {},
-                warning_ratio=float(tsp_cfg.get("deviation_warning_ratio", 0.85)),
-                block_ratio=float(tsp_cfg.get("deviation_block_buy_ratio", 0.90)),
+            from agent_reach.daily_run.tsp.intraday_sentinel import format_tsp_intraday_card_markdown
+
+            tsp_lines = format_tsp_intraday_card_markdown(
+                str(report.get("code") or (enriched or {}).get("code") or scan.get("code") or ""),
+                symbol_data=enriched if isinstance(enriched, dict) else report,
+                settings=settings,
             )
-            if risk.get("warning"):
-                icon = "🛑" if risk.get("blocked_buy") else "⚠️"
-                lines.extend(["", f"**{icon} 交易所偏离监管：** {risk.get('reason')}"])
+            if tsp_lines:
+                lines.extend([""] + tsp_lines)
         except Exception:
             pass
 
@@ -1285,6 +1286,8 @@ def infer_trade_block_kind(decision: TradeDecision | dict[str, Any]) -> Optional
         return "buy_cash"
     if "可部署买入预算" in reasoning or "不足一手" in reasoning:
         return "buy_budget"
+    if block_kind == "tsp_retreat" or "退潮急刹车" in reasoning or ("退潮" in reasoning and "急刹车" in reasoning):
+        return "tsp_retreat"
     if "TSP" in reasoning or "偏离" in reasoning:
         return "tsp_deviation"
     if "Playbook 契约" in reasoning or block_kind in (
@@ -1498,6 +1501,47 @@ def _decide_trade(
         aggressive_entry_default(settings),
         macro_veto=macro_veto,
     )
+
+    # TSP intraday quant probe: live breadth, mainline matching & sentinels
+    live_breadth = None
+    try:
+        from agent_reach.daily_run.tsp.config import tsp_quant_cfg
+
+        tsp_cfg = tsp_quant_cfg(settings)
+        tsp_intraday_cfg = tsp_cfg.get("intraday") or {}
+        if tsp_cfg.get("enabled", True) and tsp_intraday_cfg.get("enabled", True):
+            from agent_reach.daily_run.tsp.intraday_sentinel import (
+                get_live_market_breadth_and_phase,
+                is_symbol_in_top_n_mainlines,
+                match_symbol_tsp_mainline,
+            )
+
+            live_breadth = get_live_market_breadth_and_phase(settings)
+    except Exception:
+        live_breadth = None
+        tsp_cfg = {}
+        tsp_intraday_cfg = {}
+
+    # TSP Non-Mainline Guard: penalize non-top3 sectors during weak market regimes (freezing/repair)
+    if (
+        live_breadth
+        and tsp_intraday_cfg.get("non_mainline_penalty_enabled", True)
+        and live_breadth.get("phase") in ("freezing", "repair")
+    ):
+        try:
+            symbol_code_str = str(report.get("code") or "")
+            if not is_symbol_in_top_n_mainlines(
+                symbol_code_str,
+                snapshot,
+                settings,
+                top_n=3,
+                live_breadth=live_breadth,
+            ):
+                aggressive += 2.0
+                overlay_note = f"{overlay_note}[TSP弱势轮动防假突破: 门槛+2.0]"
+        except Exception:
+            pass
+
     min_cash = min_cash_ratio_default(settings)
 
     trade_id = f"T{trade_index}"
@@ -1551,6 +1595,25 @@ def _decide_trade(
     exp_ret = expected_return_pct
     if exp_ret is None:
         exp_ret = estimate_expected_return(lookback_mss, aggressive, macro_veto, settings)
+
+    # TSP Mainline Resonance Bonus: reward Top 2 mainline constituents with score >= 20
+    if (
+        live_breadth
+        and tsp_intraday_cfg.get("mainline_resonance_enabled", True)
+    ):
+        try:
+            tsp_match = match_symbol_tsp_mainline(
+                str(report.get("code") or ""),
+                snapshot,
+                settings,
+                live_breadth=live_breadth,
+            )
+            if tsp_match.is_mainline and tsp_match.score >= 20.0:
+                bonus = float(tsp_intraday_cfg.get("mainline_bonus_return_pct", 0.008))
+                exp_ret = float(exp_ret or 0.0) + bonus
+                overlay_note = f"{overlay_note}[TSP主线强共振: {tsp_match.sector_name} {tsp_match.score}分]"
+        except Exception:
+            pass
 
     friction_blocked = not _passes_friction(exp_ret, settings)
     blocked = verdict.blocked or report.get("blocked", False)
@@ -1839,6 +1902,31 @@ def _decide_trade(
                 friction_blocked=friction_blocked,
                 expected_return_pct=exp_ret,
             )
+
+        # TSP Intraday Retreat Veto: stop chasing buy during market retreat (high broken rate & limit-down surge)
+        if live_breadth and tsp_intraday_cfg.get("enabled", True):
+            try:
+                from agent_reach.daily_run.tsp.intraday_sentinel import check_intraday_retreat_risk
+
+                is_retreat, retreat_reason = check_intraday_retreat_risk(
+                    settings,
+                    live_breadth=live_breadth,
+                )
+                if is_retreat:
+                    return TradeDecision(
+                        action="hold",
+                        trade_id=trade_id,
+                        lookback_mss=lookback_mss,
+                        lookback_detail=[],
+                        trend=trend,
+                        reasoning=f"{retreat_reason}{overlay_note}",
+                        blocked=True,
+                        block_kind="tsp_retreat",
+                        friction_blocked=friction_blocked,
+                        expected_return_pct=exp_ret,
+                    )
+            except Exception:
+                pass
         if cash_ratio is not None and cash_ratio < min_cash:
             return TradeDecision(
                 action="hold",

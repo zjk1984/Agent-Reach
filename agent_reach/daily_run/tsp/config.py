@@ -15,6 +15,7 @@ def tsp_quant_cfg(settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         except Exception:
             settings = {}
     raw = dict((settings or {}).get("tsp_quant") or {})
+    raw_intraday = dict(raw.get("intraday") or {})
     return {
         "enabled": raw.get("enabled", True) is not False,
         "regime_enabled": raw.get("regime_enabled", True) is not False,
@@ -28,4 +29,16 @@ def tsp_quant_cfg(settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         "deviation_block_buy_ratio": float(raw.get("deviation_block_buy_ratio", 0.90)),
         # Mainline ranking minimum limit up stocks to consider a sector as mainline
         "mainline_min_limit_ups": int(raw.get("mainline_min_limit_ups", 2)),
+        # Intraday specific config
+        "intraday": {
+            "enabled": raw_intraday.get("enabled", True) is not False,
+            "mainline_resonance_enabled": raw_intraday.get("mainline_resonance_enabled", True) is not False,
+            "mainline_bonus_return_pct": float(raw_intraday.get("mainline_bonus_return_pct", 0.008)),
+            "non_mainline_penalty_enabled": raw_intraday.get("non_mainline_penalty_enabled", True) is not False,
+            "live_breadth_enabled": raw_intraday.get("live_breadth_enabled", True) is not False,
+            "live_breadth_cache_ttl_seconds": int(raw_intraday.get("live_breadth_cache_ttl_seconds", 300)),
+            "intraday_retreat_broken_rate": float(raw_intraday.get("intraday_retreat_broken_rate", 0.35)),
+            "holding_deviation_alert": raw_intraday.get("holding_deviation_alert", True) is not False,
+            "card_display_enabled": raw_intraday.get("card_display_enabled", True) is not False,
+        },
     }
