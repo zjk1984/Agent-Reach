@@ -1405,6 +1405,8 @@ class IntradayFrictionWhatIfResult:
     trend_mismatch: int = 0
     actual_buy_count: int = 0
     evolved_buy_count: int = 0
+    tsp_guard_blocks: int = 0
+    tsp_guard_kinds: dict[str, int] = field(default_factory=dict)
     skipped: bool = False
     skip_reason: str = ""
     scope: str = "daily"
@@ -1421,6 +1423,8 @@ class IntradayFrictionWhatIfResult:
             "trend_mismatch": self.trend_mismatch,
             "actual_buy_count": self.actual_buy_count,
             "evolved_buy_count": self.evolved_buy_count,
+            "tsp_guard_blocks": self.tsp_guard_blocks,
+            "tsp_guard_kinds": dict(self.tsp_guard_kinds),
             "skipped": self.skipped,
             "skip_reason": self.skip_reason,
             "scope": self.scope,
@@ -1446,8 +1450,11 @@ def _replay_evolved_trade_decision(
     entry: dict[str, Any],
     snapshot: dict[str, Any],
     settings: dict[str, Any],
+    *,
+    enriched_map: Optional[dict[str, dict[str, Any]]] = None,
 ):
     from agent_reach.daily_run.intraday import _decide_trade
+    from agent_reach.daily_run.symbols import apply_enriched_replay_context
     from agent_reach.daily_run.verdict import VerdictResult
 
     lookback_mss = float(entry.get("lookback_mss") or 0)
@@ -1467,17 +1474,24 @@ def _replay_evolved_trade_decision(
         reasoning=reasoning,
         blocked=tag_blocked,
     )
-    report = {
-        "code": entry.get("code"),
-        "name": entry.get("name"),
-        "verdict": verdict_label,
-        "mss_final": mss_final,
-        "blocked": tag_blocked,
-        "reasoning": reasoning,
-    }
-    snap = dict(snapshot)
-    snap["code"] = entry.get("code")
-    snap["name"] = entry.get("name")
+    if enriched_map is not None:
+        snap, report = apply_enriched_replay_context(entry, snapshot, enriched_map)
+    else:
+        snap = dict(snapshot)
+        snap["code"] = entry.get("code")
+        snap["name"] = entry.get("name")
+        report = {
+            "code": entry.get("code"),
+            "name": entry.get("name"),
+            "verdict": verdict_label,
+            "mss_final": mss_final,
+            "blocked": tag_blocked,
+            "reasoning": reasoning,
+        }
+    report.setdefault("verdict", verdict_label)
+    report.setdefault("mss_final", mss_final)
+    report.setdefault("blocked", tag_blocked)
+    report.setdefault("reasoning", reasoning)
     return _decide_trade(
         lookback_mss=lookback_mss,
         trend=trend,
@@ -1525,6 +1539,8 @@ def build_intraday_friction_whatif(
     trend_mismatch = 0
     actual_buy_count = 0
     evolved_buy_count = 0
+    tsp_guard_blocks = 0
+    tsp_guard_kinds: dict[str, int] = {}
 
     for entry in intraday_list:
         code = _normalize_code(str(entry.get("code") or ""))
@@ -1535,7 +1551,11 @@ def build_intraday_friction_whatif(
         snap["code"] = code
         snap["name"] = entry.get("name") or code
 
-        decision = _replay_evolved_trade_decision(entry, snap, cfg)
+        decision = _replay_evolved_trade_decision(entry, snap, cfg, enriched_map=enriched)
+        block_kind = str(decision.block_kind or "")
+        if decision.blocked and block_kind.startswith("tsp_"):
+            tsp_guard_blocks += 1
+            tsp_guard_kinds[block_kind] = tsp_guard_kinds.get(block_kind, 0) + 1
         actual_action = str(entry.get("action") or "hold")
         actual_friction = bool(entry.get("friction_blocked"))
         evolved_action = str(decision.action or "hold")
@@ -1576,6 +1596,7 @@ def build_intraday_friction_whatif(
                 "evolved_action": evolved_action,
                 "actual_friction_blocked": actual_friction,
                 "evolved_friction_blocked": evolved_friction,
+                "tsp_block_kind": block_kind if block_kind.startswith("tsp_") else "",
                 "block_reason": str(decision.reasoning or "")[:120],
             }
         )
@@ -1590,6 +1611,8 @@ def build_intraday_friction_whatif(
             friction_blocked_actual=friction_blocked_actual,
             actual_buy_count=actual_buy_count,
             evolved_buy_count=evolved_buy_count,
+            tsp_guard_blocks=tsp_guard_blocks,
+            tsp_guard_kinds=tsp_guard_kinds,
         )
 
     return IntradayFrictionWhatIfResult(
@@ -1601,6 +1624,8 @@ def build_intraday_friction_whatif(
         trend_mismatch=trend_mismatch,
         actual_buy_count=actual_buy_count,
         evolved_buy_count=evolved_buy_count,
+        tsp_guard_blocks=tsp_guard_blocks,
+        tsp_guard_kinds=tsp_guard_kinds,
     )
 
 
@@ -1752,6 +1777,11 @@ def render_intraday_friction_whatif_markdown(
         f"自进化可放行 **{int(data.get('friction_would_pass') or 0)}** 次 · "
         f"趋势误判 **{int(data.get('trend_mismatch') or 0)}** 次"
     )
+    tsp_blocks = int(data.get("tsp_guard_blocks") or 0)
+    if tsp_blocks > 0:
+        kinds = data.get("tsp_guard_kinds") or {}
+        kind_bits = " · ".join(f"{k}×{v}" for k, v in sorted(kinds.items()))
+        lines.append(f"- TSP 量化防线阻断 **{tsp_blocks}** 次（{kind_bits or '—'}）")
     lines.extend(
         [
             "",
@@ -1792,15 +1822,21 @@ def summarize_intraday_friction_for_harness(
 
     friction_pass = int(data.get("friction_would_pass") or 0)
     trend_miss = int(data.get("trend_mismatch") or 0)
+    tsp_blocks = int(data.get("tsp_guard_blocks") or 0)
+    policy: list[str] = []
+    playbook: list[str] = []
+    plan: list[str] = []
     memory = [
         (
             f"盘中摩擦 what-if：摩擦阻断 {int(data.get('friction_blocked_actual') or 0)} 次，"
             f"自进化可放行 {friction_pass} 次，趋势误判 {trend_miss} 次"
         )
     ]
-    policy: list[str] = []
-    playbook: list[str] = []
-    plan: list[str] = []
+    if tsp_blocks > 0:
+        kinds = data.get("tsp_guard_kinds") or {}
+        kind_bits = " · ".join(f"{k}×{v}" for k, v in sorted(kinds.items()))
+        memory.append(f"TSP 量化防线 replay 阻断 {tsp_blocks} 次（{kind_bits}）")
+        playbook.append("TSP 防线在 what-if replay 中有效拦截追高/核按钮，保留当前阈值")
     if friction_pass >= 2:
         policy.append("摩擦成本过高：略降 friction_min_return_pct 或 exp_return 门槛")
         plan.append("intraday：验证 friction_min_return_pct 与落账成交对齐")
@@ -1937,7 +1973,7 @@ def build_intraday_sell_whatif(
         actual_shares = sum(int(a.get("shares") or 0) for a in _intraday_sell_actions(entry))
         actual_action = str(entry.get("action") or "hold")
 
-        decision = _replay_evolved_trade_decision(entry, snap, cfg)
+        decision = _replay_evolved_trade_decision(entry, snap, cfg, enriched_map=enriched)
         evolved_action = str(decision.action or "hold")
         hypo_shares = 0
         block_reason = ""

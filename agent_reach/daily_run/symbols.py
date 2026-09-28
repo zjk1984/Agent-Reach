@@ -3,9 +3,147 @@
 
 from __future__ import annotations
 
-from typing import Any
+from dataclasses import dataclass, asdict
+from typing import Any, Optional
 
 from agent_reach.daily_run.snapshot_builder import _normalize_code
+
+
+@dataclass
+class EnrichedSymbolProfile:
+    """Standardized multi-phase unified symbol profile contract.
+
+    Aggregates D1~D6 attributes across the stock lifecycle:
+    selection -> backtesting -> monitoring -> post-market review.
+    """
+    code: str
+    name: str = ""
+    is_holding: bool = False
+    shares: int = 0
+    cost: float = 0.0
+    days_held: int = 0
+
+    # D1 + D4: Live quotes & technicals
+    price: float = 0.0
+    change_pct: float = 0.0
+    volume: Optional[float] = None
+    turnover: Optional[float] = None
+    ma5: Optional[float] = None
+    ma20: Optional[float] = None
+    position_20d: Optional[float] = None
+
+    # D2: 9:25 Call auction imbalance
+    auction_ratio_pct: float = 0.0
+    open_pct: float = 0.0
+    is_weak_to_strong: bool = False
+    is_panic_dumping: bool = False
+
+    # D3: Ladder & Mainline
+    consecutive_boards: int = 0
+    mainline_sector: str = ""
+    mainline_score: float = 0.0
+    ladder_fault_status: str = "healthy"
+
+    # D6: Abnormal move price deviation
+    cumulative_3d_pct: float = 0.0
+    threshold_3d_pct: float = 20.0
+    distance_to_limit_pct: float = 20.0
+    deviation_risk_level: str = "safe"
+
+    # Decision telemetry
+    mss_score: float = 50.0
+    verdict: str = "观望"
+    blocked_kind: Optional[str] = None
+    blocked_reason: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, code: str, row: dict[str, Any]) -> EnrichedSymbolProfile:
+        """Build profile from a loose enriched row dict."""
+        data = dict(row or {})
+        return cls(
+            code=_normalize_code(code),
+            name=str(data.get("name") or ""),
+            is_holding=bool(data.get("is_holding")),
+            shares=int(data.get("shares") or 0),
+            cost=float(data.get("cost") or 0.0),
+            days_held=int(data.get("days_held") or 0),
+            price=float(data.get("price") or 0.0),
+            change_pct=float(data.get("change_pct") or 0.0),
+            volume=data.get("volume"),
+            turnover=data.get("turnover"),
+            ma5=data.get("ma5"),
+            ma20=data.get("ma20"),
+            position_20d=data.get("position_20d"),
+            auction_ratio_pct=float(data.get("auction_ratio_pct") or 0.0),
+            open_pct=float(data.get("open_pct") or 0.0),
+            is_weak_to_strong=bool(data.get("is_weak_to_strong")),
+            is_panic_dumping=bool(data.get("is_panic_dumping")),
+            consecutive_boards=int(data.get("consecutive_boards") or data.get("consecutive_limit_ups") or 0),
+            mainline_sector=str(data.get("mainline_sector") or data.get("sector") or ""),
+            mainline_score=float(data.get("mainline_score") or 0.0),
+            ladder_fault_status=str(data.get("ladder_fault_status") or "healthy"),
+            cumulative_3d_pct=float(data.get("cumulative_3d_pct") or 0.0),
+            threshold_3d_pct=float(data.get("threshold_3d_pct") or 20.0),
+            distance_to_limit_pct=float(data.get("distance_to_limit_pct") or 20.0),
+            deviation_risk_level=str(data.get("deviation_risk_level") or data.get("risk_level") or "safe"),
+            mss_score=float(data.get("mss_score") or data.get("mss_final") or 50.0),
+            verdict=str(data.get("verdict") or "观望"),
+            blocked_kind=data.get("blocked_kind"),
+            blocked_reason=str(data.get("blocked_reason") or ""),
+        )
+
+
+ENRICHED_REPLAY_FIELDS: tuple[str, ...] = (
+    "price", "change_pct", "ma5", "ma20", "position_20d", "volume", "turnover",
+    "auction_ratio_pct", "open_pct", "is_weak_to_strong", "is_panic_dumping",
+    "consecutive_boards", "consecutive_limit_ups", "mainline_sector", "mainline_score",
+    "ladder_fault_status", "cumulative_3d_pct", "threshold_3d_pct", "distance_to_limit_pct",
+    "deviation_risk_level", "risk_level", "industry", "sector",
+)
+
+
+def merge_enriched_row(base: dict[str, Any], enriched_row: dict[str, Any]) -> dict[str, Any]:
+    """Merge enriched D1~D6 fields into a target dict without overwriting with None."""
+    out = dict(base)
+    for key in ENRICHED_REPLAY_FIELDS:
+        if key in enriched_row and enriched_row[key] is not None:
+            out[key] = enriched_row[key]
+    return out
+
+
+def apply_enriched_replay_context(
+    entry: dict[str, Any],
+    snapshot: dict[str, Any],
+    enriched_map: dict[str, dict[str, Any]],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Inject unified enriched profile into snapshot/report for intraday replay."""
+    code = _normalize_code(str(entry.get("code") or snapshot.get("code") or ""))
+    row = dict(enriched_map.get(code) or {})
+    payload = entry.get("enriched") or entry.get("symbol_profile") or {}
+    if isinstance(payload, dict):
+        row = {**row, **payload}
+
+    snap = dict(snapshot)
+    snap["code"] = code
+    snap["name"] = entry.get("name") or snap.get("name") or row.get("name") or code
+    for key in ENRICHED_REPLAY_FIELDS:
+        if key in row and row[key] is not None:
+            snap[key] = row[key]
+
+    report = merge_enriched_row(
+        {
+            "code": code,
+            "name": snap.get("name"),
+            "verdict": entry.get("verdict"),
+            "mss_final": entry.get("mss_final"),
+            "reasoning": entry.get("reasoning"),
+        },
+        row,
+    )
+    return snap, report
 
 
 def copy_portfolio(portfolio: dict[str, Any]) -> dict[str, Any]:
@@ -19,16 +157,23 @@ def build_enriched_symbols(
     snapshot: dict[str, Any],
     settings: dict[str, Any] | None = None,
 ) -> dict[str, dict[str, Any]]:
-    """Merge holdings + watchlist + primary code from snapshot into one map."""
+    """Merge holdings + watchlist + primary code from snapshot into one map with D1~D6 metrics."""
     out: dict[str, dict[str, Any]] = {}
     for h in (snapshot.get("portfolio") or {}).get("holdings") or []:
         code = _normalize_code(str(h.get("code", "")))
         if code:
-            out[code] = dict(h)
+            row = dict(h)
+            row["is_holding"] = True
+            out[code] = row
     for w in snapshot.get("watchlist") or []:
         code = _normalize_code(str(w.get("code", "")))
         if code:
-            out[code] = {**out.get(code, {}), **dict(w)}
+            row = dict(w)
+            if code in out:
+                out[code] = {**out[code], **row}
+            else:
+                row["is_holding"] = False
+                out[code] = row
     code = snapshot.get("code")
     if code:
         c = _normalize_code(str(code))
@@ -36,8 +181,14 @@ def build_enriched_symbols(
             **out.get(c, {}),
             **{
                 k: snapshot[k]
-                for k in ("price", "name", "change_pct", "ma20", "sector", "industry", "volume", "turnover")
-                if k in snapshot
+                for k in (
+                    "price", "name", "change_pct", "ma20", "ma5", "sector", "industry",
+                    "volume", "turnover", "position_20d", "consecutive_limit_ups",
+                    "consecutive_boards", "auction_ratio_pct", "open_pct",
+                    "is_weak_to_strong", "is_panic_dumping", "distance_to_limit_pct",
+                    "cumulative_3d_pct", "threshold_3d_pct", "risk_level"
+                )
+                if k in snapshot and snapshot[k] is not None
             },
         }
 
@@ -49,6 +200,38 @@ def build_enriched_symbols(
             cfg = load_settings()
         except Exception:
             cfg = None
+
+    # Harmonize D1~D6 attributes across all symbols
+    for s_code, row in out.items():
+        # Ensure default D2/D3/D6 keys exist
+        if "is_holding" not in row:
+            row["is_holding"] = False
+        if "consecutive_boards" not in row:
+            row["consecutive_boards"] = int(row.get("consecutive_limit_ups") or 0)
+
+        # Call Auction Sentinel alignment (D2)
+        if "is_weak_to_strong" not in row or "is_panic_dumping" not in row:
+            try:
+                from agent_reach.daily_run.tsp.call_auction import evaluate_call_auction_divergence
+                auc = evaluate_call_auction_divergence(s_code, symbol_data=row, settings=cfg)
+                row["is_weak_to_strong"] = auc.get("is_weak_to_strong", False)
+                row["is_panic_dumping"] = auc.get("is_panic_dumping", False)
+                row["auction_ratio_pct"] = auc.get("auction_ratio_pct", 0.0)
+            except Exception:
+                pass
+
+        # Deviation Risk alignment (D6)
+        if "distance_to_limit_pct" not in row:
+            try:
+                from agent_reach.daily_run.tsp.deviation_monitor import compute_exchange_deviation_risk
+                dev = compute_exchange_deviation_risk(row)
+                row["distance_to_limit_pct"] = dev.get("distance_to_limit_pct", 20.0)
+                row["cumulative_3d_pct"] = dev.get("cumulative_3d_pct", 0.0)
+                row["threshold_3d_pct"] = dev.get("threshold_3d_pct", 20.0)
+                row["deviation_risk_level"] = dev.get("risk_level", "safe")
+            except Exception:
+                pass
+
     if cfg:
         from agent_reach.daily_run.bar_alignment import annotate_enriched_bar_quality
         from agent_reach.daily_run.sector_classifier import enrich_symbol_map_sectors
