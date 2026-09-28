@@ -19,7 +19,6 @@ from typing import Any
 from agent_reach.daily_run.panel.config import panel_cfg
 from agent_reach.daily_run.panel.export import export_panel_html
 from agent_reach.daily_run.panel.reader import PanelDataReader
-from agent_reach.daily_run.panel.server import serve_panel
 from agent_reach.daily_run.settings import load_settings
 
 
@@ -63,6 +62,13 @@ def cmd_panel(args: argparse.Namespace) -> None:
     db_path = Path(args.db).expanduser() if getattr(args, "db", None) else None
 
     if action == "serve":
+        try:
+            from agent_reach.daily_run.panel.server import serve_panel
+        except ImportError as exc:
+            print("❌ panel serve 需要额外安装可选依赖 starlette 和 uvicorn。")
+            print("   请运行: pip install starlette uvicorn")
+            sys.exit(1)
+
         host = args.host or cfg.get("host") or "127.0.0.1"
         port = args.port or int(cfg.get("port") or 8788)
         open_browser = getattr(args, "open", False)

@@ -5,7 +5,6 @@ import json
 import sqlite3
 from pathlib import Path
 import pytest
-from starlette.testclient import TestClient
 
 from agent_reach.daily_run.panel.config import (
     panel_card_link_enabled,
@@ -14,8 +13,16 @@ from agent_reach.daily_run.panel.config import (
 )
 from agent_reach.daily_run.panel.export import export_panel_html
 from agent_reach.daily_run.panel.reader import PanelDataReader
-from agent_reach.daily_run.panel.server import PanelServer
 from agent_reach.daily_run.tsp.intraday_sentinel import format_tsp_intraday_card_markdown
+
+try:
+    from starlette.testclient import TestClient
+    from agent_reach.daily_run.panel.server import PanelServer
+    HAS_STARLETTE = True
+except ImportError:
+    HAS_STARLETTE = False
+    TestClient = None  # type: ignore
+    PanelServer = None  # type: ignore
 
 
 @pytest.fixture
@@ -233,7 +240,9 @@ def test_panel_reader(isolated_panel_env):
 
 
 def test_panel_server_endpoints(isolated_panel_env):
-    """Verify Starlette REST endpoints via TestClient."""
+    """Verify Starlette REST endpoints via TestClient (skipped if starlette not installed)."""
+    if not HAS_STARLETTE:
+        pytest.skip("starlette/uvicorn optional dependencies not installed")
     env = isolated_panel_env
     reader = PanelDataReader(db_path=env["db_path"], data_root=env["data_root"])
     server = PanelServer(reader=reader)

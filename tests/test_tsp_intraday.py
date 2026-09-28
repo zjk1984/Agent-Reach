@@ -593,4 +593,3 @@ def test_forecast_tsp_prior_and_matrix_tagging():
     assert lq_row is not None
     assert "🌟" in lq_row["name"]  # Mainline resonance tag
     assert "异动监管红线预警" in lq_row["trigger"]  # Deviation lookahead warning
-

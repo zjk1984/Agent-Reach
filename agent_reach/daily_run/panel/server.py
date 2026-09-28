@@ -22,29 +22,10 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, StreamingResponse
 from starlette.routing import Route
 
+from agent_reach.daily_run.panel.export import get_panel_html
 from agent_reach.daily_run.panel.reader import PanelDataReader
 
 logger = logging.getLogger("agent_reach.daily_run.panel")
-
-
-def get_panel_html(initial_data: Optional[dict[str, Any]] = None) -> str:
-    """Load the dashboard HTML, optionally injecting initial state for zero-latency load."""
-    html_path = Path(__file__).parent / "static" / "index.html"
-    if html_path.exists():
-        content = html_path.read_text(encoding="utf-8")
-    else:
-        content = _FALLBACK_INDEX_HTML
-
-    if initial_data:
-        json_str = json.dumps(initial_data, ensure_ascii=False)
-        # Safely inject into window.__INITIAL_DATA__
-        script_inject = f"<script>window.__INITIAL_PANEL_DATA__ = {json_str};</script>"
-        if "</head>" in content:
-            content = content.replace("</head>", f"{script_inject}\n</head>", 1)
-        else:
-            content = script_inject + "\n" + content
-
-    return content
 
 
 class PanelServer:
