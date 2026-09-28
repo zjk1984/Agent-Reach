@@ -518,6 +518,24 @@ def render_today_risk_markdown(ctx: Any) -> str:
         return ""
 
     lines = ["**⚠️ 今日风险**", ""]
+    # TSP exchange deviation sentinel check on portfolio holdings
+    tsp_cfg = dict((getattr(ctx, "settings", None) or {}).get("tsp_quant") or {})
+    if tsp_cfg.get("enabled", True) is not False and tsp_cfg.get("deviation_enabled", True) is not False:
+        try:
+            from agent_reach.daily_run.tsp.deviation_monitor import check_portfolio_deviation_risk, format_deviation_alert_lines
+            pf_rows = getattr(ctx, "portfolio", {}).get("holdings") or []
+            dev_alerts = check_portfolio_deviation_risk(
+                pf_rows,
+                warning_ratio=float(tsp_cfg.get("deviation_warning_ratio", 0.85)),
+                block_ratio=float(tsp_cfg.get("deviation_block_buy_ratio", 0.90)),
+            )
+            dev_lines = format_deviation_alert_lines(dev_alerts)
+            if dev_lines:
+                lines.extend(dev_lines)
+                lines.append("")
+        except Exception:
+            pass
+
     if budget_md:
         lines.append(budget_md)
         lines.append("")
@@ -651,6 +669,31 @@ def render_holdings_overview_markdown(ctx: Any) -> str:
     if recap_md.strip():
         lines.append(recap_md)
         lines.append("")
+
+    # TSP market regime indicator (if available from primary snapshot or settings)
+    tsp_cfg = dict((getattr(ctx, "settings", None) or {}).get("tsp_quant") or {})
+    if tsp_cfg.get("enabled", True) is not False and tsp_cfg.get("regime_enabled", True) is not False:
+        try:
+            runtime = (getattr(ctx, "settings", None) or {}).get("harness_runtime") or {}
+            tsp_block = runtime.get("tsp_quant") or {}
+            tsp_summary = tsp_block.get("summary")
+            if not tsp_summary and snap:
+                # Calculate on the fly if snapshot has emotion/breadth
+                em = (snap.get("macro_signals") or {}).get("emotion") or {}
+                if em.get("limit_up") is not None or em.get("broken_rate") is not None:
+                    from agent_reach.daily_run.tsp.market_regime import compute_tsp_market_phase
+                    res = compute_tsp_market_phase(
+                        limit_up_count=int(em.get("limit_up") or 0),
+                        limit_down_count=int(em.get("limit_down") or 0),
+                        broken_rate=float(em.get("broken_rate") or 0.0),
+                        highest_board=int(em.get("highest_board") or 1),
+                    )
+                    tsp_summary = res.get("summary")
+            if tsp_summary:
+                lines.append(f"> **{tsp_summary}**")
+                lines.append("")
+        except Exception:
+            pass
 
     pred_md = render_yesterday_prediction_validation_markdown(ctx)
     if pred_md.strip():

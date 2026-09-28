@@ -30,6 +30,8 @@ class SessionOverlayContext:
     seed_regime: Optional[str] = None
     session_regime: Optional[str] = None
     forecast_accuracy_defensive: bool = False
+    tsp_regime: Optional[str] = None
+    tsp_regime_summary: str = ""
     symbol_gates: dict[str, dict[str, Any]] = field(default_factory=dict)
     reasons: list[str] = field(default_factory=list)
     am_state: dict[str, Any] = field(default_factory=dict)
@@ -82,17 +84,40 @@ def week_open_trade_block(
     code: str,
     action: str,
 ) -> Optional[str]:
-    """Return block reason when Sunday operation_plan blocks this symbol action."""
+    """Return block reason when Sunday operation_plan or TSP deviation blocks this symbol action."""
+    action_l = str(action or "").lower()
+    norm_code = _normalize_code(code)
+
+    # 1. Week open forecast symbol gates
     runtime = settings.get("harness_runtime") or {}
     block = runtime.get("week_open") or {}
-    if not block.get("active"):
-        return None
-    gates = block.get("symbol_gates") or {}
-    row = gates.get(_normalize_code(code)) or {}
-    action_l = str(action or "").lower()
-    if action_l == "buy" and row.get("block_buy"):
-        reasons = row.get("reasons") or ["周日 operation_plan 阻断买入"]
-        return str(reasons[0])
+    if block.get("active"):
+        gates = block.get("symbol_gates") or {}
+        row = gates.get(norm_code) or {}
+        if action_l == "buy" and row.get("block_buy"):
+            reasons = row.get("reasons") or ["周日 operation_plan 阻断买入"]
+            return str(reasons[0])
+
+    # 2. TSP exchange abnormal move price deviation buy sentinel
+    tsp_cfg = dict((settings or {}).get("tsp_quant") or {})
+    if (
+        tsp_cfg.get("enabled", True) is not False
+        and tsp_cfg.get("deviation_enabled", True) is not False
+        and action_l == "buy"
+    ):
+        try:
+            from agent_reach.daily_run.tsp.deviation_monitor import compute_exchange_deviation_risk
+            # Find quote/holding in settings/runtime or portfolio
+            risk = compute_exchange_deviation_risk(
+                {"code": norm_code},
+                warning_ratio=float(tsp_cfg.get("deviation_warning_ratio", 0.85)),
+                block_ratio=float(tsp_cfg.get("deviation_block_buy_ratio", 0.90)),
+            )
+            if risk.get("blocked_buy"):
+                return f"TSP 偏离度监管风控阻断：{risk.get('reason')}"
+        except Exception:
+            pass
+
     return None
 
 
@@ -225,9 +250,44 @@ def compute_session_overlay(
         if acc_def and acc_reason:
             ctx.reasons.append(acc_reason)
 
+    # Optional TSP (tick-stock-panel) 6-phase quant regime integration
+    tsp_cfg = dict((settings or {}).get("tsp_quant") or {})
+    if (
+        tsp_cfg.get("enabled", True) is not False
+        and tsp_cfg.get("regime_enabled", True) is not False
+        and tsp_cfg.get("session_regime_integration", True) is not False
+    ):
+        try:
+            from agent_reach.daily_run.tsp.market_regime import compute_tsp_market_phase
+            # Extract market review or scan breadths if available
+            lu = int(ctx.am_state.get("limit_up_count") or 0)
+            ld = int(ctx.am_state.get("limit_down_count") or 0)
+            br = float(ctx.am_state.get("broken_rate") or 0.0)
+            hb = int(ctx.am_state.get("highest_board") or 1)
+            # If am_state does not carry ladder, try reading from prior close or recent scans
+            if not lu and scans:
+                last_scan = scans[-1] if isinstance(scans, list) else {}
+                lu = int(last_scan.get("limit_up_count") or 0)
+                ld = int(last_scan.get("limit_down_count") or 0)
+                br = float(last_scan.get("broken_rate") or 0.0)
+                hb = int(last_scan.get("highest_board") or 1)
+            if lu > 0 or ld > 0 or br > 0:
+                tsp_res = compute_tsp_market_phase(
+                    limit_up_count=lu,
+                    limit_down_count=ld,
+                    broken_rate=br,
+                    highest_board=hb,
+                )
+                ctx.tsp_regime = tsp_res.get("session_regime")
+                ctx.tsp_regime_summary = tsp_res.get("summary") or ""
+        except Exception:
+            pass
+
     regimes = [ctx.week_open_regime, ctx.seed_regime, ctx.session_regime]
     if ctx.forecast_accuracy_defensive:
         regimes.append("defensive")
+    if ctx.tsp_regime:
+        regimes.append(ctx.tsp_regime)
     ctx.merged_regime = _merge_regimes(*regimes)
     return ctx
 
@@ -276,6 +336,13 @@ def apply_session_overlay(
             "source": ctx.pm_source,
             "merged": True,
             "forecast_accuracy_defensive": ctx.forecast_accuracy_defensive,
+        }
+
+    if ctx.tsp_regime:
+        runtime["tsp_quant"] = {
+            "active": True,
+            "regime": ctx.tsp_regime,
+            "summary": ctx.tsp_regime_summary,
         }
 
     if ctx.merged_regime == "neutral":

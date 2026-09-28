@@ -258,6 +258,15 @@ def fuse_verdict_with_team(
         downgrade.extend(buffett_notes)
         confidence = "低"
 
+    # TSP Exchange Deviation Sentinel gate: downgrade buy if approaching limit
+    tsp_blocked, tsp_notes = _check_tsp_deviation_filter(snapshot, settings)
+    if tsp_blocked:
+        if label_key == "buy":
+            label_key = "watch"
+        blocked = True
+        downgrade.extend(tsp_notes)
+        confidence = "低"
+
     verdict_map = {"buy": buy_label, "watch": watch_label, "avoid": avoid_label}
     return VerdictResult(
         verdict=verdict_map[label_key],
@@ -313,6 +322,28 @@ def _check_buffett_filter(
     if fields_present > 0 and failures > 0:
         blocked = True
     return blocked, notes
+
+
+def _check_tsp_deviation_filter(
+    snapshot: dict[str, Any],
+    settings: dict[str, Any],
+) -> tuple[bool, list[str]]:
+    """Block buying if symbol 3-day return is in dangerous proximity to exchange limit."""
+    tsp_cfg = dict((settings or {}).get("tsp_quant") or {})
+    if not tsp_cfg.get("enabled", True) or not tsp_cfg.get("deviation_enabled", True):
+        return False, []
+    try:
+        from agent_reach.daily_run.tsp.deviation_monitor import compute_exchange_deviation_risk
+        risk = compute_exchange_deviation_risk(
+            snapshot,
+            warning_ratio=float(tsp_cfg.get("deviation_warning_ratio", 0.85)),
+            block_ratio=float(tsp_cfg.get("deviation_block_buy_ratio", 0.90)),
+        )
+        if risk.get("blocked_buy"):
+            return True, [f"TSP 交易所异动偏离监管风控：{risk.get('reason')}，禁止追高买入"]
+    except Exception:
+        pass
+    return False, []
 
 
 def _optional_float(value: Any) -> Optional[float]:
