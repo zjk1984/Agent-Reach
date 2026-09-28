@@ -298,7 +298,18 @@
     "session_regime_integration": true,
     "deviation_warning_ratio": 0.85,
     "deviation_block_buy_ratio": 0.90,
-    "mainline_min_limit_ups": 2
+    "mainline_min_limit_ups": 2,
+    "intraday": {
+      "enabled": true,
+      "mainline_resonance_enabled": true,
+      "mainline_bonus_return_pct": 0.008,
+      "non_mainline_penalty_enabled": true,
+      "live_breadth_enabled": true,
+      "live_breadth_cache_ttl_seconds": 300,
+      "intraday_retreat_broken_rate": 0.35,
+      "holding_deviation_alert": true,
+      "card_display_enabled": true
+    }
   },
 
   "quality_gate": {

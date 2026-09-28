@@ -233,6 +233,15 @@ def intraday_to_harness_evidence(
                 playbook.append(f"Playbook 契约阻断 {name} 加仓（{block_kind}）")
             elif block_kind == "buy_budget" and "688008" in str(scan.get("code") or ""):
                 playbook.append("澜起 MSS可做 + apply=hold + 预算不足一手（verify #8 可 grep）")
+            elif block_kind == "tsp_deviation" or "偏离监管红线" in reasoning:
+                policy.append(f"TSP 异动偏离哨兵阻断买入：{name}({scan.get('code') or '?'})")
+            elif block_kind == "tsp_retreat" or "退潮急刹车" in reasoning:
+                policy.append(f"TSP 盘中退潮急刹车阻断追高：{name}({scan.get('code') or '?'})")
+
+            if "TSP主线强共振" in reasoning:
+                playbook.append(f"TSP 主线强共振激励买入：{name}({scan.get('code') or '?'})")
+            if "TSP弱势轮动防假突破" in reasoning:
+                playbook.append(f"TSP 弱势轮动提高门槛防假突破：{name}({scan.get('code') or '?'})")
 
     _append_profit_lock_harness_evidence(
         memory,
