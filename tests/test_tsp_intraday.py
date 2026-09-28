@@ -468,3 +468,128 @@ def test_intraday_harness_tsp_signals():
     }
     ev3 = intraday_to_harness_evidence(payload_penalty)
     assert any("TSP 弱势轮动提高门槛防假突破：纺织杂毛" in x for x in ev3["playbook"])
+
+
+def test_midday_cards_and_handoff_tsp_integration():
+    from agent_reach.daily_run.midday_cards import build_midday_card_context, render_session_brief_markdown
+    from agent_reach.daily_run.midday_handoff import build_midday_handoff
+
+    sample_breadth = {
+        "phase": "launching",
+        "phase_label": "启动期 🚀",
+        "broken_rate": 18.2,
+        "limit_up_count": 42,
+        "limit_down_count": 2,
+        "highest_board": 5,
+        "top_mainlines": [
+            {"sector": "半导体", "score": 25.0, "highest_board": 4, "rank": 1},
+        ],
+    }
+
+    scan_result = {
+        "scan": {"scan_id": "12:30", "code": "688008", "name": "澜起科技"},
+        "lookback_mss": 72.0,
+        "state": {"scans": []},
+        "enriched": {
+            "portfolio": {"holdings": [{"code": "688008", "name": "澜起科技", "price": 60.0}]},
+        },
+    }
+
+    with patch(
+        "agent_reach.daily_run.tsp.intraday_sentinel.get_live_market_breadth_and_phase",
+        return_value=sample_breadth,
+    ), patch(
+        "agent_reach.daily_run.tsp.intraday_sentinel.match_symbol_tsp_mainline",
+        return_value=TSPMainlineMatch(True, "半导体", 25.0, 4, 1),
+    ):
+        ctx = build_midday_card_context(
+            scan_result,
+            settings={"tsp_quant": {"enabled": True, "midday": {"enabled": True}}},
+        )
+        assert ctx.tsp_state is not None
+        assert ctx.tsp_state["phase"] == "launching"
+        assert len(ctx.tsp_lines) > 0
+
+        brief_md = render_session_brief_markdown(ctx)
+        assert "TSP 超短微观盘口" in brief_md
+
+        handoff = build_midday_handoff(
+            ctx,
+            portfolio={"holdings": []},
+            enriched={},
+        )
+        assert "tsp_state" in handoff
+        assert handoff["tsp_state"]["phase"] == "launching"
+
+
+def test_weekly_report_tsp_rollup():
+    from datetime import date
+    from agent_reach.daily_run.redfox_weekly import summarize_week_market_reviews, render_market_review_weekly_markdown
+
+    mock_reviews = {
+        "2026-09-21": {
+            "date": "2026-09-21",
+            "emotion": {"rating": "亢奋", "broken_rate": 15.0},
+            "sector_analysis": {
+                "mainline_type": "赛道股",
+                "ladder": [{"board": 3, "count": 1}],
+                "hot_sectors": [{"name": "半导体", "score": 28.0}],
+            },
+            "tsp_regime": {"phase": "launching", "phase_label": "启动期 🚀", "session_regime": "supportive"},
+        },
+        "2026-09-22": {
+            "date": "2026-09-22",
+            "emotion": {"rating": "亢奋", "broken_rate": 20.0},
+            "sector_analysis": {
+                "mainline_type": "赛道股",
+                "ladder": [{"board": 4, "count": 1}],
+                "hot_sectors": [{"name": "半导体", "score": 26.0}],
+            },
+            "tsp_regime": {"phase": "main_up", "phase_label": "主升期 🔥", "session_regime": "supportive"},
+        },
+    }
+
+    with patch("agent_reach.daily_run.redfox_weekly.is_trading_day", return_value=(True, "")), \
+         patch("agent_reach.daily_run.redfox_weekly.load_market_review", side_effect=lambda d: mock_reviews.get(d)):
+        summary = summarize_week_market_reviews(date(2026, 9, 21), date(2026, 9, 22))
+
+    assert "tsp_weekly" in summary
+    assert len(summary["tsp_weekly"]["daily_regimes"]) == 2
+    assert summary["tsp_weekly"]["max_ladder_height"] == 4
+
+    md = render_market_review_weekly_markdown(summary)
+    assert "TSP 超短情绪与主线演化" in md
+    assert "启动期" in md
+    assert "主升期" in md
+
+
+def test_forecast_tsp_prior_and_matrix_tagging():
+    from agent_reach.daily_run.forecast_operation_matrix import build_master_operation_rows
+
+    structured = {
+        "symbols": [
+            {
+                "code": "688008",
+                "name": "澜起科技",
+                "confidence_pct": 75.0,
+                "change_pct_range_3d": [26.0, 28.5],  # STAR market 3d limit is 30.0%, 28.5 >= 0.85 * 30.0 (25.5)
+            }
+        ]
+    }
+    pf = {"holdings": [{"code": "688008", "name": "澜起科技", "shares": 1000, "price": 60.0}], "cash": 50000}
+
+    with patch(
+        "agent_reach.daily_run.tsp.intraday_sentinel.is_symbol_in_top_n_mainlines",
+        return_value=True,
+    ):
+        rows = build_master_operation_rows(
+            portfolio=pf,
+            structured=structured,
+            outlook={"operation_plan": []},
+            settings={"tsp_quant": {"enabled": True, "forecast": {"enabled": True}}},
+        )
+
+    lq_row = next((r for r in rows if "688008" in r["code"]), None)
+    assert lq_row is not None
+    assert "🌟" in lq_row["name"]  # Mainline resonance tag
+    assert "异动监管红线预警" in lq_row["trigger"]  # Deviation lookahead warning

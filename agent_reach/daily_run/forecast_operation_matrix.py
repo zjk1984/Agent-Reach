@@ -306,6 +306,39 @@ def build_master_operation_rows(
             "stop_loss": "—",
         }
     )
+
+    # TSP Quant Mainline Resonance tagging & 3-day Deviation Lookahead warning
+    try:
+        from agent_reach.daily_run.tsp.config import tsp_quant_cfg
+
+        tcfg = tsp_quant_cfg(settings)
+        f_cfg = tcfg.get("forecast") or {}
+        if tcfg.get("enabled", True) and f_cfg.get("enabled", True):
+            from agent_reach.daily_run.tsp.intraday_sentinel import is_symbol_in_top_n_mainlines
+            from agent_reach.daily_run.tsp.deviation_monitor import compute_exchange_deviation_risk
+
+            for r in rows:
+                code_s = str(r.get("code") or "")
+                if code_s == "CASH":
+                    continue
+                sym_data = sym_preds.get(code_s) or {}
+                # 1. Mainline tagging
+                if f_cfg.get("symbol_mainline_tagging", True):
+                    if is_symbol_in_top_n_mainlines(code_s, sym_data, settings=settings, top_n=2):
+                        r["name"] = f"🌟 {r['name']}"
+                # 2. Deviation lookahead check
+                if f_cfg.get("deviation_lookahead_warning", True):
+                    # Check deviation risk
+                    dev_risk = compute_exchange_deviation_risk(sym_data, warning_ratio=0.85, block_ratio=0.90)
+                    if dev_risk.get("warning"):
+                        orig_trig = str(r.get("trigger") or "")
+                        if orig_trig in ("—", ""):
+                            r["trigger"] = "🛑[异动监管红线预警] 谨防追高"
+                        else:
+                            r["trigger"] = f"🛑[异动监管红线预警] {orig_trig}"
+    except Exception:
+        pass
+
     return rows
 
 

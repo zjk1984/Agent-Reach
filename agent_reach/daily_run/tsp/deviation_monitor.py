@@ -79,6 +79,11 @@ def compute_exchange_deviation_risk(
     # 3-day cumulative change (fallback to 1-day change or quote nested if missing)
     pct_3d = _parse_pct_float(symbol_row.get("change_pct_3d"))
     if pct_3d is None:
+        # Check change_pct_range_3d if provided (e.g. from forecast upper bound)
+        r3d = symbol_row.get("change_pct_range_3d")
+        if isinstance(r3d, (list, tuple)) and len(r3d) >= 2:
+            pct_3d = _parse_pct_float(r3d[1])
+    if pct_3d is None:
         c1 = _parse_pct_float(symbol_row.get("change_pct"))
         if c1 is None:
             # Try nested quote or snapshot fields

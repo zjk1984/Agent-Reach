@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import date, timedelta
 from typing import Any, Optional
 
@@ -121,6 +121,10 @@ def summarize_week_market_reviews(
     emotion_ratings: list[str] = []
     lhb_net_total = 0.0
     days_with_data = 0
+    tsp_daily_regimes: list[dict[str, Any]] = []
+    tsp_sector_scores: dict[str, list[float]] = defaultdict(list)
+    total_broken_rates: list[float] = []
+    max_ladder_height: int = 1
 
     cursor = week_start
     while cursor <= week_end:
@@ -143,6 +147,39 @@ def summarize_week_market_reviews(
                     lhb_net_total += float(summary.get("total_net") or 0)
                 else:
                     lhb_net_total += float(la.get("total_net") or 0)
+
+                # TSP 6-phase regime & ladder rollup
+                tsp_reg = review.get("tsp_regime") or {}
+                if tsp_reg:
+                    tsp_daily_regimes.append({
+                        "date": cursor.isoformat(),
+                        "phase": tsp_reg.get("phase"),
+                        "phase_label": tsp_reg.get("phase_label"),
+                        "session_regime": tsp_reg.get("session_regime"),
+                        "summary": tsp_reg.get("summary"),
+                    })
+                br = em.get("broken_rate")
+                if br is not None:
+                    try:
+                        total_broken_rates.append(float(br))
+                    except (ValueError, TypeError):
+                        pass
+                ladder = sa.get("ladder") or []
+                for rung in ladder:
+                    try:
+                        max_ladder_height = max(max_ladder_height, int(rung.get("board") or 1))
+                    except (ValueError, TypeError):
+                        pass
+
+                # Aggregate mainline scores if present in sector_analysis
+                for sec in sa.get("hot_sectors") or []:
+                    sname = str(sec.get("name") or sec.get("sector") or "").strip()
+                    score = sec.get("score") or sec.get("tsp_score")
+                    if sname and score is not None:
+                        try:
+                            tsp_sector_scores[sname].append(float(score))
+                        except (ValueError, TypeError):
+                            pass
         cursor += timedelta(days=1)
 
     if days_with_data == 0:
@@ -152,12 +189,35 @@ def summarize_week_market_reviews(
     emotion_counts = Counter(emotion_ratings)
     dominant_mainline = type_counts.most_common(1)[0][0] if type_counts else "—"
 
+    # Compute TSP weekly mainline persistence ranking
+    tsp_weekly_mainlines = []
+    for sname, scores in tsp_sector_scores.items():
+        if scores:
+            avg_score = sum(scores) / len(scores)
+            days_active = len(scores)
+            persistence_score = avg_score * (1.0 + 0.2 * days_active)
+            tsp_weekly_mainlines.append({
+                "sector": sname,
+                "days_active": days_active,
+                "avg_score": round(avg_score, 1),
+                "persistence_score": round(persistence_score, 1),
+            })
+    tsp_weekly_mainlines.sort(key=lambda x: x["persistence_score"], reverse=True)
+
+    avg_br = round(sum(total_broken_rates) / len(total_broken_rates), 1) if total_broken_rates else None
+
     return {
         "days_with_data": days_with_data,
         "mainline_type_counts": dict(type_counts),
         "dominant_mainline": dominant_mainline,
         "emotion_counts": dict(emotion_counts),
         "lhb_net_total_yi": round(lhb_net_total, 2),
+        "tsp_weekly": {
+            "daily_regimes": tsp_daily_regimes,
+            "weekly_mainlines": tsp_weekly_mainlines[:5],
+            "avg_broken_rate": avg_br,
+            "max_ladder_height": max_ladder_height,
+        },
     }
 
 
@@ -180,5 +240,31 @@ def render_market_review_weekly_markdown(summary: dict[str, Any]) -> str:
     if len(mt) > 1:
         tags = " · ".join(f"{k}({v})" for k, v in mt.items())
         lines.append(f"- 主线标签：{tags}")
+
+    # TSP Weekly rollup section
+    tsp_data = summary.get("tsp_weekly") or {}
+    regimes = tsp_data.get("daily_regimes") or []
+    if regimes:
+        chain = " → ".join(
+            f"{r.get('date', '')[-5:]} {r.get('phase_label', r.get('phase', '—'))}"
+            for r in regimes
+        )
+        lines.extend(["", "#### 🧬 TSP 超短情绪与主线演化", f"- **全周情绪演化链：** {chain}"])
+        stats_sub = []
+        if tsp_data.get("avg_broken_rate") is not None:
+            stats_sub.append(f"平均炸板率 **{tsp_data['avg_broken_rate']}%**")
+        if tsp_data.get("max_ladder_height") and tsp_data["max_ladder_height"] > 1:
+            stats_sub.append(f"连板高度天花板 **{tsp_data['max_ladder_height']}板**")
+        if stats_sub:
+            lines.append(f"- **盘口极限指标：** {' · '.join(stats_sub)}")
+
+        mainlines = tsp_data.get("weekly_mainlines") or []
+        if mainlines:
+            ml_strs = [
+                f"#{i+1} **{m['sector']}** (持续{m['days_active']}日·{m['persistence_score']}分)"
+                for i, m in enumerate(mainlines[:3])
+            ]
+            lines.append(f"- **周度持久主线 TOP 3：** {' / '.join(ml_strs)}")
+
     lines.append("")
     return "\n".join(lines)

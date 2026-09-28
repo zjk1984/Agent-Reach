@@ -353,6 +353,24 @@ def render_midday_markdown(
     if alert_md:
         lines.extend(["", alert_md])
 
+    # TSP Intraday Microstructure & Sentinels banner (legacy format)
+    try:
+        from agent_reach.daily_run.tsp.config import tsp_quant_cfg
+
+        tcfg = tsp_quant_cfg(settings)
+        if tcfg.get("enabled", True) and (tcfg.get("midday") or {}).get("enabled", True):
+            from agent_reach.daily_run.tsp.intraday_sentinel import format_tsp_intraday_card_markdown
+
+            tsp_md = format_tsp_intraday_card_markdown(
+                str(scan.get("code") or enriched.get("code") or ""),
+                symbol_data=enriched,
+                settings=settings,
+            )
+            if tsp_md:
+                lines.extend(["", "## ⚡ TSP 盘口与情绪", *tsp_md])
+    except Exception:
+        pass
+
     lines.extend(["", "## 🎯 午后 Lookback"])
     if lookback_detail:
         for item in lookback_detail:

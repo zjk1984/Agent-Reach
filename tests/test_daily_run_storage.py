@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -460,11 +461,12 @@ def test_prune_l2_scenarios_respects_protection(storage_env):
         at="2026-01-01T00:00:00+00:00",
         dedupe_key="l2:harness_snapshot:old",
     )
+    fresh_snap_date = (datetime.now(timezone.utc) - timedelta(days=2)).replace(microsecond=0).isoformat()
     store.upsert_l2_scenario(
         "harness_snapshot",
         "fresh_snap.json",
-        {"saved_at": "2026-09-13T00:00:00+00:00", "job": "close"},
-        at="2026-09-13T00:00:00+00:00",
+        {"saved_at": fresh_snap_date, "job": "close"},
+        at=fresh_snap_date,
         dedupe_key="l2:harness_snapshot:fresh",
     )
     store.upsert_l2_scenario(

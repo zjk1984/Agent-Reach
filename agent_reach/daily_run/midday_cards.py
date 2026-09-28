@@ -71,6 +71,8 @@ class MiddayCardContext:
     t0_opportunity_lines: list[str] = field(default_factory=list)
     narrative: Optional[dict[str, Any]] = None
     settings: Optional[dict[str, Any]] = None
+    tsp_lines: list[str] = field(default_factory=list)
+    tsp_state: Optional[dict[str, Any]] = None
 
 
 def _morning_plan_text(action: dict[str, Any]) -> str:
@@ -827,6 +829,51 @@ def build_midday_card_context(
             parts.append(f"- {w}")
         audit_banner = "\n".join(parts)
 
+    tsp_lines: list[str] = []
+    tsp_state: Optional[dict[str, Any]] = None
+    try:
+        from agent_reach.daily_run.tsp.config import tsp_quant_cfg
+
+        tcfg = tsp_quant_cfg(settings)
+        midday_tsp_cfg = tcfg.get("midday") or {}
+        if tcfg.get("enabled", True) and midday_tsp_cfg.get("enabled", True):
+            from agent_reach.daily_run.tsp.intraday_sentinel import (
+                get_live_market_breadth_and_phase,
+                format_tsp_intraday_card_markdown,
+            )
+
+            live_breadth = get_live_market_breadth_and_phase(settings)
+            if live_breadth:
+                tsp_state = {
+                    "phase": live_breadth.get("phase"),
+                    "phase_label": live_breadth.get("phase_label"),
+                    "phase_desc": live_breadth.get("phase_desc"),
+                    "broken_rate": live_breadth.get("broken_rate"),
+                    "limit_up_count": live_breadth.get("limit_up_count"),
+                    "limit_down_count": live_breadth.get("limit_down_count"),
+                    "highest_board": live_breadth.get("highest_board"),
+                    "top_mainlines": live_breadth.get("top_mainlines") or [],
+                }
+                if midday_tsp_cfg.get("card_display_enabled", True):
+                    # Target representative symbol from portfolio holdings if available
+                    rep_symbol = ""
+                    rep_data = {}
+                    holdings_list = portfolio.get("holdings") or []
+                    if holdings_list and isinstance(holdings_list[0], dict):
+                        rep_symbol = str(holdings_list[0].get("code") or "")
+                        rep_data = holdings_list[0]
+                    card_md = format_tsp_intraday_card_markdown(
+                        rep_symbol,
+                        symbol_data=rep_data or enriched,
+                        settings=settings,
+                        live_breadth=live_breadth,
+                    )
+                    if card_md:
+                        tsp_lines = card_md
+    except Exception:
+        tsp_lines = []
+        tsp_state = None
+
     return MiddayCardContext(
         plan_rows=plan_rows,
         plan_unchanged=plan_unchanged,
@@ -853,6 +900,8 @@ def build_midday_card_context(
         t0_opportunity_lines=t0_opportunity_lines,
         narrative=narrative,
         settings=settings,
+        tsp_lines=tsp_lines,
+        tsp_state=tsp_state,
     )
 
 
@@ -902,6 +951,11 @@ def render_session_brief_markdown(ctx: MiddayCardContext) -> str:
     holdings_lines = render_holdings_am_brief_table(ctx.holdings_am_rows or [])
     if holdings_lines:
         lines.extend(["", *holdings_lines])
+
+    # TSP Intraday Microstructure & Sentinels banner
+    if ctx.tsp_lines:
+        lines.extend(["", "**⚡ TSP 超短微观盘口（截至 11:30）**"])
+        lines.extend(ctx.tsp_lines)
 
     lunch_news = list(getattr(ctx, "lunch_news_lines", None) or [])
     if lunch_news:

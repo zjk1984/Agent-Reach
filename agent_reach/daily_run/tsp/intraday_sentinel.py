@@ -469,6 +469,15 @@ def format_tsp_intraday_card_markdown(
         strip_items.append(f"异动安全垫：+{dist:.1f}%（距交易所 3日 {limit_3d:.0f}% 监管红线尚有空间）")
 
     if strip_items:
+        try:
+            from agent_reach.daily_run.panel.config import panel_card_link_enabled, panel_url
+
+            if panel_card_link_enabled(settings):
+                p_url = panel_url(settings)
+                strip_items.append(f"🖥️ 实时大屏：[{p_url}]({p_url})")
+        except Exception:
+            pass
+
         lines.append("**TSP 量化哨兵：**")
         for item in strip_items:
             lines.append(f"- {item}")
