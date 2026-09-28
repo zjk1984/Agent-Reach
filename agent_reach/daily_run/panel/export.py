@@ -60,7 +60,6 @@ def export_panel_html(
 ) -> Path:
     """Generate and write a standalone HTML report containing the latest state."""
     reader = PanelDataReader(db_path=db_path, data_root=data_root)
-    state = reader.get_full_panel_state()
 
     out_file = output_path
     if out_file is None:
@@ -68,6 +67,8 @@ def export_panel_html(
         out_file = Path(root).expanduser() / "panel_report.html"
     else:
         out_file = Path(out_file).expanduser()
+
+    state = reader.get_full_panel_state(current_report_file=out_file)
 
     out_file.parent.mkdir(parents=True, exist_ok=True)
 

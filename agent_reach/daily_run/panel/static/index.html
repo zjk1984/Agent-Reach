@@ -388,6 +388,10 @@
     </div>
 
     <div class="header-right">
+      <!-- Historical Report Selector -->
+      <select id="history-report-select" class="btn" style="padding: 0.35rem 0.6rem; cursor: pointer; outline: none; border-color: #4b5563;">
+        <option value="">🕒 历史复盘快照...</option>
+      </select>
       <div class="status-badge">
         <div id="sse-indicator" class="pulse-dot"></div>
         <span id="sse-status-text">实时连接中</span>
@@ -463,6 +467,13 @@
           <div id="retreat-alert-container">
             <span style="font-size: 0.75rem; color: #10b981;">🟢 盘口安全 (<35%)</span>
           </div>
+        </div>
+
+        <!-- Ladder Promotion Progression Strip -->
+        <div id="ladder-promotion-strip" style="display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.25); padding: 0.35rem 0.6rem; border-radius: 4px; border: 1px solid rgba(55,65,81,0.5); font-size: 0.75rem; margin-bottom: 0.5rem;">
+          <span style="color: var(--text-muted);">连板天梯晋级率:</span>
+          <span id="ladder-promotion-val" class="num font-semibold">1→2: -- | 2→3: --</span>
+          <span id="ladder-status-badge" class="tag tag-green">梯队健康</span>
         </div>
 
         <!-- Market Breadth Numbers -->
@@ -574,6 +585,19 @@
           <div class="scan-dot-item" id="dot-S10">S10</div>
         </div>
 
+        <!-- S1~S10 Intraday Sentiment Sparkline -->
+        <div id="intraday-sparkline-box" style="margin: 0.6rem 0; padding: 0.6rem 0.75rem; background: rgba(0, 0, 0, 0.25); border: 1px solid var(--border); border-radius: 6px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.4rem;">
+            <div style="font-size: 0.75rem; font-weight: 600; color: var(--text-main); display: flex; align-items: center; gap: 0.35rem;">
+              <span>📈 日内情绪脉搏 (S1~S10 MSS 走势)</span>
+            </div>
+            <span id="sparkline-trend-tag" style="font-size: 0.72rem; color: var(--text-muted);">等待盘中扫描数据</span>
+          </div>
+          <div style="width: 100%; height: 85px; position: relative;">
+            <svg id="sparkline-svg" viewBox="0 0 500 85" preserveAspectRatio="none" style="width: 100%; height: 100%; overflow: visible;"></svg>
+          </div>
+        </div>
+
         <div id="latest-scan-summary" style="font-size: 0.78rem; color: var(--text-muted); line-height: 1.5; padding: 0.4rem 0;">
           等待盘中量化事件触发...
         </div>
@@ -622,6 +646,29 @@
       const statusBadge = document.getElementById('market-status-badge');
       if (statusBadge && meta.market_status) {
         statusBadge.innerText = meta.market_status;
+      }
+
+      // History Reports Dropdown
+      const selectEl = document.getElementById('history-report-select');
+      const historyReports = meta.history_reports || [];
+      if (selectEl && historyReports.length > 0) {
+        selectEl.innerHTML = `<option value="">🕒 历史复盘快照 (${historyReports.length})</option>`;
+        const curPath = window.location.pathname;
+        const curHref = window.location.href;
+        historyReports.forEach(r => {
+          const opt = document.createElement('option');
+          opt.value = r.url;
+          opt.innerText = (r.is_backup ? '📁 ' : '⭐ ') + r.label;
+          if (curHref.includes(r.filename) || curPath.includes(r.filename)) {
+            opt.selected = true;
+          }
+          selectEl.appendChild(opt);
+        });
+        selectEl.onchange = function() {
+          if (this.value) {
+            window.location.href = this.value;
+          }
+        };
       }
 
       // 2. Portfolio Stats
@@ -697,6 +744,32 @@
           retreatAlert.innerHTML = `<span style="font-size: 0.75rem; color: #f59e0b;">⚠️ 炸板升温预警</span>`;
         } else {
           retreatAlert.innerHTML = `<span style="font-size: 0.75rem; color: #10b981;">🟢 盘口安全 (<35%)</span>`;
+        }
+      }
+
+      // Ladder promotion progression render
+      const ladder = regime.promotion_ladder || {};
+      const ladderVal = document.getElementById('ladder-promotion-val');
+      const ladderBadge = document.getElementById('ladder-status-badge');
+      if (ladderVal) {
+        if (ladder.rate_1_to_2 !== undefined && ladder.rate_2_to_3 !== undefined) {
+          const r12 = (ladder.rate_1_to_2 * 100).toFixed(1);
+          const r23 = (ladder.rate_2_to_3 * 100).toFixed(1);
+          ladderVal.innerText = `1→2: ${r12}% | 2→3: ${r23}%`;
+        } else {
+          ladderVal.innerText = '1→2: -- | 2→3: --';
+        }
+      }
+      if (ladderBadge) {
+        if (ladder.fault_status === 'cliff') {
+          ladderBadge.className = 'tag tag-red';
+          ladderBadge.innerText = '⚠️ 2进3断崖';
+        } else if (ladder.fault_status === 'divergence') {
+          ladderBadge.className = 'tag tag-amber';
+          ladderBadge.innerText = '⚡ 接力分歧';
+        } else {
+          ladderBadge.className = 'tag tag-green';
+          ladderBadge.innerText = '🟢 梯队健康';
         }
       }
 
@@ -831,7 +904,7 @@
         }
       }
 
-      // 7. Intraday Scan Dots
+      // 7. Intraday Scan Dots & S1~S10 Sparkline
       const intraday = data.intraday || {};
       const completed = intraday.completed_cycles || [];
       const cycleProgressTag = document.getElementById('cycle-progress-tag');
@@ -846,6 +919,107 @@
           } else {
             dot.classList.remove('done');
           }
+        }
+      }
+
+      // Sparkline SVG Render
+      const sparkSvg = document.getElementById('sparkline-svg');
+      const sparkTrend = document.getElementById('sparkline-trend-tag');
+      const points = intraday.sparkline || [];
+      if (sparkSvg) {
+        const w = 500;
+        const h = 85;
+        const padX = 35;
+        const padTop = 15;
+        const padBottom = 22;
+        const drawH = h - padTop - padBottom;
+        const stepX = (w - padX * 2) / 9;
+
+        // Base grid lines: 50 neutral line
+        const y50 = padTop + drawH * 0.5;
+        let svgContent = `
+          <defs>
+            <linearGradient id="sparkGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+              <stop offset="0%" stop-color="#3b82f6" stop-opacity="0.35"/>
+              <stop offset="100%" stop-color="#3b82f6" stop-opacity="0.0"/>
+            </linearGradient>
+          </defs>
+          <!-- Guideline 50 -->
+          <line x1="${padX}" y1="${y50}" x2="${w - padX}" y2="${y50}" stroke="#374151" stroke-dasharray="3,3" stroke-width="1"/>
+          <text x="${padX - 8}" y="${y50 + 3}" text-anchor="end" fill="#6b7280" font-size="9" font-family="monospace">50</text>
+        `;
+
+        // Draw x-axis labels S1..S10
+        for (let i = 0; i < 10; i++) {
+          const x = padX + i * stepX;
+          const cycleLabel = `S${i+1}`;
+          const isDone = completed.includes(cycleLabel);
+          const color = isDone ? '#10b981' : '#6b7280';
+          svgContent += `<text x="${x}" y="${h - 6}" text-anchor="middle" fill="${color}" font-size="9" font-family="monospace" font-weight="${isDone ? '600' : '400'}">${cycleLabel}</text>`;
+        }
+
+        if (points.length === 0) {
+          svgContent += `<text x="${w / 2}" y="${padTop + drawH / 2 + 4}" text-anchor="middle" fill="#6b7280" font-size="11">等待盘中扫描数据启动脉搏走势...</text>`;
+          if (sparkTrend) sparkTrend.innerText = '等待盘中扫描数据';
+        } else {
+          // Map cycle name S1..S10 to index 0..9
+          const cycleCoords = points.map(pt => {
+            const num = parseInt(pt.cycle.replace('S', ''), 10) || 1;
+            const x = padX + (num - 1) * stepX;
+            // Clamped MSS 0..100 -> Y
+            const mssClamped = Math.max(0, Math.min(100, Number(pt.mss || 50)));
+            const y = padTop + drawH * (1 - (mssClamped / 100));
+            return { x, y, mss: pt.mss, cycle: pt.cycle, at: pt.at, verdict: pt.verdict };
+          });
+
+          // Polyline path & area path
+          const polyPoints = cycleCoords.map(c => `${c.x.toFixed(1)},${c.y.toFixed(1)}`).join(' ');
+          const first = cycleCoords[0];
+          const last = cycleCoords[cycleCoords.length - 1];
+          const areaPoints = `${first.x.toFixed(1)},${padTop + drawH} ${polyPoints} ${last.x.toFixed(1)},${padTop + drawH}`;
+
+          svgContent += `<polygon points="${areaPoints}" fill="url(#sparkGrad)" />`;
+          svgContent += `<polyline points="${polyPoints}" fill="none" stroke="#60a5fa" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />`;
+
+          // Dots on vertices
+          cycleCoords.forEach(c => {
+            const dotColor = c.mss >= 60 ? '#ef4444' : (c.mss <= 40 ? '#10b981' : '#3b82f6');
+            svgContent += `
+              <circle cx="${c.x.toFixed(1)}" cy="${c.y.toFixed(1)}" r="4" fill="${dotColor}" stroke="#111827" stroke-width="1.5">
+                <title>${c.cycle} (${c.at}): MSS ${c.mss} [${c.verdict}]</title>
+              </circle>
+              <text x="${c.x.toFixed(1)}" y="${(c.y - 6).toFixed(1)}" text-anchor="middle" fill="${dotColor}" font-size="9" font-family="monospace" font-weight="600">${c.mss}</text>
+            `;
+          });
+
+          // Update Trend Tag
+          if (sparkTrend) {
+            if (cycleCoords.length >= 2) {
+              const diff = last.mss - cycleCoords[cycleCoords.length - 2].mss;
+              if (diff > 1.5) {
+                sparkTrend.innerHTML = `<span style="color: #ef4444; font-weight: 600;">↗ 情绪升温 (+${diff.toFixed(1)})</span>`;
+              } else if (diff < -1.5) {
+                sparkTrend.innerHTML = `<span style="color: #10b981; font-weight: 600;">↘ 情绪回落 (${diff.toFixed(1)})</span>`;
+              } else {
+                sparkTrend.innerHTML = `<span style="color: #60a5fa;">→ 情绪平稳 (${diff >= 0 ? '+' : ''}${diff.toFixed(1)})</span>`;
+              }
+            } else {
+              sparkTrend.innerText = `最新点位: ${last.cycle} MSS ${last.mss} (${last.verdict})`;
+            }
+          }
+        }
+
+        sparkSvg.innerHTML = svgContent;
+      }
+
+      // Latest Scan Summary
+      const latestSummaryEl = document.getElementById('latest-scan-summary');
+      if (latestSummaryEl) {
+        if (points.length > 0) {
+          const lastPt = points[points.length - 1];
+          latestSummaryEl.innerHTML = `已执行 <b>${completed.length}/10</b> 次扫描。最近轮次 <b>${lastPt.cycle}</b> (${lastPt.at})：全市场综合 MSS <b style="color: #60a5fa;">${lastPt.mss}</b>，裁决 <b>${lastPt.verdict}</b>，共监测 ${lastPt.symbols_count} 标的。`;
+        } else {
+          latestSummaryEl.innerText = '等待盘中量化事件触发...';
         }
       }
 

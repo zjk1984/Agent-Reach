@@ -593,3 +593,126 @@ def test_forecast_tsp_prior_and_matrix_tagging():
     assert lq_row is not None
     assert "🌟" in lq_row["name"]  # Mainline resonance tag
     assert "异动监管红线预警" in lq_row["trigger"]  # Deviation lookahead warning
+
+
+def test_ladder_promotion_rates_and_guard():
+    from agent_reach.daily_run.tsp.market_regime import compute_ladder_promotion_rates
+    from agent_reach.daily_run.tsp.intraday_sentinel import check_ladder_relay_guard
+
+    # 1. Healthy ladder
+    stocks_healthy = [
+        {"code": "000001", "consecutive_limit_ups": 1},
+        {"code": "000002", "consecutive_limit_ups": 1},
+        {"code": "000003", "consecutive_limit_ups": 2},
+        {"code": "000004", "consecutive_limit_ups": 2},
+        {"code": "000005", "consecutive_limit_ups": 3},
+        {"code": "000006", "consecutive_limit_ups": 4},
+    ]
+    res_healthy = compute_ladder_promotion_rates(stocks_healthy)
+    assert res_healthy["count_1"] == 2
+    assert res_healthy["count_2"] == 2
+    assert res_healthy["count_3"] == 1
+    assert res_healthy["count_4_plus"] == 1
+    assert res_healthy["fault_status"] == "healthy"
+    assert res_healthy["highest_board"] == 4
+
+    # 2. Cliff ladder: 3 two-boards but 0 three-boards (severe cliff)
+    stocks_cliff = [
+        {"code": "000001", "consecutive_limit_ups": 1},
+        {"code": "000002", "consecutive_limit_ups": 1},
+        {"code": "000003", "consecutive_limit_ups": 2},
+        {"code": "000004", "consecutive_limit_ups": 2},
+        {"code": "000005", "consecutive_limit_ups": 2},
+    ]
+    res_cliff = compute_ladder_promotion_rates(stocks_cliff)
+    assert res_cliff["count_2"] == 3
+    assert res_cliff["count_3"] == 0
+    assert res_cliff["fault_status"] == "cliff"
+    assert "2进3严重断崖" in res_cliff["fault_label"]
+
+    # 3. Guard test: high position stock blocked under cliff
+    mock_breadth_cliff = {
+        "broken_rate": 0.28,
+        "promotion_ladder": res_cliff,
+    }
+    high_stock = {"code": "000003", "consecutive_limit_ups": 2, "change_pct": 8.0}
+    blocked, reason = check_ladder_relay_guard(
+        "000003",
+        symbol_data=high_stock,
+        live_breadth=mock_breadth_cliff,
+    )
+    assert blocked is True
+    assert "连板天梯断崖阻断" in reason
+
+    # Low position stock not blocked
+    low_stock = {"code": "000001", "consecutive_limit_ups": 1, "change_pct": 2.5}
+    blocked_low, _ = check_ladder_relay_guard(
+        "000001",
+        symbol_data=low_stock,
+        live_breadth=mock_breadth_cliff,
+    )
+    assert blocked_low is False
+
+
+def test_call_auction_divergence_sentinel():
+    from agent_reach.daily_run.tsp.call_auction import evaluate_call_auction_divergence
+
+    # 1. Weak to Strong (爆量抢筹)
+    w2s_data = {
+        "open": 20.6,
+        "prev_close": 20.0,  # +3.0% open
+        "auction_amount": 15000000.0,
+        "yesterday_amount": 300000000.0,  # 5.0% turnover
+    }
+    w2s_res = evaluate_call_auction_divergence("600000", symbol_data=w2s_data)
+    assert w2s_res["signal"] == "weak_to_strong"
+    assert w2s_res["is_weak_to_strong"] is True
+    assert w2s_res["blocked_buy"] is False
+    assert w2s_res["mss_delta"] == 8.0
+    assert "弱转强" in w2s_res["reason"]
+
+    # 2. Panic Dumping (核按钮恐慌)
+    panic_data = {
+        "open": 18.8,
+        "prev_close": 20.0,  # -6.0% open
+        "consecutive_limit_ups": 1,
+    }
+    panic_res = evaluate_call_auction_divergence("600001", symbol_data=panic_data)
+    assert panic_res["signal"] == "panic_dumping"
+    assert panic_res["is_panic_dumping"] is True
+    assert panic_res["blocked_buy"] is True
+    assert panic_res["mss_delta"] == -15.0
+    assert "核按钮恐慌" in panic_res["reason"]
+
+    # 3. Normal
+    normal_data = {
+        "open": 20.1,
+        "prev_close": 20.0,  # +0.5% open
+        "auction_amount": 200000.0,
+        "yesterday_amount": 300000000.0,
+    }
+    norm_res = evaluate_call_auction_divergence("600002", symbol_data=normal_data)
+    assert norm_res["signal"] == "normal"
+    assert norm_res["blocked_buy"] is False
+    assert norm_res["mss_delta"] == 0.0
+
+
+def test_trade_block_kinds_and_messages():
+    from agent_reach.daily_run.intraday import (
+        TRADE_BLOCK_MESSAGES,
+        format_trade_block_message,
+        infer_trade_block_kind,
+    )
+
+    assert "tsp_ladder_broken" in TRADE_BLOCK_MESSAGES
+    assert "tsp_auction_panic" in TRADE_BLOCK_MESSAGES
+
+    # Infer block kind from dict with block_kind
+    d1 = {"blocked": True, "block_kind": "tsp_ladder_broken", "reasoning": "断崖阻断"}
+    assert infer_trade_block_kind(d1) == "tsp_ladder_broken"
+    assert "连板天梯断崖" in format_trade_block_message(d1)
+
+    d2 = {"blocked": True, "block_kind": "tsp_auction_panic", "reasoning": "集合竞价核按钮恐慌"}
+    assert infer_trade_block_kind(d2) == "tsp_auction_panic"
+    assert "核按钮恐慌" in format_trade_block_message(d2)
+

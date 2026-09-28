@@ -227,6 +227,7 @@ class PanelDataReader:
             "max_limit_up_streak": int(breadth.get("max_limit_up_streak") or 0),
             "retreat_triggered": retreat_triggered,
             "retreat_reason": retreat_reason,
+            "promotion_ladder": breadth.get("promotion_ladder") or {},
             "top_mainlines": top_mainlines,
             "as_of": breadth.get("as_of", datetime.now(timezone.utc).isoformat()),
         }
@@ -439,10 +440,30 @@ class PanelDataReader:
                                     "verdict": p.get("verdict", ""),
                                     "confidence": p.get("confidence", ""),
                                     "audit_passed": p.get("audit_passed", True),
+                                    "broken_board_rate": p.get("broken_board_rate"),
+                                    "limit_up_count": p.get("limit_up_count"),
                                 }
                             )
                 except Exception:
                     pass
+
+        # Build sparkline trajectory for S1..S10
+        sparkline_points: list[dict[str, Any]] = []
+        for i in range(1, 11):
+            sid = f"S{i}"
+            items = scans_by_cycle.get(sid) or []
+            if items:
+                # Average mss_final if multiple symbols scanned in that cycle
+                mss_vals = [float(it.get("mss_final") or 0.0) for it in items if it.get("mss_final") is not None]
+                avg_mss = round(sum(mss_vals) / len(mss_vals), 1) if mss_vals else 0.0
+                time_str = items[0]["at"].split("T")[1].split(".")[0] if "T" in items[0]["at"] else items[0]["at"]
+                sparkline_points.append({
+                    "cycle": sid,
+                    "at": time_str,
+                    "mss": avg_mss,
+                    "verdict": items[0].get("verdict") or "观察",
+                    "symbols_count": len(items),
+                })
 
         completed_cycles = [sid for sid, lst in scans_by_cycle.items() if len(lst) > 0]
         return {
@@ -450,9 +471,10 @@ class PanelDataReader:
             "completed_cycles_count": len(completed_cycles),
             "completed_cycles": completed_cycles,
             "scans": scans_by_cycle,
+            "sparkline": sparkline_points,
         }
 
-    def get_full_panel_state(self) -> dict[str, Any]:
+    def get_full_panel_state(self, current_report_file: Optional[Path | str] = None) -> dict[str, Any]:
         """Return the complete state package for dashboard rendering."""
         portfolio = self.get_portfolio_status()
         regime = self.get_tsp_regime()
@@ -485,6 +507,18 @@ class PanelDataReader:
         else:
             market_status = "周末休市 🏖️"
 
+        # Discover recent report snapshots for historical report selector
+        history_reports: list[dict[str, Any]] = []
+        try:
+            from agent_reach.daily_run.panel.config import list_recent_report_snapshots
+
+            history_reports = list_recent_report_snapshots(
+                repo_root=self.data_root.parent if self.data_root.name == "daily_run" else None,
+                current_file=current_report_file,
+            )
+        except Exception:
+            pass
+
         return {
             "meta": {
                 "system_name": "Agent Reach Daily-Run Mission Control",
@@ -493,6 +527,7 @@ class PanelDataReader:
                 "beijing_time": beijing_now.strftime("%Y-%m-%d %H:%M:%S"),
                 "market_status": market_status,
                 "db_connected": self.db_path.exists(),
+                "history_reports": history_reports,
             },
             "portfolio": portfolio,
             "regime": regime,

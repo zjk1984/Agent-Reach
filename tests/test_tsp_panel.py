@@ -236,10 +236,17 @@ def test_panel_reader(isolated_panel_env):
     full = reader.get_full_panel_state()
     assert "meta" in full
     assert full["meta"]["db_connected"] is True
+    assert "history_reports" in full["meta"]
     assert "portfolio" in full
     assert "regime" in full
     assert "deviations" in full
     assert "events" in full
+    assert "sparkline" in full["intraday"]
+    assert len(full["intraday"]["sparkline"]) >= 1
+    sp0 = full["intraday"]["sparkline"][0]
+    assert sp0["cycle"] == "S1"
+    assert sp0["mss"] == 58.5
+    assert sp0["verdict"] == "买入"
 
 
 def test_panel_server_endpoints(isolated_panel_env):
@@ -485,6 +492,35 @@ def test_publish_panel_report_archives_and_generates(isolated_panel_env, tmp_pat
     assert report_file_2.exists()
     assert report_file_2.name.startswith("index_")
     assert len(list(rep_dir.glob("index_*.html"))) == 1
+
+
+def test_list_recent_report_snapshots(tmp_path):
+    """Verify list_recent_report_snapshots returns structured snapshot items."""
+    from agent_reach.daily_run.panel.config import list_recent_report_snapshots
+
+    rep_dir = tmp_path / "reports"
+    bak_dir = rep_dir / "backup"
+    rep_dir.mkdir(parents=True, exist_ok=True)
+    bak_dir.mkdir(parents=True, exist_ok=True)
+
+    # Empty initially
+    assert list_recent_report_snapshots(reports_dir=rep_dir) == []
+
+    # Create dummy reports
+    (rep_dir / "index_20260928_150000.html").write_text("<html>latest</html>", encoding="utf-8")
+    (bak_dir / "index_20260928_140000.html").write_text("<html>old1</html>", encoding="utf-8")
+    (bak_dir / "index_20260928_130000.html").write_text("<html>old2</html>", encoding="utf-8")
+
+    items = list_recent_report_snapshots(reports_dir=rep_dir)
+    assert len(items) == 3
+    # Top item should be the latest in reports/
+    assert items[0]["filename"] == "index_20260928_150000.html"
+    assert items[0]["is_backup"] is False
+    assert "(最新)" in items[0]["label"]
+    assert "url" in items[0]
+    assert items[1]["is_backup"] is True
+    assert items[2]["is_backup"] is True
+
 
 
 
