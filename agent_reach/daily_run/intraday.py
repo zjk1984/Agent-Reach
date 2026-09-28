@@ -1240,6 +1240,23 @@ def render_intraday_scan_markdown(
             lines.extend(["", mss_weights_md])
     if report.get("reasoning"):
         lines.extend(["", f"**研判：** {report['reasoning']}"])
+
+    # TSP Deviation Sentinel for current symbol
+    tsp_cfg = dict((settings or {}).get("tsp_quant") or {})
+    if tsp_cfg.get("enabled", True) is not False and tsp_cfg.get("deviation_enabled", True) is not False:
+        try:
+            from agent_reach.daily_run.tsp.deviation_monitor import compute_exchange_deviation_risk
+            risk = compute_exchange_deviation_risk(
+                enriched if isinstance(enriched, dict) else {},
+                warning_ratio=float(tsp_cfg.get("deviation_warning_ratio", 0.85)),
+                block_ratio=float(tsp_cfg.get("deviation_block_buy_ratio", 0.90)),
+            )
+            if risk.get("warning"):
+                icon = "🛑" if risk.get("blocked_buy") else "⚠️"
+                lines.extend(["", f"**{icon} 交易所偏离监管：** {risk.get('reason')}"])
+        except Exception:
+            pass
+
     return "\n".join(lines)
 
 
@@ -1267,6 +1284,8 @@ def infer_trade_block_kind(decision: TradeDecision | dict[str, Any]) -> Optional
         return "buy_cash"
     if "可部署买入预算" in reasoning or "不足一手" in reasoning:
         return "buy_budget"
+    if "TSP" in reasoning or "偏离" in reasoning:
+        return "tsp_deviation"
     if "Playbook 契约" in reasoning or block_kind in (
         "playbook_no_add",
         "playbook_weight_ceiling",

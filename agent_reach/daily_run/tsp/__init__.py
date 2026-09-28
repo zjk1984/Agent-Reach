@@ -1,0 +1,41 @@
+# -*- coding: utf-8 -*-
+"""TSP (Tick-Stock-Panel) quant adapter package.
+
+Lightweight quant indicators and regime probe inspired by tick-stock-panel:
+- 6-phase market sentiment regime (freezing, launching, main_up, climax, retreat, repair)
+- Sector & concept mainline scoring from limit-up ladder
+- Exchange abnormal move price deviation monitor (3-day +/-20%, 10-day +100%/-50%, 30-day +200%/-70%)
+- Fail-open fallback design compatible with daily-run harness and session overlay.
+"""
+
+from __future__ import annotations
+
+from agent_reach.daily_run.tsp.market_regime import (
+    classify_tsp_market_phase,
+    compute_tsp_market_phase,
+    format_tsp_regime_summary,
+    map_tsp_phase_to_session_regime,
+)
+from agent_reach.daily_run.tsp.mainline_ranker import (
+    rank_tsp_mainlines,
+    score_mainline_sector,
+)
+from agent_reach.daily_run.tsp.deviation_monitor import (
+    check_portfolio_deviation_risk,
+    compute_exchange_deviation_risk,
+    format_deviation_alert_lines,
+)
+from agent_reach.daily_run.tsp.config import tsp_quant_cfg
+
+__all__ = [
+    "classify_tsp_market_phase",
+    "compute_tsp_market_phase",
+    "format_tsp_regime_summary",
+    "map_tsp_phase_to_session_regime",
+    "rank_tsp_mainlines",
+    "score_mainline_sector",
+    "check_portfolio_deviation_risk",
+    "compute_exchange_deviation_risk",
+    "format_deviation_alert_lines",
+    "tsp_quant_cfg",
+]

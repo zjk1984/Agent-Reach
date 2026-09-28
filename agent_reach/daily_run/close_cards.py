@@ -699,6 +699,25 @@ def render_key_signals_markdown(ctx: CloseCardContext) -> str:
             lines.append("")
         lines.append(align_md)
 
+    # TSP exchange deviation alerts in close card
+    tsp_cfg = dict((ctx.settings or {}).get("tsp_quant") or {})
+    if tsp_cfg.get("enabled", True) is not False and tsp_cfg.get("deviation_enabled", True) is not False:
+        try:
+            from agent_reach.daily_run.tsp.deviation_monitor import check_portfolio_deviation_risk, format_deviation_alert_lines
+            holdings = (ctx.portfolio_summary or {}).get("holdings") or []
+            dev_alerts = check_portfolio_deviation_risk(
+                holdings,
+                warning_ratio=float(tsp_cfg.get("deviation_warning_ratio", 0.85)),
+                block_ratio=float(tsp_cfg.get("deviation_block_buy_ratio", 0.90)),
+            )
+            dev_lines = format_deviation_alert_lines(dev_alerts)
+            if dev_lines:
+                if lines:
+                    lines.append("")
+                lines.extend(dev_lines)
+        except Exception:
+            pass
+
     from agent_reach.daily_run.price_alerts import render_alerts_markdown
 
     alerts_md = render_alerts_markdown(ctx.settings)

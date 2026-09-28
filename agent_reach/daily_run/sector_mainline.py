@@ -57,21 +57,29 @@ def analyze_sectors(
         reasoning = f"题材分散：最强 {strongest} 仅 {top} 家涨停"
 
     main_sectors = []
+    # Rank with TSP quant score if available
+    try:
+        from agent_reach.daily_run.tsp.mainline_ranker import rank_tsp_mainlines
+        tsp_ranked = {r["sector"]: r["score"] for r in rank_tsp_mainlines(limit_up_stocks, limit=10)}
+    except Exception:
+        tsp_ranked = {}
+
     for name, stocks in sorted_groups[:5]:
-        main_sectors.append(
-            {
-                "name": name,
-                "limit_up_count": len(stocks),
-                "top_stocks": [
-                    {
-                        "code": s.get("code"),
-                        "name": s.get("name"),
-                        "change_pct": s.get("change_pct"),
-                    }
-                    for s in stocks[:5]
-                ],
-            }
-        )
+        item = {
+            "name": name,
+            "limit_up_count": len(stocks),
+            "top_stocks": [
+                {
+                    "code": s.get("code"),
+                    "name": s.get("name"),
+                    "change_pct": s.get("change_pct"),
+                }
+                for s in stocks[:5]
+            ],
+        }
+        if name in tsp_ranked:
+            item["score"] = tsp_ranked[name]
+        main_sectors.append(item)
 
     ladder_map: dict[int, list[dict[str, Any]]] = {}
     for stock in limit_up_stocks:

@@ -290,6 +290,17 @@
     }
   },
 
+  "tsp_quant": {
+    "enabled": true,
+    "regime_enabled": true,
+    "deviation_enabled": true,
+    "mainline_enabled": true,
+    "session_regime_integration": true,
+    "deviation_warning_ratio": 0.85,
+    "deviation_block_buy_ratio": 0.90,
+    "mainline_min_limit_ups": 2
+  },
+
   "quality_gate": {
     "required_fields": [
       "verdict",

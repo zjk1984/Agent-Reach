@@ -464,6 +464,34 @@ def collect_market_review(
     from agent_reach.daily_run.eastmoney_intent import attach_eastmoney_market_review
 
     attach_eastmoney_market_review(payload, settings=cfg)
+
+    # Attach TSP 6-phase regime calculation to payload
+    tsp_cfg = dict(cfg.get("tsp_quant") or {})
+    if tsp_cfg.get("enabled", True) is not False and tsp_cfg.get("regime_enabled", True) is not False:
+        try:
+            from agent_reach.daily_run.tsp.market_regime import compute_tsp_market_phase
+            em = payload.get("emotion") or {}
+            sa = payload.get("sector_analysis") or {}
+            ladder = sa.get("ladder") or []
+            highest_board = 1
+            two_board_count = 0
+            for rung in ladder:
+                b = int(rung.get("board") or 1)
+                highest_board = max(highest_board, b)
+                if b == 2:
+                    two_board_count = int(rung.get("count") or 0)
+
+            tsp_phase = compute_tsp_market_phase(
+                limit_up_count=int(em.get("limit_up") or 0),
+                limit_down_count=int(em.get("limit_down") or 0),
+                broken_rate=float(em.get("broken_rate") or 0.0),
+                highest_board=highest_board,
+                two_board_count=two_board_count,
+            )
+            payload["tsp_regime"] = tsp_phase
+        except Exception:
+            pass
+
     return payload
 
 
@@ -545,6 +573,10 @@ def render_market_review_markdown(
         lines.append(
             f"**情绪定级：** {badge} · 综合 **{em.get('score', '—')} 分** · 建议仓位 **{em.get('position', '—')}**"
         )
+        # Display TSP 6-phase cycle if available
+        tsp_info = review.get("tsp_regime") or {}
+        if tsp_info.get("summary"):
+            lines.append(f"**{tsp_info['summary']}**")
         basis = str(em.get("data_basis") or emotion_data_basis(em)).strip()
         if basis and (em.get("breadth_partial") or review.get("warnings")):
             lines.append(f"**数据依据：** {basis}")
@@ -612,7 +644,8 @@ def render_market_review_markdown(
         tops = "、".join(
             f"{t.get('name')}({t.get('code')})" for t in (sec.get("top_stocks") or [])[:3]
         )
-        lines.append(f"- **{sec.get('name')}** 涨停 {sec.get('limit_up_count')} 家 · {tops or '—'}")
+        score_note = f" · 主线强度 **{sec['score']}分**" if sec.get("score") is not None else ""
+        lines.append(f"- **{sec.get('name')}** 涨停 {sec.get('limit_up_count')} 家{score_note} · {tops or '—'}")
 
     ladder = sa.get("ladder") or []
     if ladder:
