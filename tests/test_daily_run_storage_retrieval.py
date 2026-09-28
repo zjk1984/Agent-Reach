@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import pytest
 
 from agent_reach.daily_run.storage import reset_store
@@ -59,9 +60,10 @@ def test_retrieval_disabled_when_storage_off():
 
 def test_retrieval_returns_atoms_and_trades(storage_env):
     settings = storage_env["settings"]
+    now_iso = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     on_trade_ledger(
         {
-            "at": "2026-08-25T08:00:00+00:00",
+            "at": now_iso,
             "trade_id": "T1",
             "decision_action": "buy",
             "actions": [
@@ -76,7 +78,8 @@ def test_retrieval_returns_atoms_and_trades(storage_env):
                     "reasoning": "test buy",
                 }
             ],
-        }
+        },
+        settings=settings,
     )
     run_distill(settings=settings, limit=20)
     block = build_storage_retrieval_context(
@@ -92,9 +95,10 @@ def test_retrieval_returns_atoms_and_trades(storage_env):
 
 def test_attach_storage_retrieval_adds_block(storage_env):
     settings = storage_env["settings"]
+    now_iso = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     on_trade_ledger(
         {
-            "at": "2026-08-25T09:00:00+00:00",
+            "at": now_iso,
             "trade_id": "T2",
             "decision_action": "sell",
             "actions": [
@@ -109,7 +113,8 @@ def test_attach_storage_retrieval_adds_block(storage_env):
                     "reasoning": "trim",
                 }
             ],
-        }
+        },
+        settings=settings,
     )
     run_distill(settings=settings, limit=20)
     payload = attach_storage_retrieval(
