@@ -52,6 +52,16 @@ def add_panel_subparser(p_daily_sub: argparse._SubParsersAction) -> None:
     p_status.add_argument("--json", action="store_true", help="Output full JSON state")
     p_status.add_argument("--db", default="", help="Override SQLite DB path")
 
+    # 4. publish
+    p_publish = p_panel_sub.add_parser(
+        "publish", help="Publish static HTML report to GitHub reports/ directory with archiving"
+    )
+    p_publish.add_argument("--job", default="", help="Cron job name triggering this publish")
+    p_publish.add_argument("--no-push", action="store_true", help="Do not git commit and push")
+    p_publish.add_argument("--reports-dir", default="", help="Target reports directory (default: repo reports/)")
+    p_publish.add_argument("--backup-dir", default="", help="Target backup directory (default: reports/backup)")
+    p_publish.add_argument("--db", default="", help="Override SQLite DB path")
+
 
 def cmd_panel(args: argparse.Namespace) -> None:
     """Dispatch panel subcommands."""
@@ -82,6 +92,30 @@ def cmd_panel(args: argparse.Namespace) -> None:
         if getattr(args, "open", False):
             import webbrowser
             webbrowser.open(f"file://{generated.resolve()}")
+        return
+
+    if action == "publish":
+        from agent_reach.daily_run.panel.publisher import publish_panel_report
+
+        reports_dir = Path(args.reports_dir).expanduser() if getattr(args, "reports_dir", None) else None
+        backup_dir = Path(args.backup_dir).expanduser() if getattr(args, "backup_dir", None) else None
+        push_git = not getattr(args, "no_push", False)
+        job = getattr(args, "job", "") or ""
+
+        res = publish_panel_report(
+            reports_dir=reports_dir,
+            backup_dir=backup_dir,
+            db_path=db_path,
+            push_git=push_git,
+            job=job,
+        )
+        print(f"✅ 态势大屏报告已生成并发布: {res.get('report_path')}")
+        if res.get("archived_count", 0) > 0:
+            print(f"📦 已归档历史报告 ({res['archived_count']} 份): {res.get('archived')}")
+        if res.get("git_pushed"):
+            print("🚀 已自动提交并推送到 GitHub origin HEAD [skip ci]")
+        elif res.get("error"):
+            print(f"⚠️ Git 上传提示: {res['error']}")
         return
 
     if action == "status":
