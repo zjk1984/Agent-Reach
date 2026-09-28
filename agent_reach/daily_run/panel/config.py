@@ -12,33 +12,49 @@ from typing import Any, Optional
 
 from agent_reach.daily_run.settings import effective_settings, load_settings
 
+_REPO_CACHE: Optional[tuple[str, str]] = None
+_REPO_ROOT_CACHE: Optional[Path] = None
+_REMOTE_REPORT_CACHE: dict[str, tuple[float, Optional[str]]] = {}
+
+
 _DEFAULT_PANEL_CFG: dict[str, Any] = {
     "enabled": True,
     "host": "127.0.0.1",
     "port": 8788,
     "url": "auto",
-    "url_mode": "htmlpreview",  # "htmlpreview", "pages", or "raw"
+    # jsdelivr: mobile-friendly CDN, works in Feishu in-app browser (CN-friendly).
+    # Alternatives: raw, pages, htmlpreview (legacy proxy — often blocked).
+    "url_mode": "jsdelivr",
     "branch": "main",
     "card_link_enabled": True,
+    "provenance_in_cards": True,
+    "publish_before_card": False,
+    "fetch_remote_before_url": False,
+    "stable_url_filename": "index.html",
 }
 
 
 def find_repo_root() -> Path:
     """Detect repository root directory via git or directory structure."""
+    global _REPO_ROOT_CACHE
+    if _REPO_ROOT_CACHE is not None:
+        return _REPO_ROOT_CACHE
     try:
         res = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],
             capture_output=True,
             text=True,
             check=True,
-            timeout=5,
+            timeout=1,
         )
         root = res.stdout.strip()
         if root and Path(root).is_dir():
-            return Path(root)
+            _REPO_ROOT_CACHE = Path(root)
+            return _REPO_ROOT_CACHE
     except Exception:
         pass
-    return Path(__file__).resolve().parents[3]
+    _REPO_ROOT_CACHE = Path(__file__).resolve().parents[3]
+    return _REPO_ROOT_CACHE
 
 
 def find_latest_report_file(
@@ -99,19 +115,8 @@ def list_recent_report_snapshots(
     if not rep_dir.exists():
         return []
 
-    owner, repo = detect_github_repo(repo_root=root)
-    cfg = panel_cfg()
-    branch = str(cfg.get("branch") or "main")
-    mode = str(cfg.get("url_mode") or "htmlpreview").lower()
-
     def _build_url(rel_path: str) -> str:
-        if mode in ("pages", "github_pages") or cfg.get("github_pages_base"):
-            base = cfg.get("github_pages_base") or f"https://{owner}.github.io/{repo}"
-            return f"{base.rstrip('/')}/{rel_path}"
-        elif mode in ("raw", "blob"):
-            return f"https://github.com/{owner}/{repo}/blob/{branch}/{rel_path}"
-        else:
-            return f"https://htmlpreview.github.io/?https://github.com/{owner}/{repo}/blob/{branch}/{rel_path}"
+        return build_public_report_url(rel_path, repo_root=root)
 
     files_info: list[dict[str, Any]] = []
     seen_names: set[str] = set()
@@ -200,21 +205,143 @@ def list_recent_report_snapshots(
     return items
 
 
+def build_public_report_url(
+    relative_path: str,
+    *,
+    settings: Optional[dict[str, Any]] = None,
+    repo_root: Optional[Path | str] = None,
+) -> str:
+    """Build a browser-viewable URL for a report file under reports/."""
+    cfg = panel_cfg(settings)
+    owner, repo = detect_github_repo(settings, repo_root=repo_root)
+    branch = str(cfg.get("branch") or "main")
+    rel = relative_path.lstrip("/")
+    mode = str(cfg.get("url_mode") or "jsdelivr").lower()
+
+    if mode in ("pages", "github_pages") or cfg.get("github_pages_base"):
+        base = cfg.get("github_pages_base") or f"https://{owner}.github.io/{repo}"
+        return f"{base.rstrip('/')}/{rel}"
+    if mode in ("raw", "rawgithub"):
+        return f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{rel}"
+    if mode in ("htmlpreview", "preview"):
+        gh_blob = f"https://github.com/{owner}/{repo}/blob/{branch}/{rel}"
+        return f"https://htmlpreview.github.io/?{gh_blob}"
+    # jsdelivr (default)
+    return f"https://cdn.jsdelivr.net/gh/{owner}/{repo}@{branch}/{rel}"
+
+
+def find_latest_remote_report_file(
+    *,
+    branch: Optional[str] = None,
+    repo_root: Optional[Path | str] = None,
+    settings: Optional[dict[str, Any]] = None,
+) -> Optional[str]:
+    """Return the newest reports/*.html filename known on origin/<branch> (excluding backup/)."""
+    import time as _time
+
+    cfg = panel_cfg(settings)
+    br = branch or str(cfg.get("branch") or "main")
+    root = Path(repo_root).expanduser() if repo_root else find_repo_root()
+    cache_key = f"{root}:{br}"
+    cached = _REMOTE_REPORT_CACHE.get(cache_key)
+    if cached and (_time.time() - cached[0]) < 60:
+        return cached[1]
+    try:
+        if cfg.get("fetch_remote_before_url"):
+            subprocess.run(
+                ["git", "fetch", "origin", br],
+                cwd=str(root),
+                capture_output=True,
+                text=True,
+                timeout=20,
+            )
+        res = subprocess.run(
+            ["git", "ls-tree", "-r", "--name-only", f"origin/{br}", "reports/"],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=2,
+        )
+        names: list[str] = []
+        for line in res.stdout.splitlines():
+            path = line.strip().replace("\\", "/")
+            if not path.endswith(".html"):
+                continue
+            if "/backup/" in path:
+                continue
+            if not path.startswith("reports/"):
+                continue
+            names.append(path.split("/")[-1])
+        if not names:
+            _REMOTE_REPORT_CACHE[cache_key] = (_time.time(), None)
+            return None
+        stable = str(cfg.get("stable_url_filename") or "index.html")
+        if stable in names:
+            _REMOTE_REPORT_CACHE[cache_key] = (_time.time(), stable)
+            return stable
+        index_ts = sorted(
+            [n for n in names if n.startswith("index_")],
+            reverse=True,
+        )
+        chosen = index_ts[0] if index_ts else sorted(names, reverse=True)[0]
+        _REMOTE_REPORT_CACHE[cache_key] = (_time.time(), chosen)
+        return chosen
+    except Exception:
+        _REMOTE_REPORT_CACHE[cache_key] = (_time.time(), None)
+        return None
+
+
+def resolve_panel_report_filename(
+    *,
+    reports_dir: Optional[Path | str] = None,
+    repo_root: Optional[Path | str] = None,
+    settings: Optional[dict[str, Any]] = None,
+) -> str:
+    """Pick a report filename whose public URL is most likely to resolve on GitHub."""
+    cfg = panel_cfg(settings)
+    stable = str(cfg.get("stable_url_filename") or "index.html")
+    root = Path(repo_root).expanduser() if repo_root else find_repo_root()
+    rep_dir = Path(reports_dir).expanduser() if reports_dir else root / "reports"
+
+    remote_name = find_latest_remote_report_file(repo_root=root, settings=settings)
+    if remote_name:
+        return remote_name
+
+    if (rep_dir / stable).exists() and (rep_dir / stable).stat().st_size > 0:
+        return stable
+
+    latest_local = find_latest_report_file(reports_dir=rep_dir, repo_root=root)
+    if latest_local:
+        return latest_local.name
+    return stable
+
+
 def detect_github_repo(
     settings: Optional[dict[str, Any]] = None,
     repo_root: Optional[Path | str] = None,
 ) -> tuple[str, str]:
     """Detect (owner, repo) from settings, GITHUB_REPOSITORY env, or git remote origin."""
+    global _REPO_CACHE
+    if settings is None and repo_root is None and _REPO_CACHE is not None:
+        return _REPO_CACHE
+
     cfg = panel_cfg(settings)
     custom_repo = str(cfg.get("github_repo") or "").strip()
     if custom_repo and "/" in custom_repo:
         parts = custom_repo.split("/", 1)
-        return parts[0].strip(), parts[1].strip()
+        owner, repo = parts[0].strip(), parts[1].strip()
+        if settings is None and repo_root is None:
+            _REPO_CACHE = (owner, repo)
+        return owner, repo
 
     gh_env = os.environ.get("GITHUB_REPOSITORY", "").strip()
     if gh_env and "/" in gh_env:
         parts = gh_env.split("/", 1)
-        return parts[0].strip(), parts[1].strip()
+        owner, repo = parts[0].strip(), parts[1].strip()
+        if settings is None and repo_root is None:
+            _REPO_CACHE = (owner, repo)
+        return owner, repo
 
     root = Path(repo_root).expanduser() if repo_root else find_repo_root()
     try:
@@ -224,16 +351,22 @@ def detect_github_repo(
             capture_output=True,
             text=True,
             check=True,
-            timeout=5,
+            timeout=1,
         )
         url = res.stdout.strip()
         m = re.search(r"(?:github\.com[:/])(?P<owner>[^/]+)/(?P<repo>[^/.]+)(?:\.git)?", url)
         if m:
-            return m.group("owner"), m.group("repo")
+            owner, repo = m.group("owner"), m.group("repo")
+            if settings is None and repo_root is None:
+                _REPO_CACHE = (owner, repo)
+            return owner, repo
     except Exception:
         pass
 
-    return "zjk1984", "Agent-Reach"
+    fallback = ("zjk1984", "Agent-Reach")
+    if settings is None and repo_root is None:
+        _REPO_CACHE = fallback
+    return fallback
 
 
 def panel_cfg(settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:
@@ -273,19 +406,12 @@ def panel_url(
     ):
         return custom_url
 
-    latest_file = find_latest_report_file(reports_dir=reports_dir, repo_root=repo_root)
-    filename = latest_file.name if latest_file else "index.html"
-    owner, repo = detect_github_repo(settings, repo_root=repo_root)
-    branch = str(cfg.get("branch") or "main")
-    mode = str(cfg.get("url_mode") or "htmlpreview").lower()
-
-    if mode in ("pages", "github_pages") or cfg.get("github_pages_base"):
-        base = cfg.get("github_pages_base") or f"https://{owner}.github.io/{repo}"
-        return f"{base.rstrip('/')}/reports/{filename}"
-    elif mode in ("raw", "blob"):
-        return f"https://github.com/{owner}/{repo}/blob/{branch}/reports/{filename}"
-    else:  # htmlpreview (default — directly renders static HTML in any browser)
-        return f"https://htmlpreview.github.io/?https://github.com/{owner}/{repo}/blob/{branch}/reports/{filename}"
+    filename = resolve_panel_report_filename(
+        reports_dir=reports_dir,
+        repo_root=repo_root,
+        settings=settings,
+    )
+    return build_public_report_url(f"reports/{filename}", settings=settings, repo_root=repo_root)
 
 
 def panel_card_link_enabled(settings: Optional[dict[str, Any]] = None) -> bool:
@@ -328,6 +454,24 @@ def format_panel_card_header(
     return header
 
 
+def maybe_publish_panel_before_card(
+    settings: Optional[dict[str, Any]] = None,
+    *,
+    job: str = "feishu",
+    repo_root: Optional[Path | str] = None,
+) -> None:
+    """Optionally publish + push panel HTML before embedding the card link."""
+    cfg = panel_cfg(settings)
+    if not cfg.get("publish_before_card"):
+        return
+    try:
+        from agent_reach.daily_run.panel.publisher import publish_panel_report
+
+        publish_panel_report(push_git=True, job=job, repo_root=repo_root)
+    except Exception:
+        pass
+
+
 def prepend_panel_card_header(
     markdown: str,
     settings: Optional[dict[str, Any]] = None,
@@ -337,6 +481,7 @@ def prepend_panel_card_header(
     """Prepend the panel link header at the very top of markdown, removing any duplicate links."""
     if not panel_card_link_enabled(settings):
         return markdown
+    maybe_publish_panel_before_card(settings, repo_root=repo_root)
     header = format_panel_card_header(settings, reports_dir=reports_dir, repo_root=repo_root)
     if not header:
         return markdown
