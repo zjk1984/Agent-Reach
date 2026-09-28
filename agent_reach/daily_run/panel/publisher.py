@@ -61,21 +61,31 @@ def archive_existing_reports(
     for item in sorted(reports_dir.iterdir()):
         # Only archive files directly in reports_dir, do not touch backup subfolder
         if item.is_file() and item.suffix.lower() == ".html" and item.stat().st_size > 0:
-            try:
-                mtime = datetime.fromtimestamp(item.stat().st_mtime, tz=timezone.utc).astimezone(_BEIJING_TZ)
-                ts_str = mtime.strftime("%Y%m%d_%H%M%S")
-            except Exception:
-                ts_str = datetime.now(_BEIJING_TZ).strftime("%Y%m%d_%H%M%S")
-
             stem = item.stem
-            dest_name = f"{stem}_{ts_str}.html"
-            dest_path = backup_dir / dest_name
-
-            counter = 1
-            while dest_path.exists():
-                dest_name = f"{stem}_{ts_str}_{counter}.html"
+            # If the file already contains a timestamp (e.g. index_YYYYMMDD_HHMMSS), preserve its name
+            if "_" in stem and any(ch.isdigit() for ch in stem):
+                dest_name = item.name
                 dest_path = backup_dir / dest_name
-                counter += 1
+                counter = 1
+                while dest_path.exists():
+                    dest_name = f"{stem}_{counter}.html"
+                    dest_path = backup_dir / dest_name
+                    counter += 1
+            else:
+                try:
+                    mtime = datetime.fromtimestamp(item.stat().st_mtime, tz=timezone.utc).astimezone(_BEIJING_TZ)
+                    ts_str = mtime.strftime("%Y%m%d_%H%M%S")
+                except Exception:
+                    ts_str = datetime.now(_BEIJING_TZ).strftime("%Y%m%d_%H%M%S")
+
+                dest_name = f"{stem}_{ts_str}.html"
+                dest_path = backup_dir / dest_name
+
+                counter = 1
+                while dest_path.exists():
+                    dest_name = f"{stem}_{ts_str}_{counter}.html"
+                    dest_path = backup_dir / dest_name
+                    counter += 1
 
             shutil.move(str(item), str(dest_path))
             archived.append(str(dest_path))
@@ -88,6 +98,7 @@ def publish_panel_report(
     *,
     reports_dir: Optional[Path] = None,
     backup_dir: Optional[Path] = None,
+    filename: Optional[str] = None,
     db_path: Optional[Path] = None,
     data_root: Optional[Path] = None,
     push_git: bool = True,
@@ -100,6 +111,7 @@ def publish_panel_report(
     Args:
         reports_dir: Target directory for HTML reports (default: ``<repo_root>/reports``).
         backup_dir: Target directory for archived reports (default: ``<reports_dir>/backup``).
+        filename: Optional custom filename (default: ``index_<YYYYMMDD_HHMMSS>.html``).
         db_path: Optional SQLite DB path override.
         data_root: Optional daily_run data root path override.
         push_git: Whether to commit and git push to remote origin.
@@ -120,8 +132,21 @@ def publish_panel_report(
     # 1. Archive previous report(s) to reports/backup
     archived = archive_existing_reports(rep_dir, bak_dir)
 
-    # 2. Generate new static HTML into reports/index.html
-    target_html = rep_dir / "index.html"
+    # 2. Generate new static HTML into reports/index_<timestamp>.html
+    if filename:
+        target_name = filename
+    else:
+        now_ts = datetime.now(_BEIJING_TZ).strftime("%Y%m%d_%H%M%S")
+        target_name = f"index_{now_ts}.html"
+
+    target_html = rep_dir / target_name
+    counter = 1
+    stem = target_html.stem
+    while target_html.exists():
+        target_name = f"{stem}_{counter}.html"
+        target_html = rep_dir / target_name
+        counter += 1
+
     generated = export_panel_html(output_path=target_html, db_path=db_path, data_root=data_root)
 
     # Ensure .gitkeep exists in backup directory if empty

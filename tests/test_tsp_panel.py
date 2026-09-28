@@ -371,18 +371,19 @@ def test_panel_cli(isolated_panel_env, capsys, tmp_path):
     cmd_panel(args_publish)
     captured = capsys.readouterr()
     assert "态势大屏报告已生成并发布" in captured.out
-    assert (rep_dir / "index.html").exists()
+    index_files = list(rep_dir.glob("index_*.html"))
+    assert len(index_files) == 1
 
 
 def test_publish_panel_report_archives_and_generates(isolated_panel_env, tmp_path):
-    """Verify publish_panel_report generates index.html and archives existing reports into backup/."""
+    """Verify publish_panel_report generates index_<timestamp>.html and archives previous reports into backup/."""
     from agent_reach.daily_run.panel.publisher import publish_panel_report
 
     env = isolated_panel_env
     rep_dir = tmp_path / "reports"
     bak_dir = rep_dir / "backup"
 
-    # First run: generates reports/index.html with no previous archive
+    # First run: generates reports/index_<timestamp>.html with no previous archive
     res1 = publish_panel_report(
         reports_dir=rep_dir,
         backup_dir=bak_dir,
@@ -393,11 +394,14 @@ def test_publish_panel_report_archives_and_generates(isolated_panel_env, tmp_pat
     )
     assert res1["success"] is True
     assert res1["archived_count"] == 0
-    assert (rep_dir / "index.html").exists()
-    first_content = (rep_dir / "index.html").read_text(encoding="utf-8")
+    report_file_1 = Path(res1["report_path"])
+    assert report_file_1.exists()
+    assert report_file_1.name.startswith("index_")
+    assert report_file_1.suffix == ".html"
+    first_content = report_file_1.read_text(encoding="utf-8")
     assert "__INITIAL_PANEL_DATA__" in first_content
 
-    # Second run: archives first index.html into reports/backup/, generates fresh index.html
+    # Second run: archives first index_<ts>.html into reports/backup/, generates fresh index_<ts>.html
     res2 = publish_panel_report(
         reports_dir=rep_dir,
         backup_dir=bak_dir,
@@ -412,8 +416,12 @@ def test_publish_panel_report_archives_and_generates(isolated_panel_env, tmp_pat
     archived_file = Path(res2["archived"][0])
     assert archived_file.exists()
     assert archived_file.parent == bak_dir
-    assert archived_file.name.startswith("index_")
-    assert archived_file.suffix == ".html"
-    assert (rep_dir / "index.html").exists()
+    assert archived_file.name == report_file_1.name
+
+    report_file_2 = Path(res2["report_path"])
+    assert report_file_2.exists()
+    assert report_file_2.name.startswith("index_")
+    assert len(list(rep_dir.glob("index_*.html"))) == 1
+
 
 
