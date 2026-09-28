@@ -146,6 +146,8 @@ def _snapshot_from_ctx(
         sources.append("pm_session")
     if ctx_dict.get("forecast_accuracy_defensive"):
         sources.append("forecast_accuracy")
+    if ctx_dict.get("tsp_regime"):
+        sources.append("tsp_quant")
 
     return {
         "scan_at": scan_at,
@@ -155,11 +157,13 @@ def _snapshot_from_ctx(
         "week_open_regime": ctx_dict.get("week_open_regime"),
         "seed_regime": ctx_dict.get("seed_regime"),
         "session_regime": ctx_dict.get("session_regime"),
+        "tsp_regime": ctx_dict.get("tsp_regime"),
         "forecast_accuracy_defensive": bool(ctx_dict.get("forecast_accuracy_defensive")),
         "symbol_gate_count": len(ctx_dict.get("symbol_gates") or {}),
         "week_open_active": bool((runtime.get("week_open") or {}).get("active")),
         "am_open_active": bool((runtime.get("am_open") or {}).get("active")),
         "pm_session_active": bool((runtime.get("pm_session") or {}).get("active")),
+        "tsp_active": bool((runtime.get("tsp_quant") or {}).get("active")),
         "sources": sources,
     }
 

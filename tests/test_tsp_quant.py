@@ -8,6 +8,7 @@ from agent_reach.daily_run.tsp.market_regime import (
     map_tsp_phase_to_session_regime,
 )
 from agent_reach.daily_run.tsp.deviation_monitor import (
+    _parse_pct_float,
     check_portfolio_deviation_risk,
     compute_exchange_deviation_risk,
     get_board_deviation_limit_3d,
@@ -43,13 +44,21 @@ def test_tsp_market_phase_classification():
         two_board_count=1,
     ) == "retreat"
 
-    # 3. Freezing: Depressed market
+    # 3. Freezing: Depressed market or zero limit-ups
     assert classify_tsp_market_phase(
         limit_up_count=10,
         limit_down_count=5,
         broken_rate=0.20,
         highest_board=2,
         two_board_count=1,
+    ) == "freezing"
+
+    assert classify_tsp_market_phase(
+        limit_up_count=0,
+        limit_down_count=10,
+        broken_rate=0.0,
+        highest_board=0,
+        two_board_count=0,
     ) == "freezing"
 
     # 4. Launching: Low-board expansion
@@ -80,23 +89,36 @@ def test_map_tsp_phase_to_session_regime():
     assert map_tsp_phase_to_session_regime("repair") == "neutral"
 
 
+def test_parse_pct_float():
+    assert _parse_pct_float(10.5) == 10.5
+    assert _parse_pct_float("+9.98%") == 9.98
+    assert _parse_pct_float("-19.5%") == -19.5
+    assert _parse_pct_float(" 3.45 ") == 3.45
+    assert _parse_pct_float("") is None
+    assert _parse_pct_float(None) is None
+    assert _parse_pct_float("invalid") is None
+
+
 def test_tsp_deviation_limits_and_risk():
-    # Board limit tests
+    # Board limit tests (including Beijing Stock Exchange 920xxx, 43xxxx, 8xxxxx)
     assert get_board_deviation_limit_3d("600000") == 20.0
     assert get_board_deviation_limit_3d("300750") == 30.0
     assert get_board_deviation_limit_3d("688981") == 30.0
     assert get_board_deviation_limit_3d("830941") == 40.0
+    assert get_board_deviation_limit_3d("920001") == 40.0
+    assert get_board_deviation_limit_3d("430047") == 40.0
+    assert get_board_deviation_limit_3d("BJ920002") == 40.0
     assert get_board_deviation_limit_3d("000001", name="*ST平安") == 12.0
 
     # Risk calculation: normal safe
-    safe_row = {"code": "600000", "name": "浦发银行", "change_pct_3d": 5.0}
+    safe_row = {"code": "600000", "name": "浦发银行", "change_pct_3d": "+5.0%"}
     risk_safe = compute_exchange_deviation_risk(safe_row)
     assert not risk_safe["warning"]
     assert not risk_safe["blocked_buy"]
     assert risk_safe["risk_level"] == "safe"
 
     # Risk calculation: warning (approaching 20.0 * 0.85 = 17.0)
-    warn_row = {"code": "600000", "name": "浦发银行", "change_pct_3d": 17.5}
+    warn_row = {"code": "600000", "name": "浦发银行", "change_pct_3d": "17.5%"}
     risk_warn = compute_exchange_deviation_risk(warn_row)
     assert risk_warn["warning"]
     assert not risk_warn["blocked_buy"]
@@ -108,6 +130,13 @@ def test_tsp_deviation_limits_and_risk():
     assert risk_block["warning"]
     assert risk_block["blocked_buy"]
     assert risk_block["risk_level"] == "critical"
+
+    # Downside deviation: severe drop triggers warning but not "blocked_buy" (which is for chasing upside)
+    drop_row = {"code": "600000", "name": "浦发银行", "change_pct_3d": -18.5}
+    risk_drop = compute_exchange_deviation_risk(drop_row)
+    assert risk_drop["warning"]
+    assert not risk_drop["blocked_buy"]
+    assert risk_drop["is_downside"] is True
 
 
 def test_check_portfolio_deviation_risk():
@@ -123,16 +152,25 @@ def test_check_portfolio_deviation_risk():
 
 def test_mainline_ranker():
     stocks = [
-        {"code": "000001", "name": "A", "industry": "算力", "change_pct": 10.0, "consecutive_limit_ups": 3},
-        {"code": "000002", "name": "B", "industry": "算力", "change_pct": 10.0, "consecutive_limit_ups": 2},
-        {"code": "000003", "name": "C", "industry": "低空", "change_pct": 10.0, "consecutive_limit_ups": 1},
-        {"code": "000004", "name": "D", "industry": "低空", "change_pct": 10.0, "consecutive_limit_ups": 1},
+        {"code": "000001", "name": "A", "industry": "算力", "change_pct": 10.0, "consecutive_limit_ups": 3, "market_capital": 1.5e10},
+        {"code": "000002", "name": "B", "industry": "算力", "change_pct": 10.0, "consecutive_limit_ups": 2, "market_capital": 1.0e10},
+        {"code": "000003", "name": "C", "industry": "低空", "change_pct": 10.0, "consecutive_limit_ups": 1, "market_capital": 5.0e9},
+        {"code": "000004", "name": "D", "industry": "低空", "change_pct": 10.0, "consecutive_limit_ups": 1, "market_capital": 6.0e9},
     ]
     ranked = rank_tsp_mainlines(stocks, min_limit_ups=2)
     assert len(ranked) == 2
     # 算力 has 3-board and 2-board, should rank higher than 低空
     assert ranked[0]["sector"] == "算力"
     assert ranked[0]["score"] > ranked[1]["score"]
+
+    # Test pre-grouped input support
+    pre_grouped = {
+        "算力": stocks[:2],
+        "低空": stocks[2:],
+    }
+    ranked_grouped = rank_tsp_mainlines(pre_grouped, min_limit_ups=2)
+    assert len(ranked_grouped) == 2
+    assert ranked_grouped[0]["sector"] == "算力"
 
 
 def test_week_open_trade_block_with_tsp_deviation():
@@ -141,11 +179,21 @@ def test_week_open_trade_block_with_tsp_deviation():
             "enabled": True,
             "deviation_enabled": True,
             "deviation_block_buy_ratio": 0.90,
+        },
+        "harness_runtime": {
+            "quotes": {
+                "600000": {"code": "600000", "change_pct_3d": 19.5},  # > 90% of 20%
+                "600001": {"code": "600001", "change_pct_3d": 5.0},
+            }
         }
     }
-    # Normal stock shouldn't be blocked
+    # Overextended stock in runtime quotes should be blocked
     block_msg = week_open_trade_block(settings, "600000", "buy")
-    assert block_msg is None
+    assert block_msg is not None
+    assert "TSP 偏离度监管风控阻断" in block_msg
+
+    # Normal stock shouldn't be blocked
+    assert week_open_trade_block(settings, "600001", "buy") is None
 
     # Sell should never be blocked by TSP deviation
     assert week_open_trade_block(settings, "600000", "sell") is None
@@ -159,13 +207,13 @@ def test_verdict_filter_with_tsp_deviation():
             "deviation_block_buy_ratio": 0.90,
         }
     }
-    snap_critical = {"code": "600000", "change_pct_3d": 19.5}  # 19.5 / 20 = 97.5% > 90%
+    snap_critical = {"code": "600000", "change_pct_3d": "+19.5%"}  # 19.5 / 20 = 97.5% > 90%
     blocked, notes = _check_tsp_deviation_filter(snap_critical, settings)
     assert blocked is True
     assert len(notes) == 1
     assert "TSP 交易所异动偏离监管风控" in notes[0]
 
-    snap_safe = {"code": "600000", "change_pct_3d": 5.0}
+    snap_safe = {"code": "600000", "change_pct": "5.0"}
     blocked_safe, notes_safe = _check_tsp_deviation_filter(snap_safe, settings)
     assert blocked_safe is False
     assert len(notes_safe) == 0

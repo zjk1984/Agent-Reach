@@ -83,6 +83,7 @@ def week_open_trade_block(
     settings: dict[str, Any],
     code: str,
     action: str,
+    symbol_data: Optional[dict[str, Any]] = None,
 ) -> Optional[str]:
     """Return block reason when Sunday operation_plan or TSP deviation blocks this symbol action."""
     action_l = str(action or "").lower()
@@ -107,9 +108,25 @@ def week_open_trade_block(
     ):
         try:
             from agent_reach.daily_run.tsp.deviation_monitor import compute_exchange_deviation_risk
-            # Find quote/holding in settings/runtime or portfolio
+            # Find candidate quote/holding from symbol_data, runtime, or portfolio
+            candidate_row: dict[str, Any] = {"code": norm_code}
+            if isinstance(symbol_data, dict):
+                candidate_row.update(symbol_data)
+            else:
+                quotes = runtime.get("quotes") or {}
+                if norm_code in quotes and isinstance(quotes[norm_code], dict):
+                    candidate_row.update(quotes[norm_code])
+                elif code in quotes and isinstance(quotes[code], dict):
+                    candidate_row.update(quotes[code])
+                else:
+                    holdings = (runtime.get("portfolio") or {}).get("holdings") or []
+                    for h in holdings:
+                        if _normalize_code(str(h.get("code") or "")) == norm_code:
+                            candidate_row.update(h)
+                            break
+
             risk = compute_exchange_deviation_risk(
-                {"code": norm_code},
+                candidate_row,
                 warning_ratio=float(tsp_cfg.get("deviation_warning_ratio", 0.85)),
                 block_ratio=float(tsp_cfg.get("deviation_block_buy_ratio", 0.90)),
             )
@@ -264,19 +281,41 @@ def compute_session_overlay(
             ld = int(ctx.am_state.get("limit_down_count") or 0)
             br = float(ctx.am_state.get("broken_rate") or 0.0)
             hb = int(ctx.am_state.get("highest_board") or 1)
-            # If am_state does not carry ladder, try reading from prior close or recent scans
+            tb = int(ctx.am_state.get("two_board_count") or 0)
+
+            # If am_state does not carry ladder, try reading from recent scans or today's market_review
             if not lu and scans:
                 last_scan = scans[-1] if isinstance(scans, list) else {}
                 lu = int(last_scan.get("limit_up_count") or 0)
                 ld = int(last_scan.get("limit_down_count") or 0)
                 br = float(last_scan.get("broken_rate") or 0.0)
                 hb = int(last_scan.get("highest_board") or 1)
+                tb = int(last_scan.get("two_board_count") or 0)
+
+            if not lu:
+                # Fallback to today's market review if collected
+                from agent_reach.daily_run.market_review import load_market_review
+                mr = load_market_review(today_shanghai().isoformat())
+                if mr:
+                    em = mr.get("emotion") or {}
+                    sa = mr.get("sector_analysis") or {}
+                    ladder = sa.get("ladder") or []
+                    lu = int(em.get("limit_up") or 0)
+                    ld = int(em.get("limit_down") or 0)
+                    br = float(em.get("broken_rate") or 0.0)
+                    for rung in ladder:
+                        b = int(rung.get("board") or 1)
+                        hb = max(hb, b)
+                        if b == 2:
+                            tb = int(rung.get("count") or 0)
+
             if lu > 0 or ld > 0 or br > 0:
                 tsp_res = compute_tsp_market_phase(
                     limit_up_count=lu,
                     limit_down_count=ld,
                     broken_rate=br,
                     highest_board=hb,
+                    two_board_count=tb,
                 )
                 ctx.tsp_regime = tsp_res.get("session_regime")
                 ctx.tsp_regime_summary = tsp_res.get("summary") or ""
@@ -287,7 +326,15 @@ def compute_session_overlay(
     if ctx.forecast_accuracy_defensive:
         regimes.append("defensive")
     if ctx.tsp_regime:
-        regimes.append(ctx.tsp_regime)
+        # TSP regime acts with defensive veto power (freezing/retreat -> defensive);
+        # supportive TSP regime only promotes if there is no macro veto / conflicting defensive seed
+        if ctx.tsp_regime == "defensive":
+            regimes.append("defensive")
+        elif ctx.tsp_regime == "supportive":
+            # Only append if not already dragged down by defensive regime
+            regimes.append("supportive")
+        else:
+            regimes.append(ctx.tsp_regime)
     ctx.merged_regime = _merge_regimes(*regimes)
     return ctx
 
