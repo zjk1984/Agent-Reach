@@ -519,6 +519,16 @@ class PanelDataReader:
         except Exception:
             pass
 
+        # D1~D6 data router provenance probe
+        data_provenance: dict[str, Any] = {}
+        try:
+            from agent_reach.daily_run.data_router import get_market_data_router
+
+            router = get_market_data_router()
+            data_provenance = router.get_provenance_status()
+        except Exception:
+            pass
+
         return {
             "meta": {
                 "system_name": "Agent Reach Daily-Run Mission Control",
@@ -528,6 +538,7 @@ class PanelDataReader:
                 "market_status": market_status,
                 "db_connected": self.db_path.exists(),
                 "history_reports": history_reports,
+                "data_provenance": data_provenance,
             },
             "portfolio": portfolio,
             "regime": regime,

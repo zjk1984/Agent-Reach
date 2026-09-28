@@ -408,6 +408,17 @@
     </div>
   </header>
 
+  <!-- D1~D6 Data Router Provenance Strip -->
+  <div id="data-provenance-strip" style="display: flex; flex-wrap: wrap; gap: 0.45rem; padding: 0.35rem 1.5rem; background: rgba(17,24,39,0.6); border-bottom: 1px solid var(--border); font-size: 0.72rem;">
+    <span style="color: var(--text-muted); font-weight: 600; margin-right: 0.25rem;">数据源探针 D1~D6:</span>
+    <span id="prov-d1" class="tag tag-blue">D1 行情 —</span>
+    <span id="prov-d2" class="tag tag-blue">D2 竞价 —</span>
+    <span id="prov-d3" class="tag tag-blue">D3 天梯 —</span>
+    <span id="prov-d4" class="tag tag-blue">D4 均线 —</span>
+    <span id="prov-d5" class="tag tag-blue">D5 宏观 —</span>
+    <span id="prov-d6" class="tag tag-green">D6 监管 ✓</span>
+  </div>
+
   <!-- Main Grid Dashboard -->
   <main>
 
@@ -647,6 +658,31 @@
       if (statusBadge && meta.market_status) {
         statusBadge.innerText = meta.market_status;
       }
+
+      // D1~D6 Data Provenance Strip
+      const prov = meta.data_provenance || {};
+      const provMap = {
+        d1_quotes: 'prov-d1',
+        d2_auction: 'prov-d2',
+        d3_ladder: 'prov-d3',
+        d4_technicals: 'prov-d4',
+        d5_macro: 'prov-d5',
+        d6_deviation: 'prov-d6',
+      };
+      Object.entries(provMap).forEach(([key, elId]) => {
+        const el = document.getElementById(elId);
+        const info = prov[key];
+        if (!el || !info) return;
+        const status = info.status || 'standby';
+        const label = (info.label || key).replace(/\s*\(D\d\)\s*/, '');
+        let cls = 'tag tag-blue';
+        if (status === 'healthy' || status === 'active') cls = 'tag tag-green';
+        else if (status === 'standby') cls = 'tag tag-amber';
+        const age = info.age_seconds != null ? ` ${info.age_seconds}s` : '';
+        const items = info.cached_items != null ? ` ·${info.cached_items}` : '';
+        el.className = cls;
+        el.innerText = `${label}${age}${items}`;
+      });
 
       // History Reports Dropdown
       const selectEl = document.getElementById('history-report-select');
