@@ -566,6 +566,9 @@ def build_snapshot(
         enrich_level = "lite"
 
     cfg = settings or load_settings()
+    from agent_reach.daily_run.data_router import get_market_data_router
+
+    router = get_market_data_router(cfg)
     snap_cfg = cfg.get("snapshot") or {}
     if enrich_level == "full" and snap_cfg.get("intraday_enrich_level") and report_type == "intraday":
         enrich_level = str(snap_cfg.get("intraday_enrich_level", "quotes"))
@@ -609,14 +612,7 @@ def build_snapshot(
     elif cached_macro and not needs_full_macro:
         macro_ctx = dict(cached_macro)
     else:
-        macro_ctx = collect_macro_context(
-            pf,
-            config=config,
-            settings=cfg,
-            workflow=report_type,
-            scope="full",
-        )
-        macro_ctx = dict(macro_ctx)
+        macro_ctx = dict(router.get_macro_context(pf, workflow=report_type))
     macro_ctx["sources"] = enrich_macro_sources(pf, macro_ctx.get("sources"), cfg)
 
     primary_name = code_norm
@@ -633,12 +629,13 @@ def build_snapshot(
     all_codes = [code_norm] + [
         _normalize_code(str(h.get("code", ""))) for h in holdings
     ] + [_normalize_code(str(w.get("code", ""))) for w in watchlist]
-    quote_result = fetch_quotes_result(all_codes, config, settings=cfg)
-    quote_map = dict(quote_result.quotes)
+    quote_map = dict(router.get_live_quotes(all_codes))
+    unique_codes = list(dict.fromkeys(c for c in all_codes if c))
+    quote_hit = sum(1 for c in unique_codes if c in quote_map)
     quote_meta = {
-        "sources_used": list(quote_result.sources_used),
-        "coverage_pct": round(quote_result.coverage_for(all_codes) * 100, 1),
-        "errors": dict(quote_result.errors),
+        "sources_used": ["market_data_router"],
+        "coverage_pct": round(quote_hit / max(len(unique_codes), 1) * 100, 1),
+        "errors": {},
     }
 
     if enrich_level == "quotes":
@@ -906,6 +903,7 @@ def build_snapshot(
     except Exception:
         pass
 
+    snapshot["data_provenance"] = router.get_provenance_status()
     return snapshot
 
 

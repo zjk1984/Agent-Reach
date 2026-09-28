@@ -310,3 +310,28 @@ def clear_market_data_router() -> None:
     """Reset global router singleton (mainly for tests)."""
     global _GLOBAL_ROUTER
     _GLOBAL_ROUTER = None
+
+
+_PROVENANCE_SHORT_LABELS: tuple[tuple[str, str], ...] = (
+    ("d1_quotes", "D1"),
+    ("d2_auction", "D2"),
+    ("d3_ladder", "D3"),
+    ("d4_technicals", "D4"),
+    ("d5_macro", "D5"),
+    ("d6_deviation", "D6"),
+)
+
+
+def format_provenance_compact_line(
+    provenance: Optional[Dict[str, Any]] = None,
+    *,
+    settings: Optional[dict[str, Any]] = None,
+) -> str:
+    """Compact D1~D6 status line for Feishu cards and logs."""
+    prov = provenance if provenance is not None else get_market_data_router(settings).get_provenance_status()
+    parts: list[str] = []
+    for key, short in _PROVENANCE_SHORT_LABELS:
+        status = str((prov.get(key) or {}).get("status") or "standby")
+        mark = "✓" if status in ("healthy", "active") else "·"
+        parts.append(f"{short}{mark}")
+    return "📡 数据源：" + " ".join(parts)

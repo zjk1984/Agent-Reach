@@ -2,7 +2,7 @@
 """Tests for snapshot builder and schedule helpers."""
 
 import json
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -19,6 +19,29 @@ from agent_reach.daily_run.snapshot_builder import (
     code_to_xueqiu_symbol,
     load_portfolio,
 )
+
+
+def _mock_market_data_router(mock_get_router, *, quotes=None, macro=None) -> MagicMock:
+    router = MagicMock()
+    router.get_live_quotes.return_value = dict(quotes or {})
+    router.get_macro_context.return_value = dict(
+        macro
+        or {
+            "mss_breakdown": {"fx": 40, "flow": 50, "global": 45, "sentiment": 48},
+            "sources": {},
+            "macro_summary": "live macro",
+        }
+    )
+    router.get_provenance_status.return_value = {
+        "d1_quotes": {"status": "healthy"},
+        "d2_auction": {"status": "standby"},
+        "d3_ladder": {"status": "standby"},
+        "d4_technicals": {"status": "standby"},
+        "d5_macro": {"status": "healthy"},
+        "d6_deviation": {"status": "healthy"},
+    }
+    mock_get_router.return_value = router
+    return router
 
 
 @pytest.fixture
@@ -45,11 +68,10 @@ class TestSnapshotBuilder:
         assert code_to_xueqiu_symbol("688008") == "SH688008"
         assert code_to_xueqiu_symbol("002273") == "SZ002273"
 
+    @patch("agent_reach.daily_run.data_router.get_market_data_router")
     @patch("agent_reach.daily_run.snapshot_builder.load_daily_cache")
-    @patch("agent_reach.daily_run.snapshot_builder.collect_macro_context")
-    @patch("agent_reach.daily_run.snapshot_builder.fetch_quotes_result")
     def test_build_snapshot_intraday_reuses_merged_technicals(
-        self, mock_fetch_result, mock_macro, mock_cache, portfolio
+        self, mock_cache, mock_get_router, portfolio
     ):
         mock_cache.return_value = {
             "technicals": {
@@ -57,18 +79,13 @@ class TestSnapshotBuilder:
                 "002273": {"ma20": 32.32},
             }
         }
-        mock_macro.return_value = {
-            "mss_breakdown": {"fx": 40, "flow": 50, "global": 45, "sentiment": 48},
-            "sources": {},
-            "macro_summary": "live macro",
-        }
-        mock_fetch_result.return_value = QuoteFetchResult(
+        _mock_market_data_router(
+            mock_get_router,
             quotes={
                 "688008": {"code": "688008", "name": "澜起科技", "price": 260.0, "change_pct": 1.5, "source": "xueqiu"},
                 "002273": {"code": "002273", "name": "水晶光电", "price": 27.0, "change_pct": 0.2, "source": "xueqiu"},
                 "603986": {"code": "603986", "name": "兆易创新", "price": 450.0, "change_pct": -3.0, "source": "xueqiu"},
             },
-            sources_used=["xueqiu"],
         )
         with patch("agent_reach.daily_run.snapshot_builder._backfill_missing_technicals") as mock_backfill:
             mock_backfill.side_effect = lambda codes, quote_map, cached, **kwargs: cached
@@ -81,19 +98,11 @@ class TestSnapshotBuilder:
         assert snap["ma20"] == 32.32
         assert snap["portfolio"]["holdings"][0]["ma20"] == 256.22
 
+    @patch("agent_reach.daily_run.data_router.get_market_data_router")
     @patch("agent_reach.daily_run.snapshot_builder.load_daily_cache", return_value={})
-    @patch("agent_reach.daily_run.snapshot_builder.collect_macro_context")
-    @patch("agent_reach.daily_run.snapshot_builder.fetch_quotes_result")
-    def test_build_snapshot_enriched(self, mock_fetch_result, mock_macro, _mock_cache, portfolio):
-        mock_macro.return_value = {
-            "mss_breakdown": {"fx": 40, "flow": 50, "global": 45, "sentiment": 48},
-            "sources": {
-                "flow": {"summary": "北向净流入 12 亿"},
-                "sentiment": {"summary": "DDR5 讨论"},
-            },
-            "macro_summary": "live macro",
-        }
-        result = QuoteFetchResult(
+    def test_build_snapshot_enriched(self, _mock_cache, mock_get_router, portfolio):
+        _mock_market_data_router(
+            mock_get_router,
             quotes={
                 "688008": {
                     "code": "688008",
@@ -103,9 +112,15 @@ class TestSnapshotBuilder:
                     "source": "xueqiu",
                 }
             },
-            sources_used=["xueqiu"],
+            macro={
+                "mss_breakdown": {"fx": 40, "flow": 50, "global": 45, "sentiment": 48},
+                "sources": {
+                    "flow": {"summary": "北向净流入 12 亿"},
+                    "sentiment": {"summary": "DDR5 讨论"},
+                },
+                "macro_summary": "live macro",
+            },
         )
-        mock_fetch_result.return_value = result
         with patch("agent_reach.daily_run.snapshot_builder._attach_technicals") as mock_tech:
             mock_tech.return_value = {
                 "code": "688008",
@@ -187,29 +202,23 @@ class TestSnapshotBuilder:
         assert quote_map["688008"]["volume_ratio"] == 1.3
         assert quote_map["688008"]["position_20d"] != 0.55
 
+    @patch("agent_reach.daily_run.data_router.get_market_data_router")
     @patch("agent_reach.daily_run.snapshot_builder.load_daily_cache")
-    @patch("agent_reach.daily_run.snapshot_builder.collect_macro_context")
-    @patch("agent_reach.daily_run.snapshot_builder.fetch_quotes_result")
     def test_build_snapshot_intraday_refreshes_position_from_price(
-        self, mock_fetch_result, mock_macro, mock_cache, portfolio
+        self, mock_cache, mock_get_router, portfolio
     ):
         mock_cache.return_value = {
             "technicals": {
                 "002273": {"ma20": 32.32, "position_20d": 0.55},
             }
         }
-        mock_macro.return_value = {
-            "mss_breakdown": {"fx": 40, "flow": 50, "global": 45, "sentiment": 48},
-            "sources": {},
-            "macro_summary": "live macro",
-        }
-        mock_fetch_result.return_value = QuoteFetchResult(
+        _mock_market_data_router(
+            mock_get_router,
             quotes={
                 "688008": {"code": "688008", "name": "澜起科技", "price": 260.0, "change_pct": 1.5, "source": "xueqiu"},
                 "002273": {"code": "002273", "name": "水晶光电", "price": 27.0, "change_pct": 0.2, "source": "xueqiu"},
                 "603986": {"code": "603986", "name": "兆易创新", "price": 450.0, "change_pct": -3.0, "source": "xueqiu"},
             },
-            sources_used=["xueqiu"],
         )
         with patch("agent_reach.daily_run.snapshot_builder._backfill_missing_technicals") as mock_backfill:
             mock_backfill.side_effect = lambda codes, quote_map, cached, **kwargs: cached

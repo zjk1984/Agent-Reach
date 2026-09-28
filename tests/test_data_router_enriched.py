@@ -10,10 +10,12 @@ from agent_reach.daily_run.data_router import (
     clear_market_data_router,
     get_market_data_router,
 )
+from agent_reach.daily_run.data_router import format_provenance_compact_line
 from agent_reach.daily_run.symbols import (
     EnrichedSymbolProfile,
     apply_enriched_replay_context,
     build_enriched_symbols,
+    build_scan_enriched_payload,
     merge_enriched_row,
 )
 
@@ -121,6 +123,76 @@ def test_get_market_data_router_singleton():
     r1 = get_market_data_router({"foo": 1})
     r2 = get_market_data_router()
     assert r1 is r2
+
+
+def test_build_scan_enriched_payload():
+    snapshot = {
+        "code": "688008",
+        "name": "澜起科技",
+        "price": 220.0,
+        "change_pct": 5.0,
+        "portfolio": {
+            "holdings": [{"code": "688008", "name": "澜起科技", "shares": 100, "cost": 200.0, "price": 220.0}],
+            "watchlist": [],
+        },
+    }
+    entry = {"code": "688008", "name": "澜起科技", "mss_final": 62.0, "verdict": "买入", "price": 220.0}
+    payload = build_scan_enriched_payload("688008", snapshot, entry, settings={"tsp_quant": {"enabled": True}})
+    assert payload["code"] == "688008"
+    assert payload["verdict"] == "买入"
+    assert payload["mss_score"] == 62.0
+    assert payload["price"] == 220.0
+    assert "distance_to_limit_pct" in payload
+
+
+def test_build_snapshot_attaches_data_provenance():
+    from unittest.mock import MagicMock, patch
+
+    from agent_reach.daily_run.snapshot_builder import build_snapshot
+
+    portfolio = {
+        "primary_code": "688008",
+        "holdings": [{"code": "688008", "name": "澜起科技", "shares": 100, "cost": 255.87}],
+        "watchlist": [],
+    }
+    router = MagicMock()
+    router.get_live_quotes.return_value = {
+        "688008": {"code": "688008", "price": 260.0, "change_pct": 1.0, "source": "xueqiu"},
+    }
+    router.get_macro_context.return_value = {
+        "mss_breakdown": {"fx": 40, "flow": 50, "global": 45, "sentiment": 48},
+        "sources": {},
+        "macro_summary": "live macro",
+    }
+    router.get_provenance_status.return_value = {
+        "d1_quotes": {"status": "healthy"},
+        "d6_deviation": {"status": "healthy"},
+    }
+    with patch("agent_reach.daily_run.data_router.get_market_data_router", return_value=router):
+        with patch("agent_reach.daily_run.snapshot_builder.load_daily_cache", return_value={}):
+            with patch(
+                "agent_reach.daily_run.snapshot_builder._attach_technicals",
+                side_effect=lambda quote, code, **kwargs: quote,
+            ):
+                snap = build_snapshot(portfolio, report_type="intraday", settings={"snapshot": {"intraday_enrich_level": "quotes"}})
+    assert "data_provenance" in snap
+    assert snap["data_provenance"]["d1_quotes"]["status"] == "healthy"
+
+
+def test_format_provenance_compact_line():
+    prov = {
+        "d1_quotes": {"status": "healthy"},
+        "d2_auction": {"status": "standby"},
+        "d3_ladder": {"status": "active"},
+        "d4_technicals": {"status": "standby"},
+        "d5_macro": {"status": "healthy"},
+        "d6_deviation": {"status": "healthy"},
+    }
+    line = format_provenance_compact_line(prov)
+    assert line.startswith("📡 数据源：")
+    assert "D1✓" in line
+    assert "D2·" in line
+    assert "D3✓" in line
 
 
 def test_intraday_friction_whatif_tsp_guard_attribution():

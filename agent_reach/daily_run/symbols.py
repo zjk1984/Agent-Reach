@@ -146,6 +146,27 @@ def apply_enriched_replay_context(
     return snap, report
 
 
+def build_scan_enriched_payload(
+    code: str,
+    enriched_snapshot: dict[str, Any],
+    entry: dict[str, Any],
+    settings: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build EnrichedSymbolProfile dict for persisting into l0_events intraday_scan."""
+    sym = _normalize_code(code)
+    enriched_map = build_enriched_symbols(enriched_snapshot, settings=settings)
+    row = dict(enriched_map.get(sym) or {})
+    row.setdefault("code", sym)
+    row["name"] = str(entry.get("name") or row.get("name") or sym)
+    if entry.get("mss_final") is not None:
+        row["mss_score"] = float(entry["mss_final"])
+    if entry.get("verdict"):
+        row["verdict"] = str(entry["verdict"])
+    if entry.get("price") is not None:
+        row["price"] = float(entry["price"])
+    return EnrichedSymbolProfile.from_dict(sym, row).to_dict()
+
+
 def copy_portfolio(portfolio: dict[str, Any]) -> dict[str, Any]:
     pf = dict(portfolio)
     pf["holdings"] = [dict(h) for h in (portfolio.get("holdings") or [])]
