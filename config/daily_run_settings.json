@@ -309,6 +309,22 @@
       "intraday_retreat_broken_rate": 0.35,
       "holding_deviation_alert": true,
       "card_display_enabled": true
+    },
+    "midday": {
+      "enabled": true,
+      "card_display_enabled": true,
+      "handoff_integration": true
+    },
+    "weekly": {
+      "enabled": true,
+      "sentiment_cycle_rollup": true,
+      "mainline_persistence_top_n": 5
+    },
+    "forecast": {
+      "enabled": true,
+      "regime_prior_enabled": true,
+      "symbol_mainline_tagging": true,
+      "deviation_lookahead_warning": true
     }
   },
 

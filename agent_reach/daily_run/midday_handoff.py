@@ -231,6 +231,9 @@ def build_midday_handoff(
         "position_changes": position_changes,
         "morning_predictions": list(morning.get("morning_predictions") or []),
     }
+    tsp_state = getattr(ctx, "tsp_state", None)
+    if tsp_state and isinstance(tsp_state, dict):
+        payload["tsp_state"] = dict(tsp_state)
     if pm_session_overlay:
         payload["pm_session_overlay"] = dict(pm_session_overlay)
     return payload

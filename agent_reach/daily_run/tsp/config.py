@@ -41,4 +41,23 @@ def tsp_quant_cfg(settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:
             "holding_deviation_alert": raw_intraday.get("holding_deviation_alert", True) is not False,
             "card_display_enabled": raw_intraday.get("card_display_enabled", True) is not False,
         },
+        # Midday specific config
+        "midday": {
+            "enabled": dict(raw.get("midday") or {}).get("enabled", True) is not False,
+            "card_display_enabled": dict(raw.get("midday") or {}).get("card_display_enabled", True) is not False,
+            "handoff_integration": dict(raw.get("midday") or {}).get("handoff_integration", True) is not False,
+        },
+        # Weekly specific config
+        "weekly": {
+            "enabled": dict(raw.get("weekly") or {}).get("enabled", True) is not False,
+            "sentiment_cycle_rollup": dict(raw.get("weekly") or {}).get("sentiment_cycle_rollup", True) is not False,
+            "mainline_persistence_top_n": int(dict(raw.get("weekly") or {}).get("mainline_persistence_top_n", 5)),
+        },
+        # Forecast specific config
+        "forecast": {
+            "enabled": dict(raw.get("forecast") or {}).get("enabled", True) is not False,
+            "regime_prior_enabled": dict(raw.get("forecast") or {}).get("regime_prior_enabled", True) is not False,
+            "symbol_mainline_tagging": dict(raw.get("forecast") or {}).get("symbol_mainline_tagging", True) is not False,
+            "deviation_lookahead_warning": dict(raw.get("forecast") or {}).get("deviation_lookahead_warning", True) is not False,
+        },
     }

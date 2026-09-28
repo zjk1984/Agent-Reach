@@ -539,6 +539,40 @@ def generate_week_forecast(
     if experience_rules:
         notes.append("经验规则：" + "；".join(experience_rules[:2]))
 
+    # TSP Friday regime prior bias
+    tsp_friday_regime = None
+    tsp_prior_note = None
+    try:
+        from agent_reach.daily_run.tsp.config import tsp_quant_cfg
+
+        tcfg = tsp_quant_cfg(settings)
+        f_cfg = tcfg.get("forecast") or {}
+        if tcfg.get("enabled", True) and f_cfg.get("enabled", True) and f_cfg.get("regime_prior_enabled", True):
+            # Check Friday's market review for TSP regime
+            from agent_reach.daily_run.market_review import load_market_review
+            friday_date = week_start - timedelta(days=3)
+            mr = load_market_review(friday_date.isoformat())
+            if not mr:
+                # Fallback to closest past date within 7 days
+                for back in range(1, 8):
+                    mr = load_market_review((week_start - timedelta(days=back)).isoformat())
+                    if mr and mr.get("tsp_regime"):
+                        break
+            if mr and mr.get("tsp_regime"):
+                tsp_friday_regime = mr.get("tsp_regime")
+                phase = str(tsp_friday_regime.get("phase") or "")
+                summary = str(tsp_friday_regime.get("summary") or "")
+                if phase in ("retreat", "climax"):
+                    # High volatility / defensive prior: increase calibration vol_scale and add defensive note
+                    calibration["vol_scale"] = float(calibration.get("vol_scale") or 1.0) * 1.15
+                    tsp_prior_note = f"TSP周五先验【{phase}】：全市场处于高位分歧/退潮，周初推演加大波动并提高防守倾向"
+                    notes.append(tsp_prior_note)
+                elif phase in ("launching", "main_up"):
+                    tsp_prior_note = f"TSP周五先验【{phase}】：全市场处于动量启动/主升，周初推演具备主线支撑"
+                    notes.append(tsp_prior_note)
+    except Exception:
+        pass
+
     if not trading_days:
         notes.append("下周无交易日（节假日），预测仅作参考")
 

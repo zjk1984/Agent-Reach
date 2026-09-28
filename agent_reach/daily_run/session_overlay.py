@@ -283,7 +283,22 @@ def compute_session_overlay(
             hb = int(ctx.am_state.get("highest_board") or 1)
             tb = int(ctx.am_state.get("two_board_count") or 0)
 
-            # If am_state does not carry ladder, try reading from recent scans or today's market_review
+            # If not in am_state, check midday_handoff tsp_state directly
+            if not lu:
+                try:
+                    from agent_reach.daily_run.midday_handoff import load_midday_handoff
+
+                    mh = load_midday_handoff() or {}
+                    ts = mh.get("tsp_state") or {}
+                    if ts:
+                        lu = int(ts.get("limit_up_count") or 0)
+                        ld = int(ts.get("limit_down_count") or 0)
+                        br = float(ts.get("broken_rate") or 0.0)
+                        hb = int(ts.get("highest_board") or 1)
+                except Exception:
+                    pass
+
+            # If still not found, try reading from recent scans or today's market_review
             if not lu and scans:
                 last_scan = scans[-1] if isinstance(scans, list) else {}
                 lu = int(last_scan.get("limit_up_count") or 0)
