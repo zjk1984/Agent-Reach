@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from agent_reach.daily_run.tsp.market_regime import (
     classify_tsp_market_phase,
+    compute_ladder_promotion_rates,
     compute_tsp_market_phase,
     format_tsp_regime_summary,
     map_tsp_phase_to_session_regime,
@@ -25,10 +26,14 @@ from agent_reach.daily_run.tsp.deviation_monitor import (
     compute_exchange_deviation_risk,
     format_deviation_alert_lines,
 )
+from agent_reach.daily_run.tsp.call_auction import (
+    evaluate_call_auction_divergence,
+)
 from agent_reach.daily_run.tsp.config import tsp_quant_cfg
 from agent_reach.daily_run.tsp.intraday_sentinel import (
     TSPMainlineMatch,
     check_intraday_retreat_risk,
+    check_ladder_relay_guard,
     clear_intraday_sentinel_cache,
     format_tsp_intraday_card_markdown,
     get_live_market_breadth_and_phase,
@@ -38,6 +43,7 @@ from agent_reach.daily_run.tsp.intraday_sentinel import (
 
 __all__ = [
     "classify_tsp_market_phase",
+    "compute_ladder_promotion_rates",
     "compute_tsp_market_phase",
     "format_tsp_regime_summary",
     "map_tsp_phase_to_session_regime",
@@ -46,12 +52,14 @@ __all__ = [
     "check_portfolio_deviation_risk",
     "compute_exchange_deviation_risk",
     "format_deviation_alert_lines",
+    "evaluate_call_auction_divergence",
     "tsp_quant_cfg",
     "TSPMainlineMatch",
     "get_live_market_breadth_and_phase",
     "match_symbol_tsp_mainline",
     "is_symbol_in_top_n_mainlines",
     "check_intraday_retreat_risk",
+    "check_ladder_relay_guard",
     "clear_intraday_sentinel_cache",
     "format_tsp_intraday_card_markdown",
 ]

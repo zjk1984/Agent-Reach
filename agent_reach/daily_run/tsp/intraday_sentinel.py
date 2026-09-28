@@ -79,6 +79,19 @@ def get_live_market_breadth_and_phase(
         "phase_name": "未知/平衡",
         "session_regime": "neutral",
         "summary": "TSP 情绪探测：降级模式",
+        "promotion_ladder": {
+            "count_1": 0,
+            "count_2": 0,
+            "count_3": 0,
+            "count_4_plus": 0,
+            "highest_board": 1,
+            "rate_1_to_2": 0.0,
+            "rate_2_to_3": 0.0,
+            "rate_high_promotion": 0.0,
+            "fault_status": "healthy",
+            "fault_label": "梯队基准",
+            "summary": "连板天梯：暂无活跃数据",
+        },
         "top_mainlines": [],
         "limit_up_stocks": [],
         "source": "fallback",
@@ -177,13 +190,14 @@ def get_live_market_breadth_and_phase(
             limit=5,
         )
 
-        # 5. Compute market phase
+        # 5. Compute market phase & promotion ladder
         phase_info = compute_tsp_market_phase(
             limit_up_count=limit_up,
             limit_down_count=limit_down,
             broken_rate=broken_rate,
             highest_board=highest_board,
             two_board_count=two_board_count,
+            limit_up_stocks=limit_up_stocks,
             settings=settings,
         )
 
@@ -200,6 +214,7 @@ def get_live_market_breadth_and_phase(
             "phase_name": phase_info["phase_name"],
             "session_regime": phase_info["session_regime"],
             "summary": phase_info["summary"],
+            "promotion_ladder": phase_info.get("promotion_ladder") or {},
             "top_mainlines": top_mainlines,
             "limit_up_stocks": limit_up_stocks,
             "source": source,
@@ -392,6 +407,59 @@ def check_intraday_retreat_risk(
     return False, ""
 
 
+def check_ladder_relay_guard(
+    symbol_code: str,
+    symbol_data: Optional[dict[str, Any]] = None,
+    settings: Optional[dict[str, Any]] = None,
+    *,
+    live_breadth: Optional[dict[str, Any]] = None,
+) -> tuple[bool, str]:
+    """Guard against chasing high-position / relay stocks when 2->3 ladder is in cliff collapse.
+
+    Returns (is_blocked, reasoning).
+    Triggers when:
+    - Target stock is high board / high position (consecutive_limit_ups >= 2 or change_pct >= 6.0%)
+    - Market ladder condition:
+      - promotion_ladder fault_status == 'cliff' (rate_2_to_3 < 15% with count_2 >= 2), OR
+      - rate_2_to_3 < 0.15 with broken_rate >= 0.25.
+    """
+    cfg = tsp_quant_cfg(settings)
+    intraday_cfg = cfg.get("intraday") or {}
+    if not cfg.get("enabled", True) or not intraday_cfg.get("enabled", True):
+        return False, ""
+
+    if not intraday_cfg.get("ladder_guard_enabled", True):
+        return False, ""
+
+    breadth = live_breadth or get_live_market_breadth_and_phase(settings)
+    ladder = breadth.get("promotion_ladder") or {}
+    rate_2_to_3 = float(ladder.get("rate_2_to_3") or 0.0)
+    fault_status = str(ladder.get("fault_status") or "")
+    broken_rate = float(breadth.get("broken_rate") or 0.0)
+
+    # Determine if target symbol is high position / relay
+    data: dict[str, Any] = dict(symbol_data) if isinstance(symbol_data, dict) else {}
+    if isinstance(data.get("snapshot"), dict):
+        data.update(data["snapshot"])
+    if isinstance(data.get("report"), dict):
+        data.update(data["report"])
+
+    board = int(data.get("consecutive_limit_ups") or data.get("board") or 0)
+    chg = float(data.get("change_pct") or data.get("pct_chg") or 0.0)
+    is_high_target = (board >= 2 or chg >= 6.0)
+
+    cliff_rate = float(intraday_cfg.get("ladder_cliff_rate", 0.15))
+
+    if is_high_target:
+        if fault_status == "cliff" or (rate_2_to_3 < cliff_rate and (broken_rate >= 0.25 or ladder.get("count_2", 0) >= 2)):
+            return (
+                True,
+                f"TSP 连板天梯断崖阻断：当前2进3晋级率仅 {rate_2_to_3 * 100:.1f}% < {cliff_rate * 100:.0f}% 且炸板率 {broken_rate * 100:.1f}%，禁止追高买入接力标的",
+            )
+
+    return False, ""
+
+
 def format_tsp_intraday_card_markdown(
     symbol_code: str,
     symbol_data: Optional[dict[str, Any]] = None,
@@ -479,6 +547,25 @@ def format_tsp_intraday_card_markdown(
         dist = float(risk.get("distance_to_limit_pct") or 0.0)
         limit_3d = float(risk.get("limit_3d") or 20.0)
         strip_items.append(f"异动安全垫：+{dist:.1f}%（距交易所 3日 {limit_3d:.0f}% 监管红线尚有空间）")
+
+    # D. Ladder progression status
+    ladder = breadth.get("promotion_ladder") or {}
+    if ladder and (ladder.get("count_1", 0) + ladder.get("count_2", 0) > 0):
+        rate_1_2 = float(ladder.get("rate_1_to_2") or 0.0) * 100.0
+        rate_2_3 = float(ladder.get("rate_2_to_3") or 0.0) * 100.0
+        fault_lbl = ladder.get("fault_label") or "梯队正常"
+        strip_items.append(f"连板天梯：1→2 {rate_1_2:.1f}% · 2→3 {rate_2_3:.1f}% ({fault_lbl})")
+
+    # E. Call Auction Sentinel
+    if symbol_code and symbol_data:
+        try:
+            from agent_reach.daily_run.tsp.call_auction import evaluate_call_auction_divergence
+
+            auction_res = evaluate_call_auction_divergence(symbol_code, symbol_data, settings)
+            if auction_res.get("signal") in ("weak_to_strong", "panic_dumping"):
+                strip_items.append(f"竞价异动：{auction_res.get('reason')}")
+        except Exception:
+            pass
 
     if strip_items:
         lines.append("**TSP 量化哨兵：**")

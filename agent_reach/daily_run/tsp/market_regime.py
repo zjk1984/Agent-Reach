@@ -30,6 +30,106 @@ TSP_PHASE_NAMES: dict[str, str] = {
 }
 
 
+def _get_stock_board(stock: dict[str, Any]) -> int:
+    """Helper to extract consecutive board number for a stock."""
+    board = stock.get("consecutive_limit_ups")
+    if board is None:
+        pct = float(stock.get("change_pct") or 0.0)
+        board = max(1, int(round(pct / 10))) if pct > 15 else 1
+    try:
+        return max(1, int(board))
+    except (ValueError, TypeError):
+        return 1
+
+
+def compute_ladder_promotion_rates(
+    limit_up_stocks: list[dict[str, Any]],
+    yesterday_limit_up_stocks: Optional[list[dict[str, Any]]] = None,
+) -> dict[str, Any]:
+    """Calculate ladder progression and promotion rates between consecutive boards.
+
+    Returns:
+    {
+        "count_1": int,
+        "count_2": int,
+        "count_3": int,
+        "count_4_plus": int,
+        "highest_board": int,
+        "rate_1_to_2": float,
+        "rate_2_to_3": float,
+        "rate_high_promotion": float,
+        "fault_status": "healthy" | "divergence" | "cliff",
+        "fault_label": str,
+        "summary": str,
+    }
+    """
+    count_1 = 0
+    count_2 = 0
+    count_3 = 0
+    count_4_plus = 0
+    highest_board = 1
+
+    for s in limit_up_stocks:
+        b = _get_stock_board(s)
+        highest_board = max(highest_board, b)
+        if b == 1:
+            count_1 += 1
+        elif b == 2:
+            count_2 += 1
+        elif b == 3:
+            count_3 += 1
+        else:
+            count_4_plus += 1
+
+    if yesterday_limit_up_stocks is not None and len(yesterday_limit_up_stocks) > 0:
+        yest_1 = sum(1 for s in yesterday_limit_up_stocks if _get_stock_board(s) == 1)
+        yest_2 = sum(1 for s in yesterday_limit_up_stocks if _get_stock_board(s) == 2)
+        yest_3_plus = sum(1 for s in yesterday_limit_up_stocks if _get_stock_board(s) >= 3)
+
+        rate_1_to_2 = (count_2 / yest_1) if yest_1 > 0 else (count_2 / max(1, count_1 + count_2))
+        rate_2_to_3 = (count_3 / yest_2) if yest_2 > 0 else (count_3 / max(1, count_2 + count_3))
+        rate_high = (count_4_plus / yest_3_plus) if yest_3_plus > 0 else (count_4_plus / max(1, count_3 + count_4_plus))
+    else:
+        rate_1_to_2 = count_2 / max(1, count_1 + count_2) if (count_1 + count_2) > 0 else 0.0
+        rate_2_to_3 = count_3 / max(1, count_2 + count_3) if (count_2 + count_3) > 0 else 0.0
+        rate_high = count_4_plus / max(1, count_3 + count_4_plus) if (count_3 + count_4_plus) > 0 else 0.0
+
+    # Clamp to 0.0 .. 1.0
+    rate_1_to_2 = max(0.0, min(1.0, float(rate_1_to_2)))
+    rate_2_to_3 = max(0.0, min(1.0, float(rate_2_to_3)))
+    rate_high = max(0.0, min(1.0, float(rate_high)))
+
+    # Detect fault status
+    if (count_2 >= 2 and rate_2_to_3 < 0.15) or (count_2 >= 3 and count_3 == 0):
+        fault_status = "cliff"
+        fault_label = "2进3严重断崖 ⚠️"
+    elif rate_1_to_2 < 0.20 or rate_2_to_3 < 0.25:
+        fault_status = "divergence"
+        fault_label = "接力分歧 ⚡"
+    else:
+        fault_status = "healthy"
+        fault_label = "梯队健康 🟢"
+
+    summary = (
+        f"连板天梯：1→2: {rate_1_to_2 * 100:.1f}% · 2→3: {rate_2_to_3 * 100:.1f}% "
+        f"({fault_label}) · 最高 {highest_board} 板"
+    )
+
+    return {
+        "count_1": count_1,
+        "count_2": count_2,
+        "count_3": count_3,
+        "count_4_plus": count_4_plus,
+        "highest_board": highest_board,
+        "rate_1_to_2": round(rate_1_to_2, 3),
+        "rate_2_to_3": round(rate_2_to_3, 3),
+        "rate_high_promotion": round(rate_high, 3),
+        "fault_status": fault_status,
+        "fault_label": fault_label,
+        "summary": summary,
+    }
+
+
 def compute_tsp_market_phase(
     *,
     limit_up_count: int = 0,
@@ -38,6 +138,8 @@ def compute_tsp_market_phase(
     highest_board: int = 1,
     two_board_count: int = 0,
     yesterday_phase: Optional[str] = None,
+    limit_up_stocks: Optional[list[dict[str, Any]]] = None,
+    yesterday_limit_up_stocks: Optional[list[dict[str, Any]]] = None,
     settings: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Calculate market phase and indicators from limit-up breadth and ladder state."""
@@ -57,6 +159,10 @@ def compute_tsp_market_phase(
         broken_rate=broken_rate,
         highest_board=highest_board,
     )
+    promotion_ladder = compute_ladder_promotion_rates(
+        limit_up_stocks=limit_up_stocks or [],
+        yesterday_limit_up_stocks=yesterday_limit_up_stocks,
+    )
 
     return {
         "phase": phase,
@@ -67,6 +173,7 @@ def compute_tsp_market_phase(
         "broken_rate": round(broken_rate, 4),
         "highest_board": highest_board,
         "two_board_count": two_board_count,
+        "promotion_ladder": promotion_ladder,
         "summary": summary,
     }
 

@@ -201,6 +201,8 @@ TRADE_BLOCK_MESSAGES: dict[str, str] = {
     "buy_budget": "⚠️ **风控阻断：** 可部署买入预算不足一手，维持观望",
     "tsp_deviation": "⚠️ **风控阻断：** 3日涨跌幅接近交易所异动偏离监管红线，禁止追高买入",
     "tsp_retreat": "⚠️ **风控阻断：** 盘中情绪退潮（高炸板率且跌停扩增），禁止追高买入",
+    "tsp_ladder_broken": "⚠️ **风控阻断：** 连板天梯断崖（2进3接力受阻），禁止追高买入接力标的",
+    "tsp_auction_panic": "⚠️ **风控阻断：** 集合竞价核按钮恐慌，禁止早盘开仓接盘",
     "buy_deep_loss": "⚠️ **风控阻断：** 深度套牢标的需连续 3 次买入建议才允许加仓",
     "sell_deep_loss": "⚠️ **风控阻断：** 深度套牢且组合覆盖不足，暂不允许卖出",
     "sell_defensive_trim": (
@@ -1298,6 +1300,10 @@ def infer_trade_block_kind(decision: TradeDecision | dict[str, Any]) -> Optional
         return "buy_budget"
     if block_kind == "tsp_retreat" or "退潮急刹车" in reasoning or ("退潮" in reasoning and "急刹车" in reasoning):
         return "tsp_retreat"
+    if block_kind == "tsp_ladder_broken" or "连板天梯断崖" in reasoning or ("2进3" in reasoning and "断崖" in reasoning):
+        return "tsp_ladder_broken"
+    if block_kind == "tsp_auction_panic" or "核按钮恐慌" in reasoning or ("集合竞价" in reasoning and "核按钮" in reasoning):
+        return "tsp_auction_panic"
     if "TSP" in reasoning or "偏离" in reasoning:
         return "tsp_deviation"
     if "Playbook 契约" in reasoning or block_kind in (
@@ -1549,6 +1555,22 @@ def _decide_trade(
             ):
                 aggressive += 2.0
                 overlay_note = f"{overlay_note}[TSP弱势轮动防假突破: 门槛+2.0]"
+        except Exception:
+            pass
+
+    # TSP 9:25 Call Auction Weak-to-Strong Boost:
+    if tsp_cfg.get("enabled", True):
+        try:
+            from agent_reach.daily_run.tsp.call_auction import evaluate_call_auction_divergence
+
+            auction_eval_init = evaluate_call_auction_divergence(
+                str(report.get("code") or ""),
+                symbol_data=report,
+                settings=settings,
+            )
+            if auction_eval_init.get("is_weak_to_strong"):
+                aggressive -= 1.0
+                overlay_note = f"{overlay_note}[TSP竞价弱转强爆量抢筹: 门槛-1.0]"
         except Exception:
             pass
 
@@ -1932,6 +1954,59 @@ def _decide_trade(
                         reasoning=f"{retreat_reason}{overlay_note}",
                         blocked=True,
                         block_kind="tsp_retreat",
+                        friction_blocked=friction_blocked,
+                        expected_return_pct=exp_ret,
+                    )
+            except Exception:
+                pass
+
+        # TSP Ladder Relay Guard: stop chasing high-position / relay stocks when 2->3 ladder collapses
+        if live_breadth and tsp_intraday_cfg.get("enabled", True):
+            try:
+                from agent_reach.daily_run.tsp.intraday_sentinel import check_ladder_relay_guard
+
+                is_ladder_blocked, ladder_reason = check_ladder_relay_guard(
+                    str(report.get("code") or ""),
+                    symbol_data=report,
+                    settings=settings,
+                    live_breadth=live_breadth,
+                )
+                if is_ladder_blocked:
+                    return TradeDecision(
+                        action="hold",
+                        trade_id=trade_id,
+                        lookback_mss=lookback_mss,
+                        lookback_detail=[],
+                        trend=trend,
+                        reasoning=f"{ladder_reason}{overlay_note}",
+                        blocked=True,
+                        block_kind="tsp_ladder_broken",
+                        friction_blocked=friction_blocked,
+                        expected_return_pct=exp_ret,
+                    )
+            except Exception:
+                pass
+
+        # TSP Call Auction Divergence Sentinel: veto buying on panic dump / floor open
+        if tsp_cfg.get("enabled", True):
+            try:
+                from agent_reach.daily_run.tsp.call_auction import evaluate_call_auction_divergence
+
+                auction_eval = evaluate_call_auction_divergence(
+                    str(report.get("code") or ""),
+                    symbol_data=report,
+                    settings=settings,
+                )
+                if auction_eval.get("blocked_buy"):
+                    return TradeDecision(
+                        action="hold",
+                        trade_id=trade_id,
+                        lookback_mss=lookback_mss,
+                        lookback_detail=[],
+                        trend=trend,
+                        reasoning=f"{auction_eval.get('reason')}{overlay_note}",
+                        blocked=True,
+                        block_kind="tsp_auction_panic",
                         friction_blocked=friction_blocked,
                         expected_return_pct=exp_ret,
                     )
