@@ -398,6 +398,7 @@ def format_tsp_intraday_card_markdown(
     settings: Optional[dict[str, Any]] = None,
     *,
     live_breadth: Optional[dict[str, Any]] = None,
+    include_panel_header: bool = True,
 ) -> list[str]:
     """Generate Markdown status lines for TSP intraday scan/trade cards.
 
@@ -412,6 +413,17 @@ def format_tsp_intraday_card_markdown(
         return []
 
     lines: list[str] = []
+    if include_panel_header:
+        try:
+            from agent_reach.daily_run.panel.config import format_panel_card_header
+
+            header = format_panel_card_header(settings)
+            if header:
+                lines.append(header)
+                lines.append("")
+        except Exception:
+            pass
+
     card_enabled = intraday_cfg.get("card_display_enabled", True) is not False
     deviation_enabled = cfg.get("deviation_enabled", True) is not False
 
@@ -469,15 +481,6 @@ def format_tsp_intraday_card_markdown(
         strip_items.append(f"异动安全垫：+{dist:.1f}%（距交易所 3日 {limit_3d:.0f}% 监管红线尚有空间）")
 
     if strip_items:
-        try:
-            from agent_reach.daily_run.panel.config import panel_card_link_enabled, panel_url
-
-            if panel_card_link_enabled(settings):
-                p_url = panel_url(settings)
-                strip_items.append(f"🖥️ 实时大屏：[{p_url}]({p_url})")
-        except Exception:
-            pass
-
         lines.append("**TSP 量化哨兵：**")
         for item in strip_items:
             lines.append(f"- {item}")

@@ -745,6 +745,14 @@ def push_report_sections(
     if not bodies:
         raise FeishuError("无可推送的报告内容")
 
+    try:
+        from agent_reach.daily_run.panel.config import prepend_panel_card_header
+
+        # Uniformly place the live mission control panel link at the very top of the first card
+        bodies[0].body = prepend_panel_card_header(bodies[0].body, settings=settings)
+    except Exception:
+        pass
+
     cfg = _report_cfg(settings)
     tpl_default = template or cfg.get(f"feishu_template_{report_type}", "blue")
     cfg_obj = config or Config()

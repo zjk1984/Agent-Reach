@@ -410,7 +410,13 @@ def render_midday_markdown(
         else "_说明：12:30 行情与 11:30 相同；本卡侧重午休资讯刷新与午后 Lookback 锚点，13:00 仍有一次常规盘中扫描。_"
     )
     lines.extend(["", footer])
-    return "\n".join(lines)
+    raw_md = "\n".join(lines)
+    try:
+        from agent_reach.daily_run.panel.config import prepend_panel_card_header
+
+        return prepend_panel_card_header(raw_md, settings=settings)
+    except Exception:
+        return raw_md
 
 
 def _midday_narrative_deterministic(
@@ -657,7 +663,9 @@ def run_midday(
             else:
                 card_title = title or f"☀️ 午盘 · {len(sections)}卡 · {name}"
                 try:
-                    feishu_result = send_card(cfg_obj, card_title, markdown, template=tpl)
+                    from agent_reach.daily_run.panel.config import prepend_panel_card_header
+
+                    feishu_result = send_card(cfg_obj, card_title, prepend_panel_card_header(markdown, settings=cfg), template=tpl)
                     steps.append("push")
                 except FeishuError as exc:
                     push_error = str(exc)
@@ -667,7 +675,9 @@ def run_midday(
             else:
                 card_title = title or f"☀️ 午盘分析 · {scan.get('scan_id', '—')} · {name}"
             try:
-                feishu_result = send_card(cfg_obj, card_title, markdown, template=tpl)
+                from agent_reach.daily_run.panel.config import prepend_panel_card_header
+
+                feishu_result = send_card(cfg_obj, card_title, prepend_panel_card_header(markdown, settings=cfg), template=tpl)
                 steps.append("push")
             except FeishuError as exc:
                 push_error = str(exc)
