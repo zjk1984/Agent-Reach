@@ -1,0 +1,939 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agent Reach Daily-Run 实时量化态势大屏</title>
+  <style>
+    /* Reset & Base Dark Theme */
+    :root {
+      --bg-main: #0b0f19;
+      --bg-card: #111827;
+      --bg-card-sub: #1f2937;
+      --border: #374151;
+      --text-main: #f3f4f6;
+      --text-muted: #9ca3af;
+      --up-red: #ef4444;
+      --down-green: #10b981;
+      --amber: #f59e0b;
+      --blue: #3b82f6;
+      --purple: #8b5cf6;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: var(--bg-main);
+      color: var(--text-main);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    .num { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+
+    /* Top Navigation Bar */
+    header {
+      background-color: rgba(17, 24, 39, 0.85);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      padding: 0.75rem 1.5rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      position: sticky;
+      top: 0;
+      z-index: 50;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+    .brand-logo {
+      width: 32px;
+      height: 32px;
+      background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      font-size: 1.1rem;
+      color: #fff;
+    }
+    .brand-title {
+      font-size: 1.15rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: #fff;
+    }
+    .brand-sub {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-left: 0.5rem;
+    }
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+    .status-badge {
+      font-size: 0.8rem;
+      padding: 0.25rem 0.6rem;
+      border-radius: 9999px;
+      background-color: var(--bg-card-sub);
+      border: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+    .pulse-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background-color: var(--down-green);
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.85); }
+      100% { opacity: 1; transform: scale(1); }
+    }
+    .btn {
+      background-color: var(--bg-card-sub);
+      color: var(--text-main);
+      border: 1px solid var(--border);
+      padding: 0.35rem 0.8rem;
+      border-radius: 6px;
+      font-size: 0.8rem;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      transition: all 0.15s;
+    }
+    .btn:hover {
+      background-color: #374151;
+      border-color: #4b5563;
+    }
+
+    /* Main Container & Grid */
+    main {
+      flex: 1;
+      padding: 1.25rem 1.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+      max-width: 1720px;
+      margin: 0 auto;
+      width: 100%;
+    }
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.25rem;
+    }
+    .grid-3 {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 1.25rem;
+    }
+    .grid-4 {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1rem;
+    }
+    @media (max-width: 1024px) {
+      .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
+    }
+
+    /* Cards */
+    .card {
+      background-color: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.85rem;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2);
+    }
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid rgba(55, 65, 81, 0.5);
+      padding-bottom: 0.6rem;
+    }
+    .card-title {
+      font-size: 0.95rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      color: #e5e7eb;
+    }
+    .card-subtitle {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }
+
+    /* Stat Blocks */
+    .stat-box {
+      background-color: var(--bg-card-sub);
+      border-radius: 8px;
+      padding: 0.85rem 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+    .stat-label {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .stat-value {
+      font-size: 1.45rem;
+      font-weight: 700;
+    }
+    .stat-change {
+      font-size: 0.75rem;
+      font-weight: 500;
+    }
+
+    /* Regime 6-Phase Stepper */
+    .regime-stepper {
+      display: flex;
+      gap: 0.4rem;
+      width: 100%;
+    }
+    .regime-step {
+      flex: 1;
+      padding: 0.5rem 0.2rem;
+      text-align: center;
+      font-size: 0.75rem;
+      border-radius: 6px;
+      background-color: rgba(31, 41, 55, 0.6);
+      color: var(--text-muted);
+      border: 1px solid transparent;
+      transition: all 0.2s;
+    }
+    .regime-step.active {
+      font-weight: 700;
+      color: #fff;
+      border-color: currentColor;
+      box-shadow: 0 0 12px rgba(239, 68, 68, 0.25);
+    }
+
+    /* Broken Board Rate Meter */
+    .broken-meter-box {
+      background-color: var(--bg-card-sub);
+      border-radius: 8px;
+      padding: 0.75rem 1rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .meter-bar-container {
+      flex: 1;
+      margin: 0 1rem;
+      height: 8px;
+      background-color: #374151;
+      border-radius: 4px;
+      overflow: hidden;
+      position: relative;
+    }
+    .meter-fill {
+      height: 100%;
+      border-radius: 4px;
+      transition: width 0.4s ease;
+    }
+    .danger-flag {
+      color: #ef4444;
+      font-weight: 600;
+      font-size: 0.75rem;
+      display: flex;
+      align-items: center;
+      gap: 0.3rem;
+    }
+
+    /* Table Styles */
+    .custom-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.8rem;
+    }
+    .custom-table th {
+      text-align: left;
+      color: var(--text-muted);
+      font-weight: 500;
+      padding: 0.5rem 0.6rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .custom-table td {
+      padding: 0.6rem 0.6rem;
+      border-bottom: 1px solid rgba(55, 65, 81, 0.4);
+    }
+    .custom-table tr:hover {
+      background-color: rgba(55, 65, 81, 0.3);
+    }
+
+    /* Deviation Progress Bar */
+    .deviation-bar-bg {
+      width: 100%;
+      height: 6px;
+      background-color: #374151;
+      border-radius: 3px;
+      overflow: hidden;
+      margin-top: 0.25rem;
+    }
+    .deviation-bar-fill {
+      height: 100%;
+      border-radius: 3px;
+    }
+
+    /* Intraday Scan S1-S10 Dots */
+    .scan-dots {
+      display: flex;
+      gap: 0.45rem;
+      align-items: center;
+      margin: 0.4rem 0;
+    }
+    .scan-dot-item {
+      flex: 1;
+      height: 28px;
+      border-radius: 6px;
+      background-color: var(--bg-card-sub);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.7rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+      transition: all 0.2s;
+    }
+    .scan-dot-item.done {
+      background-color: rgba(16, 185, 129, 0.15);
+      border-color: #10b981;
+      color: #10b981;
+    }
+
+    /* Event Timeline */
+    .timeline {
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+      max-height: 380px;
+      overflow-y: auto;
+      padding-right: 0.3rem;
+    }
+    .timeline-item {
+      background-color: var(--bg-card-sub);
+      border-left: 3px solid var(--border);
+      border-radius: 0 6px 6px 0;
+      padding: 0.6rem 0.8rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+      font-size: 0.78rem;
+    }
+    .timeline-item.trade { border-left-color: var(--up-red); }
+    .timeline-item.scan { border-left-color: var(--blue); }
+    .timeline-item.overlay { border-left-color: var(--purple); }
+    .timeline-item.portfolio { border-left-color: var(--down-green); }
+    .timeline-header {
+      display: flex;
+      justify-content: space-between;
+      color: var(--text-muted);
+      font-size: 0.7rem;
+    }
+    .timeline-title {
+      font-weight: 600;
+      color: var(--text-main);
+    }
+    .timeline-summary {
+      color: #d1d5db;
+    }
+
+    /* Badges */
+    .tag {
+      font-size: 0.68rem;
+      padding: 0.15rem 0.4rem;
+      border-radius: 4px;
+      font-weight: 600;
+    }
+    .tag-red { background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3); }
+    .tag-green { background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.3); }
+    .tag-amber { background: rgba(245, 158, 11, 0.15); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.3); }
+    .tag-blue { background: rgba(59, 130, 246, 0.15); color: #3b82f6; border: 1px solid rgba(59, 130, 246, 0.3); }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: var(--bg-main); }
+    ::-webkit-scrollbar-thumb { background: #374151; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #4b5563; }
+  </style>
+<script>window.__INITIAL_PANEL_DATA__ = {"meta": {"system_name": "Agent Reach Daily-Run Mission Control", "version": "1.5.0", "updated_at": "2026-09-28T06:51:26.457489+00:00", "beijing_time": "2026-09-28 14:51:26", "market_status": "午后交易中 🟢", "db_connected": true}, "portfolio": {"total_equity": 102496.79, "cash": 76958.79, "market_value": 150371.33, "cash_ratio": 75.1, "unrealized_pnl": -6891.38, "unrealized_pnl_pct": -4.38, "holdings_count": 6, "holdings": [{"code": "688008", "name": "澜起科技", "shares": 100, "cost": 255.87, "price": 216.62, "market_value": 21662.0, "unrealized_pnl": -3925.0, "unrealized_pnl_pct": -15.34, "change_pct": -3.02, "ma20": 211.91, "days_held": 45}, {"code": "002583", "name": "海能达", "shares": 600, "cost": 12.618, "price": 8.47, "market_value": 5082.0, "unrealized_pnl": -2488.8, "unrealized_pnl_pct": -32.87, "change_pct": 5.48, "ma20": 8.41, "days_held": 816}, {"code": "000725", "name": "京东方A", "shares": 200, "cost": 5.9532, "price": 5.8, "market_value": 1160.0, "unrealized_pnl": -30.64, "unrealized_pnl_pct": -2.57, "change_pct": -0.85, "ma20": 5.71, "days_held": 23}, {"code": "300308", "name": "中际旭创", "shares": 100, "cost": 930.2833, "price": 930.2833, "market_value": 93028.33, "unrealized_pnl": 0.0, "unrealized_pnl_pct": 0.0, "change_pct": 0.0, "ma20": 0.0, "days_held": 0}, {"code": "002273", "name": "水晶光电", "shares": 300, "cost": 33.81, "price": 33.81, "market_value": 10143.0, "unrealized_pnl": 0.0, "unrealized_pnl_pct": 0.0, "change_pct": 0.0, "ma20": 0.0, "days_held": 0}, {"code": "002415", "name": "海康威视", "shares": 600, "cost": 32.9049, "price": 32.16, "market_value": 19296.0, "unrealized_pnl": -446.94, "unrealized_pnl_pct": -2.26, "change_pct": -1.44, "ma20": 33.95, "days_held": 4}], "as_of": "2026-09-28T02:47:22.426755+00:00"}, "regime": {"phase": "retreat", "phase_label": "退潮期 🛑", "phase_color": "#dc2626", "phase_step": 5, "description": "", "up_count": 0, "down_count": 0, "limit_up_count": 30, "down_limit_count": 0, "broken_board_rate": 0.0, "max_limit_up_streak": 0, "retreat_triggered": false, "retreat_reason": "", "top_mainlines": [{"sector": "汽车零部", "score": 63.6, "leader_stock": "", "limit_up_count": 3}, {"sector": "通用设备", "score": 63.6, "leader_stock": "", "limit_up_count": 3}, {"sector": "软件开发", "score": 60.5, "leader_stock": "", "limit_up_count": 2}, {"sector": "化学制药", "score": 51.9, "leader_stock": "", "limit_up_count": 2}, {"sector": "光学光电", "score": 51.9, "leader_stock": "", "limit_up_count": 2}], "as_of": "2026-09-28T06:51:26.426195+00:00"}, "deviations": [{"code": "002583", "name": "海能达", "is_holding": true, "price": 8.47, "cumulative_3d_pct": 0.0, "threshold_3d_pct": 20.0, "distance_to_limit_pct": 20.0, "warning_triggered": false, "risk_level": "safe", "warning_message": ""}, {"code": "000725", "name": "京东方A", "is_holding": true, "price": 5.8, "cumulative_3d_pct": 0.0, "threshold_3d_pct": 20.0, "distance_to_limit_pct": 20.0, "warning_triggered": false, "risk_level": "safe", "warning_message": ""}, {"code": "002273", "name": "水晶光电", "is_holding": true, "price": 33.81, "cumulative_3d_pct": 0.0, "threshold_3d_pct": 20.0, "distance_to_limit_pct": 20.0, "warning_triggered": false, "risk_level": "safe", "warning_message": ""}, {"code": "002415", "name": "海康威视", "is_holding": true, "price": 32.16, "cumulative_3d_pct": 0.0, "threshold_3d_pct": 20.0, "distance_to_limit_pct": 20.0, "warning_triggered": false, "risk_level": "safe", "warning_message": ""}, {"code": "603501", "name": "韦尔股份", "is_holding": false, "price": 0.0, "cumulative_3d_pct": 0.0, "threshold_3d_pct": 20.0, "distance_to_limit_pct": 20.0, "warning_triggered": false, "risk_level": "safe", "warning_message": ""}, {"code": "601138", "name": "工业富联", "is_holding": false, "price": 0.0, "cumulative_3d_pct": 0.0, "threshold_3d_pct": 20.0, "distance_to_limit_pct": 20.0, "warning_triggered": false, "risk_level": "safe", "warning_message": ""}, {"code": "600584", "name": "长电科技", "is_holding": false, "price": 0.0, "cumulative_3d_pct": 0.0, "threshold_3d_pct": 20.0, "distance_to_limit_pct": 20.0, "warning_triggered": false, "risk_level": "safe", "warning_message": ""}, {"code": "000050", "name": "深天马A", "is_holding": false, "price": 0.0, "cumulative_3d_pct": 0.0, "threshold_3d_pct": 20.0, "distance_to_limit_pct": 20.0, "warning_triggered": false, "risk_level": "safe", "warning_message": ""}, {"code": "000063", "name": "中兴通讯", "is_holding": false, "price": 0.0, "cumulative_3d_pct": 0.0, "threshold_3d_pct": 20.0, "distance_to_limit_pct": 20.0, "warning_triggered": false, "risk_level": "safe", "warning_message": ""}, {"code": "000100", "name": "TCL科技", "is_holding": false, "price": 0.0, "cumulative_3d_pct": 0.0, "threshold_3d_pct": 20.0, "distance_to_limit_pct": 20.0, "warning_triggered": false, "risk_level": "safe", "warning_message": ""}, {"code": "688008", "name": "澜起科技", "is_holding": true, "price": 216.62, "cumulative_3d_pct": 0.0, "threshold_3d_pct": 20.0, "distance_to_limit_pct": 30.0, "warning_triggered": false, "risk_level": "safe", "warning_message": ""}, {"code": "300308", "name": "中际旭创", "is_holding": true, "price": 930.2833, "cumulative_3d_pct": 0.0, "threshold_3d_pct": 20.0, "distance_to_limit_pct": 30.0, "warning_triggered": false, "risk_level": "safe", "warning_message": ""}], "intraday": {"total_cycles": 10, "completed_cycles_count": 8, "completed_cycles": ["S3", "S4", "S5", "S6", "S7", "S8", "S9", "S10"], "scans": {"S1": [], "S2": [], "S3": [{"at": "2026-09-28T01:01:05.030691+00:00", "code": "002415", "name": "海康威视", "price": 32.63, "mss_final": 44.82, "verdict": "观察", "confidence": "中", "audit_passed": true}, {"at": "2026-09-28T01:01:04.943766+00:00", "code": "000725", "name": "京东方A", "price": 5.85, "mss_final": 45.66, "verdict": "观察", "confidence": "高", "audit_passed": true}, {"at": "2026-09-28T01:01:05.015115+00:00", "code": "688008", "name": "澜起科技", "price": 214.5, "mss_final": 45.41, "verdict": "观察", "confidence": "高", "audit_passed": true}, {"at": "2026-09-28T01:01:04.965206+00:00", "code": "002583", "name": "海能达", "price": 8.03, "mss_final": 45.02, "verdict": "可做", "confidence": "高", "audit_passed": true}, {"at": "2026-09-28T01:02:58.461744+00:00", "code": "603501", "name": "韦尔股份", "price": 81.4, "mss_final": 45.56, "verdict": "观察", "confidence": "高", "audit_passed": true}, {"at": "2026-09-28T01:03:01.229595+00:00", "code": "600584", "name": "长电科技", "price": 68.78, "mss_final": 44.75, "verdict": "观察", "confidence": "中", "audit_passed": true}, {"at": "2026-09-28T01:03:01.415556+00:00", "code": "000050", "name": "深天马A", "price": 6.36, "mss_final": 44.9, "verdict": "观察", "confidence": "中", "audit_passed": true}, {"at": "2026-09-28T01:03:01.403395+00:00", "code": "601138", "name": "工业富联", "price": 61.0, "mss_final": 44.76, "verdict": "观察", "confidence": "中", "audit_passed": true}, {"at": "2026-09-28T01:04:29.819352+00:00", "code": "000100", "name": "TCL科技", "price": 4.87, "mss_final": 45.59, "verdict": "观察", "confidence": "高", "audit_passed": true}, {"at": "2026-09-28T01:04:29.239880+00:00", "code": "000063", "name": "中兴通讯", "price": 31.92, "mss_final": 44.86, "verdict": "观察", "confidence": "中", "audit_passed": true}], "S4": [{"at": "2026-09-28T01:45:47.492625+00:00", "code": "688008", "name": "澜起科技", "price": 211.64, "mss_final": 46.78, "verdict": "观察", "confidence": "高", "audit_passed": true}, {"at": "2026-09-28T01:45:47.073866+00:00", "code": "000725", "name": "京东方A", "price": 5.94, "mss_final": 47.12, "verdict": "可做", "confidence": "高", "audit_passed": true}, {"at": "2026-09-28T01:45:49.666781+00:00", "code": "002415", "name": "海康威视", "price": 32.44, "mss_final": 46.11, "verdict": "观察", "confidence": "高", "audit_passed": true}, {"at": "2026-09-28T01:45:54.170430+00:00", "code": "002583", "name": "海能达", "price": 8.71, "mss_final": 47.23, "verdict": "可做", "confidence": "高", "audit_passed": true}, {"at": "2026-09-28T01:47:58.162384+00:00", "code": "601138", "name": "工业富联", "price": 59.69, "mss_final": 45.87, "verdict": "观察", "confidence": "高", "audit_passed": true}, {"at": "2026-09-28T01:48:01.495486+00:00", "code": "603501", "name": "韦尔股份", "price": 81.34, "mss_final": 46.82, "verdict": "观察", "confidence": "高", "audit_passed": true}, {"at": "2026-09-28T01:48:08.096898+00:00", "code": "600584", "name": "长电科技", "price": 67.24, "mss_final": 46.03, "verdict": "观察", "confidence": "高", "audit_passed": true}, {"at": "2026-09-28T01:48:07.423122+00:00", "code": "000050", "name": "深天马A", "price": 6.32, "mss_final": 46.25, "verdict": "可做", "confidence": "高", "audit_passed": true}, {"at": "2026-09-28T01:50:05.151265+00:00", "code": "000063", "name": "中兴通讯", "price": 31.07, "mss_final": 45.74, "verdict": "观察", "confidence": "高", "audit_passed": true}, {"at": "2026-09-28T01:50:14.127357+00:00", "code": "000100", "name": "TCL科技", "price": 4.83, "mss_final": 45.9, "verdict": "观察", "confidence": "高", "audit_passed": true}], "S5": [{"at": "2026-09-28T02:15:44.745251+00:00", "code": "000725", "name": "京东方A", "price": 5.83, "mss_final": 45.8, "verdict": "观察", "confidence": "高", "audit_passed": true}, {"at": "2026-09-28T02:15:44.918472+00:00", "code": "002583", "name": "海能达", "price": 8.46, "mss_final": 45.99, "verdict": "观察", "confidence": "中", "audit_passed": true}, {"at": "2026-09-28T02:15:49.144875+00:00", "code": "688008", "name": "澜起科技", "price": 209.0, "mss_final": 45.6, "verdict": "观察", "confidence": "高", "audit_passed": true}, {"at": "2026-09-28T02:15:52.114066+00:00", "code": "002415", "name": "海康威视", "price": 32.38, "mss_final": 44.89, "verdict": "观察", "confidence": "中", "audit_passed": true}, {"at": "2026-09-28T02:17:17.716185+00:00", "code": "601138", "name": "工业富联", "price": 59.25, "mss_final": 44.4, "verdict": "观察", "confidence": "中", "audit_passed": true}, {"at": "2026-09-28T02:17:18.541507+00:00", "code": "000050", "name": "深天马A", "price": 6.28, "mss_final": 44.69, "verdict": "观察", "confidence": "中", "audit_passed": true}, {"at": "2026-09-28T02:17:24.128247+00:00", "code": "603501", "name": "韦尔股份", "price": 80.95, "mss_final": 45.35, "verdict": "观察", "confidence": "高", "audit_passed": true}, {"at": "2026-09-28T02:17:24.537650+00:00", "code": "600584", "name": "长电科技", "price": 66.19, "mss_final": 44.32, "verdict": "观察", "confidence": "中", "audit_passed": true}, {"at": "2026-09-28T02:18:47.161447+00:00", "code": "000100", "name": "TCL科技", "price": 4.81, "mss_final": 44.4, "verdict": "观察", "confidence": "中", "audit_passed": true}, {"at": "2026-09-28T02:18:54.940928+00:00", "code": "000063", "name": "中兴通讯", "price": 31.0, "mss_final": 44.24, "verdict": "观察", "confidence": "中", "audit_passed": true}], "S6": [{"at": "2026-09-28T02:45:45.067952+00:00", "code": "002583", "name": "海能达", "price": 8.47, "mss_final": 44.04, "verdict": "观察", "confidence": "中", "audit_passed": true}, {"at": "2026-09-28T02:46:02.033396+00:00", "code": "002415", "name": "海康威视", "price": 32.16, "mss_final": 42.91, "verdict": "观察", "confidence": "中", "audit_passed": true}, {"at": "2026-09-28T02:46:00.813285+00:00", "code": "688008", "name": "澜起科技", "price": 206.98, "mss_final": 43.62, "verdict": "观察", "confidence": "中", "audit_passed": true}, {"at": "2026-09-28T02:46:00.801337+00:00", "code": "000725", "name": "京东方A", "price": 5.8, "mss_final": 43.88, "verdict": "观察", "confidence": "中", "audit_passed": true}, {"at": "2026-09-28T02:47:49.266574+00:00", "code": "603501", "name": "韦尔股份", "price": 81.26, "mss_final": 43.93, "verdict": "观察", "confidence": "中", "audit_passed": true}, {"at": "2026-09-28T02:47:51.889454+00:00", "code": "601138", "name": "工业富联", "price": 58.66, "mss_final": 42.88, "verdict": "观察", "confidence": "中", "audit_passed": true}, {"at": "2026-09-28T02:47:52.862008+00:00", "code": "000050", "name": "深天马A", "price": 6.21, "mss_final": 43.08, "verdict": "观察", "confidence": "中", "audit_passed": true}, {"at": "2026-09-28T02:47:53.961952+00:00", "code": "600584", "name": "长电科技", "price": 65.28, "mss_final": 42.85, "verdict": "观察", "confidence": "中", "audit_passed": true}, {"at": "2026-09-28T02:50:16.737672+00:00", "code": "000063", "name": "中兴通讯", "price": 30.83, "mss_final": 42.99, "verdict": "观察", "confidence": "中", "audit_passed": true}, {"at": "2026-09-28T02:50:22.522853+00:00", "code": "000100", "name": "TCL科技", "price": 4.8, "mss_final": 43.2, "verdict": "观察", "confidence": "中", "audit_passed": true}], "S7": [{"at": "2026-09-28T03:20:38.662955+00:00", "code": "000725", "name": "京东方A", "price": 5.81, "mss_final": 43.89, "verdict": "观察", "confidence": "中", "audit_passed": true}, {"at": "2026-09-28T03:20:53.489372+00:00", "code": "002583", "name": "海能达", "price": 8.48, "mss_final": 44.09, "verdict": "观察", "confidence": "中", "audit_passed": true}, {"at": "2026-09-28T03:20:53.371885+00:00", "code": "603501", "name": "韦尔股份", "price": 82.0, "mss_final": 43.81, "verdict": "观察", "confidence": "中", "audit_passed": true}, {"at": "2026-09-28T03:21:02.294438+00:00", "code": "002415", "name": "海康威视", "price": 32.23, "mss_final": 42.97, "verdict": "观察", "confidence": "中", "audit_passed": true}, {"at": "2026-09-28T03:22:41.804218+00:00", "code": "601138", "name": "工业富联", "price": 58.6, "mss_final": 42.89, "verdict": "观察", "confidence": "中", "audit_passed": true}, {"at": "2026-09-28T03:23:13.071888+00:00", "code": "000063", "name": "中兴通讯", "price": 30.81, "mss_final": 42.85, "verdict": "观察", "confidence": "中", "audit_passed": true}, {"at": "2026-09-28T03:23:12.578372+00:00", "code": "000050", "name": "深天马A", "price": 6.22, "mss_final": 43.04, "verdict": "观察", "confidence": "中", "audit_passed": true}, {"at": "2026-09-28T03:23:16.478906+00:00", "code": "600584", "name": "长电科技", "price": 65.6, "mss_final": 42.81, "verdict": "观察", "confidence": "中", "audit_passed": true}, {"at": "2026-09-28T03:23:27.030655+00:00", "code": "000100", "name": "TCL科技", "price": 4.79, "mss_final": 43.24, "verdict": "观察", "confidence": "中", "audit_passed": true}], "S8": [{"at": "2026-09-28T05:05:47.552421+00:00", "code": "002583", "name": "海能达", "price": 8.41, "mss_final": 45.35, "verdict": "观察", "confidence": "中", "audit_passed": true}, {"at": "2026-09-28T05:05:52.855652+00:00", "code": "603501", "name": "韦尔股份", "price": 82.0, "mss_final": 45.06, "verdict": "可做", "confidence": "高", "audit_passed": true}, {"at": "2026-09-28T05:05:56.215792+00:00", "code": "002415", "name": "海康威视", "price": 32.24, "mss_final": 44.24, "verdict": "观察", "confidence": "中", "audit_passed": true}, {"at": "2026-09-28T05:05:56.139600+00:00", "code": "000725", "name": "京东方A", "price": 5.83, "mss_final": 45.15, "verdict": "观察", "confidence": "高", "audit_passed": true}, {"at": "2026-09-28T05:07:35.672070+00:00", "code": "601138", "name": "工业富联", "price": 58.8, "mss_final": 43.88, "verdict": "观察", "confidence": "中", "audit_passed": true}, {"at": "2026-09-28T05:07:41.055474+00:00", "code": "600584", "name": "长电科技", "price": 65.89, "mss_final": 43.87, "verdict": "观察", "confidence": "中", "audit_passed": true}, {"at": "2026-09-28T05:07:43.332758+00:00", "code": "000050", "name": "深天马A", "price": 6.22, "mss_final": 44.09, "verdict": "观察", "confidence": "中", "audit_passed": true}, {"at": "2026-09-28T05:07:44.069469+00:00", "code": "000063", "name": "中兴通讯", "price": 30.86, "mss_final": 43.9, "verdict": "观察", "confidence": "中", "audit_passed": true}, {"at": "2026-09-28T05:09:15.757234+00:00", "code": "000100", "name": "TCL科技", "price": 4.81, "mss_final": 43.91, "verdict": "观察", "confidence": "中", "audit_passed": true}], "S9": [{"at": "2026-09-28T05:36:48.226584+00:00", "code": "002583", "name": "海能达", "price": 8.36, "mss_final": 43.35, "verdict": "观察", "confidence": "中", "audit_passed": true}, {"at": "2026-09-28T05:36:50.494736+00:00", "code": "000725", "name": "京东方A", "price": 5.79, "mss_final": 43.88, "verdict": "观察", "confidence": "中", "audit_passed": true}, {"at": "2026-09-28T05:36:56.163519+00:00", "code": "002415", "name": "海康威视", "price": 32.15, "mss_final": 42.97, "verdict": "观察", "confidence": "中", "audit_passed": true}, {"at": "2026-09-28T05:36:58.497435+00:00", "code": "603501", "name": "韦尔股份", "price": 81.32, "mss_final": 43.79, "verdict": "观察", "confidence": "中", "audit_passed": true}, {"at": "2026-09-28T05:38:33.867190+00:00", "code": "601138", "name": "工业富联", "price": 58.51, "mss_final": 42.72, "verdict": "观察", "confidence": "中", "audit_passed": true}, {"at": "2026-09-28T05:38:40.545229+00:00", "code": "600584", "name": "长电科技", "price": 65.34, "mss_final": 42.66, "verdict": "观察", "confidence": "中", "audit_passed": true}, {"at": "2026-09-28T05:38:43.112831+00:00", "code": "000050", "name": "深天马A", "price": 6.22, "mss_final": 42.9, "verdict": "观察", "confidence": "中", "audit_passed": true}, {"at": "2026-09-28T05:38:43.153652+00:00", "code": "000063", "name": "中兴通讯", "price": 30.8, "mss_final": 42.72, "verdict": "观察", "confidence": "中", "audit_passed": true}, {"at": "2026-09-28T05:39:51.316009+00:00", "code": "000100", "name": "TCL科技", "price": 4.77, "mss_final": 42.78, "verdict": "观察", "confidence": "中", "audit_passed": true}], "S10": [{"at": "2026-09-28T06:10:41.401383+00:00", "code": "002415", "name": "海康威视", "price": 32.27, "mss_final": 44.04, "verdict": "观察", "confidence": "中", "audit_passed": true}, {"at": "2026-09-28T06:10:55.626232+00:00", "code": "000725", "name": "京东方A", "price": 5.84, "mss_final": 44.98, "verdict": "观察", "confidence": "中", "audit_passed": true}, {"at": "2026-09-28T06:11:03.469394+00:00", "code": "603501", "name": "韦尔股份", "price": 81.42, "mss_final": 44.85, "verdict": "观察", "confidence": "中", "audit_passed": true}, {"at": "2026-09-28T06:11:04.770762+00:00", "code": "002583", "name": "海能达", "price": 8.51, "mss_final": 45.16, "verdict": "观察", "confidence": "中", "audit_passed": true}, {"at": "2026-09-28T06:12:52.040501+00:00", "code": "601138", "name": "工业富联", "price": 59.04, "mss_final": 44.05, "verdict": "观察", "confidence": "中", "audit_passed": true}, {"at": "2026-09-28T06:13:25.381480+00:00", "code": "000050", "name": "深天马A", "price": 6.28, "mss_final": 44.38, "verdict": "观察", "confidence": "中", "audit_passed": true}, {"at": "2026-09-28T06:13:26.121549+00:00", "code": "600584", "name": "长电科技", "price": 65.86, "mss_final": 44.02, "verdict": "观察", "confidence": "中", "audit_passed": true}, {"at": "2026-09-28T06:13:26.216305+00:00", "code": "000063", "name": "中兴通讯", "price": 30.97, "mss_final": 44.07, "verdict": "观察", "confidence": "中", "audit_passed": true}, {"at": "2026-09-28T06:14:22.628800+00:00", "code": "000100", "name": "TCL科技", "price": 4.82, "mss_final": 44.43, "verdict": "观察", "confidence": "中", "audit_passed": true}]}}, "events": [{"id": 108769, "kind": "intraday_scan", "badge": "scan", "at": "2026-09-28T06:44:44.113630+00:00", "title": "盘中扫描 [S11]: TCL科技(000100)", "summary": "结论: 观察 | MSS: 44.06 | 置信度: 中", "details": {"scan_id": "S11", "as_of": "2026-09-28T06:44:44.113630+00:00", "code": "000100", "name": "TCL科技", "mss_final": 44.06, "mss_breakdown": {"fx": 36.9, "flow": 48.0, "global": 32.0, "sentiment": 58.0, "_macro_baseline_ref": 45.0, "_macro_veto_ref": 30.0, "_aggressive_ref": 45.0, "_min_cash_ratio_ref": 0.1, "_max_price_deviation_pct_ref": 0.06, "_high_position_20d_ref": 0.65, "_min_volume_ratio_ref": 1.1, "_max_vwap_deviation_pct_ref": 0.03, "technical": 37.3, "quant": 38.8, "risk": 60.0}, "verdict": "观察", "confidence": "中", "price": 4.8, "audit_passed": true}}, {"id": 108768, "kind": "intraday_scan", "badge": "scan", "at": "2026-09-28T06:43:06.485926+00:00", "title": "盘中扫描 [S11]: 中兴通讯(000063)", "summary": "结论: 观察 | MSS: 43.92 | 置信度: 中", "details": {"scan_id": "S11", "as_of": "2026-09-28T06:43:06.485926+00:00", "code": "000063", "name": "中兴通讯", "mss_final": 43.92, "mss_breakdown": {"fx": 37.0, "flow": 48.0, "global": 32.2, "sentiment": 58.0, "_macro_baseline_ref": 45.0, "_macro_veto_ref": 30.0, "_aggressive_ref": 45.0, "_min_cash_ratio_ref": 0.1, "_max_price_deviation_pct_ref": 0.06, "_high_position_20d_ref": 0.65, "_min_volume_ratio_ref": 1.1, "_max_vwap_deviation_pct_ref": 0.03, "technical": 20.9, "quant": 35.1, "risk": 60.0}, "verdict": "观察", "confidence": "中", "price": 30.84, "audit_passed": true}}, {"id": 108767, "kind": "intraday_scan", "badge": "scan", "at": "2026-09-28T06:43:06.514947+00:00", "title": "盘中扫描 [S11]: 深天马A(000050)", "summary": "结论: 观察 | MSS: 44.13 | 置信度: 中", "details": {"scan_id": "S11", "as_of": "2026-09-28T06:43:06.514947+00:00", "code": "000050", "name": "深天马A", "mss_final": 44.13, "mss_breakdown": {"fx": 37.0, "flow": 48.0, "global": 32.2, "sentiment": 58.0, "_macro_baseline_ref": 45.0, "_macro_veto_ref": 30.0, "_aggressive_ref": 45.0, "_min_cash_ratio_ref": 0.1, "_max_price_deviation_pct_ref": 0.06, "_high_position_20d_ref": 0.65, "_min_volume_ratio_ref": 1.1, "_max_vwap_deviation_pct_ref": 0.03, "technical": 34.8, "quant": 42.4, "risk": 60.0}, "verdict": "观察", "confidence": "中", "price": 6.25, "audit_passed": true}}, {"id": 108766, "kind": "intraday_scan", "badge": "scan", "at": "2026-09-28T06:43:05.746301+00:00", "title": "盘中扫描 [S11]: 长电科技(600584)", "summary": "结论: 观察 | MSS: 43.87 | 置信度: 中", "details": {"scan_id": "S11", "as_of": "2026-09-28T06:43:05.746301+00:00", "code": "600584", "name": "长电科技", "mss_final": 43.87, "mss_breakdown": {"fx": 37.0, "flow": 48.0, "global": 32.2, "sentiment": 58.0, "_macro_baseline_ref": 45.0, "_macro_veto_ref": 30.0, "_aggressive_ref": 45.0, "_min_cash_ratio_ref": 0.1, "_max_price_deviation_pct_ref": 0.06, "_high_position_20d_ref": 0.65, "_min_volume_ratio_ref": 1.1, "_max_vwap_deviation_pct_ref": 0.03, "technical": 17.9, "quant": 34.0, "risk": 60.0}, "verdict": "观察", "confidence": "中", "price": 65.51, "audit_passed": true}}, {"id": 108765, "kind": "intraday_scan", "badge": "scan", "at": "2026-09-28T06:42:54.300083+00:00", "title": "盘中扫描 [S11]: 工业富联(601138)", "summary": "结论: 观察 | MSS: 43.91 | 置信度: 中", "details": {"scan_id": "S11", "as_of": "2026-09-28T06:42:54.300083+00:00", "code": "601138", "name": "工业富联", "mss_final": 43.91, "mss_breakdown": {"fx": 37.0, "flow": 48.0, "global": 32.2, "sentiment": 58.0, "_macro_baseline_ref": 45.0, "_macro_veto_ref": 30.0, "_aggressive_ref": 45.0, "_min_cash_ratio_ref": 0.1, "_max_price_deviation_pct_ref": 0.06, "_high_position_20d_ref": 0.65, "_min_volume_ratio_ref": 1.1, "_max_vwap_deviation_pct_ref": 0.03, "technical": 20.5, "quant": 34.4, "risk": 60.0}, "verdict": "观察", "confidence": "中", "price": 58.92, "audit_passed": true}}, {"id": 108764, "kind": "intraday_scan", "badge": "scan", "at": "2026-09-28T06:41:12.000819+00:00", "title": "盘中扫描 [S11]: 海能达(002583)", "summary": "结论: 观察 | MSS: 45.11 | 置信度: 中", "details": {"scan_id": "S11", "as_of": "2026-09-28T06:41:12.000819+00:00", "code": "002583", "name": "海能达", "mss_final": 45.11, "mss_breakdown": {"fx": 36.8, "flow": 48.0, "global": 31.9, "sentiment": 58.0, "_macro_baseline_ref": 45.0, "_macro_veto_ref": 30.0, "_aggressive_ref": 45.0, "_min_cash_ratio_ref": 0.1, "_max_price_deviation_pct_ref": 0.06, "_high_position_20d_ref": 0.65, "_min_volume_ratio_ref": 1.1, "_max_vwap_deviation_pct_ref": 0.03, "technical": 81.2, "quant": 51.9, "risk": 73.0}, "verdict": "观察", "confidence": "中", "price": 8.46, "audit_passed": true}}, {"id": 108763, "kind": "intraday_scan", "badge": "scan", "at": "2026-09-28T06:41:08.944333+00:00", "title": "盘中扫描 [S11]: 韦尔股份(603501)", "summary": "结论: 观察 | MSS: 44.75 | 置信度: 中", "details": {"scan_id": "S11", "as_of": "2026-09-28T06:41:08.944333+00:00", "code": "603501", "name": "韦尔股份", "mss_final": 44.75, "mss_breakdown": {"fx": 36.8, "flow": 48.0, "global": 31.9, "sentiment": 58.0, "_macro_baseline_ref": 45.0, "_macro_veto_ref": 30.0, "_aggressive_ref": 45.0, "_min_cash_ratio_ref": 0.1, "_max_price_deviation_pct_ref": 0.06, "_high_position_20d_ref": 0.65, "_min_volume_ratio_ref": 1.1, "_max_vwap_deviation_pct_ref": 0.03, "technical": 69.1, "quant": 38.6, "risk": 70.0}, "verdict": "观察", "confidence": "中", "price": 80.67, "audit_passed": true}}, {"id": 108762, "kind": "intraday_scan", "badge": "scan", "at": "2026-09-28T06:41:06.014208+00:00", "title": "盘中扫描 [S11]: 海康威视(002415)", "summary": "结论: 观察 | MSS: 43.98 | 置信度: 中", "details": {"scan_id": "S11", "as_of": "2026-09-28T06:41:06.014208+00:00", "code": "002415", "name": "海康威视", "mss_final": 43.98, "mss_breakdown": {"fx": 36.8, "flow": 48.0, "global": 31.9, "sentiment": 58.0, "_macro_baseline_ref": 45.0, "_macro_veto_ref": 30.0, "_aggressive_ref": 45.0, "_min_cash_ratio_ref": 0.1, "_max_price_deviation_pct_ref": 0.06, "_high_position_20d_ref": 0.65, "_min_volume_ratio_ref": 1.1, "_max_vwap_deviation_pct_ref": 0.03, "technical": 35.5, "quant": 36.9, "risk": 60.0}, "verdict": "观察", "confidence": "中", "price": 32.17, "audit_passed": true}}, {"id": 108761, "kind": "intraday_scan", "badge": "scan", "at": "2026-09-28T06:41:03.372652+00:00", "title": "盘中扫描 [S11]: 京东方A(000725)", "summary": "结论: 观察 | MSS: 44.84 | 置信度: 中", "details": {"scan_id": "S11", "as_of": "2026-09-28T06:41:03.372652+00:00", "code": "000725", "name": "京东方A", "mss_final": 44.84, "mss_breakdown": {"fx": 36.7, "flow": 48.0, "global": 31.7, "sentiment": 58.0, "_macro_baseline_ref": 45.0, "_macro_veto_ref": 30.0, "_aggressive_ref": 45.0, "_min_cash_ratio_ref": 0.1, "_max_price_deviation_pct_ref": 0.06, "_high_position_20d_ref": 0.65, "_min_volume_ratio_ref": 1.1, "_max_vwap_deviation_pct_ref": 0.03, "technical": 70.3, "quant": 42.0, "risk": 73.0}, "verdict": "观察", "confidence": "中", "price": 5.81, "audit_passed": true}}, {"id": 108760, "kind": "intraday_scan", "badge": "scan", "at": "2026-09-28T06:14:22.628800+00:00", "title": "盘中扫描 [S10]: TCL科技(000100)", "summary": "结论: 观察 | MSS: 44.43 | 置信度: 中", "details": {"scan_id": "S10", "as_of": "2026-09-28T06:14:22.628800+00:00", "code": "000100", "name": "TCL科技", "mss_final": 44.43, "mss_breakdown": {"fx": 37.5, "flow": 48.0, "global": 32.9, "sentiment": 58.0, "_macro_baseline_ref": 45.0, "_macro_veto_ref": 30.0, "_aggressive_ref": 45.0, "_min_cash_ratio_ref": 0.1, "_max_price_deviation_pct_ref": 0.06, "_high_position_20d_ref": 0.65, "_min_volume_ratio_ref": 1.1, "_max_vwap_deviation_pct_ref": 0.03, "technical": 38.3, "quant": 40.0, "risk": 60.0}, "verdict": "观察", "confidence": "中", "price": 4.82, "audit_passed": true}}, {"id": 108759, "kind": "intraday_scan", "badge": "scan", "at": "2026-09-28T06:13:26.216305+00:00", "title": "盘中扫描 [S10]: 中兴通讯(000063)", "summary": "结论: 观察 | MSS: 44.07 | 置信度: 中", "details": {"scan_id": "S10", "as_of": "2026-09-28T06:13:26.216305+00:00", "code": "000063", "name": "中兴通讯", "mss_final": 44.07, "mss_breakdown": {"fx": 37.2, "flow": 48.0, "global": 32.6, "sentiment": 58.0, "_macro_baseline_ref": 45.0, "_macro_veto_ref": 30.0, "_aggressive_ref": 45.0, "_min_cash_ratio_ref": 0.1, "_max_price_deviation_pct_ref": 0.06, "_high_position_20d_ref": 0.65, "_min_volume_ratio_ref": 1.1, "_max_vwap_deviation_pct_ref": 0.03, "technical": 21.9, "quant": 35.8, "risk": 60.0}, "verdict": "观察", "confidence": "中", "price": 30.97, "audit_passed": true}}, {"id": 108758, "kind": "intraday_scan", "badge": "scan", "at": "2026-09-28T06:13:26.121549+00:00", "title": "盘中扫描 [S10]: 长电科技(600584)", "summary": "结论: 观察 | MSS: 44.02 | 置信度: 中", "details": {"scan_id": "S10", "as_of": "2026-09-28T06:13:26.121549+00:00", "code": "600584", "name": "长电科技", "mss_final": 44.02, "mss_breakdown": {"fx": 37.2, "flow": 48.0, "global": 32.6, "sentiment": 58.0, "_macro_baseline_ref": 45.0, "_macro_veto_ref": 30.0, "_aggressive_ref": 45.0, "_min_cash_ratio_ref": 0.1, "_max_price_deviation_pct_ref": 0.06, "_high_position_20d_ref": 0.65, "_min_volume_ratio_ref": 1.1, "_max_vwap_deviation_pct_ref": 0.03, "technical": 19.2, "quant": 34.1, "risk": 60.0}, "verdict": "观察", "confidence": "中", "price": 65.86, "audit_passed": true}}, {"id": 108757, "kind": "intraday_scan", "badge": "scan", "at": "2026-09-28T06:13:25.381480+00:00", "title": "盘中扫描 [S10]: 深天马A(000050)", "summary": "结论: 观察 | MSS: 44.38 | 置信度: 中", "details": {"scan_id": "S10", "as_of": "2026-09-28T06:13:25.381480+00:00", "code": "000050", "name": "深天马A", "mss_final": 44.38, "mss_breakdown": {"fx": 37.2, "flow": 48.0, "global": 32.5, "sentiment": 58.0, "_macro_baseline_ref": 45.0, "_macro_veto_ref": 30.0, "_aggressive_ref": 45.0, "_min_cash_ratio_ref": 0.1, "_max_price_deviation_pct_ref": 0.06, "_high_position_20d_ref": 0.65, "_min_volume_ratio_ref": 1.1, "_max_vwap_deviation_pct_ref": 0.03, "technical": 46.0, "quant": 43.7, "risk": 60.0}, "verdict": "观察", "confidence": "中", "price": 6.28, "audit_passed": true}}, {"id": 108756, "kind": "intraday_scan", "badge": "scan", "at": "2026-09-28T06:12:52.040501+00:00", "title": "盘中扫描 [S10]: 工业富联(601138)", "summary": "结论: 观察 | MSS: 44.05 | 置信度: 中", "details": {"scan_id": "S10", "as_of": "2026-09-28T06:12:52.040501+00:00", "code": "601138", "name": "工业富联", "mss_final": 44.05, "mss_breakdown": {"fx": 37.2, "flow": 48.0, "global": 32.6, "sentiment": 58.0, "_macro_baseline_ref": 45.0, "_macro_veto_ref": 30.0, "_aggressive_ref": 45.0, "_min_cash_ratio_ref": 0.1, "_max_price_deviation_pct_ref": 0.06, "_high_position_20d_ref": 0.65, "_min_volume_ratio_ref": 1.1, "_max_vwap_deviation_pct_ref": 0.03, "technical": 21.0, "quant": 34.5, "risk": 60.0}, "verdict": "观察", "confidence": "中", "price": 59.04, "audit_passed": true}}, {"id": 108755, "kind": "intraday_scan", "badge": "scan", "at": "2026-09-28T06:11:04.770762+00:00", "title": "盘中扫描 [S10]: 海能达(002583)", "summary": "结论: 观察 | MSS: 45.16 | 置信度: 中", "details": {"scan_id": "S10", "as_of": "2026-09-28T06:11:04.770762+00:00", "code": "002583", "name": "海能达", "mss_final": 45.16, "mss_breakdown": {"fx": 36.9, "flow": 48.0, "global": 32.0, "sentiment": 58.0, "_macro_baseline_ref": 45.0, "_macro_veto_ref": 30.0, "_aggressive_ref": 45.0, "_min_cash_ratio_ref": 0.1, "_max_price_deviation_pct_ref": 0.06, "_high_position_20d_ref": 0.65, "_min_volume_ratio_ref": 1.1, "_max_vwap_deviation_pct_ref": 0.03, "technical": 81.5, "quant": 51.9, "risk": 73.0}, "verdict": "观察", "confidence": "中", "price": 8.51, "audit_passed": true}}, {"id": 108754, "kind": "intraday_scan", "badge": "scan", "at": "2026-09-28T06:11:03.469394+00:00", "title": "盘中扫描 [S10]: 韦尔股份(603501)", "summary": "结论: 观察 | MSS: 44.85 | 置信度: 中", "details": {"scan_id": "S10", "as_of": "2026-09-28T06:11:03.469394+00:00", "code": "603501", "name": "韦尔股份", "mss_final": 44.85, "mss_breakdown": {"fx": 36.9, "flow": 48.0, "global": 32.0, "sentiment": 58.0, "_macro_baseline_ref": 45.0, "_macro_veto_ref": 30.0, "_aggressive_ref": 45.0, "_min_cash_ratio_ref": 0.1, "_max_price_deviation_pct_ref": 0.06, "_high_position_20d_ref": 0.65, "_min_volume_ratio_ref": 1.1, "_max_vwap_deviation_pct_ref": 0.03, "technical": 71.4, "quant": 40.9, "risk": 70.0}, "verdict": "观察", "confidence": "中", "price": 81.42, "audit_passed": true}}, {"id": 108753, "kind": "intraday_scan", "badge": "scan", "at": "2026-09-28T06:10:55.626232+00:00", "title": "盘中扫描 [S10]: 京东方A(000725)", "summary": "结论: 观察 | MSS: 44.98 | 置信度: 中", "details": {"scan_id": "S10", "as_of": "2026-09-28T06:10:55.626232+00:00", "code": "000725", "name": "京东方A", "mss_final": 44.98, "mss_breakdown": {"fx": 36.9, "flow": 48.0, "global": 32.0, "sentiment": 58.0, "_macro_baseline_ref": 45.0, "_macro_veto_ref": 30.0, "_aggressive_ref": 45.0, "_min_cash_ratio_ref": 0.1, "_max_price_deviation_pct_ref": 0.06, "_high_position_20d_ref": 0.65, "_min_volume_ratio_ref": 1.1, "_max_vwap_deviation_pct_ref": 0.03, "technical": 71.5, "quant": 43.3, "risk": 73.0}, "verdict": "观察", "confidence": "中", "price": 5.84, "audit_passed": true}}, {"id": 108752, "kind": "intraday_scan", "badge": "scan", "at": "2026-09-28T06:10:41.401383+00:00", "title": "盘中扫描 [S10]: 海康威视(002415)", "summary": "结论: 观察 | MSS: 44.04 | 置信度: 中", "details": {"scan_id": "S10", "as_of": "2026-09-28T06:10:41.401383+00:00", "code": "002415", "name": "海康威视", "mss_final": 44.04, "mss_breakdown": {"fx": 36.9, "flow": 48.0, "global": 32.0, "sentiment": 58.0, "_macro_baseline_ref": 45.0, "_macro_veto_ref": 30.0, "_aggressive_ref": 45.0, "_min_cash_ratio_ref": 0.1, "_max_price_deviation_pct_ref": 0.06, "_high_position_20d_ref": 0.65, "_min_volume_ratio_ref": 1.1, "_max_vwap_deviation_pct_ref": 0.03, "technical": 36.3, "quant": 37.7, "risk": 60.0}, "verdict": "观察", "confidence": "中", "price": 32.27, "audit_passed": true}}, {"id": 108751, "kind": "intraday_scan", "badge": "scan", "at": "2026-09-28T05:39:51.316009+00:00", "title": "盘中扫描 [S9]: TCL科技(000100)", "summary": "结论: 观察 | MSS: 42.78 | 置信度: 中", "details": {"scan_id": "S9", "as_of": "2026-09-28T05:39:51.316009+00:00", "code": "000100", "name": "TCL科技", "mss_final": 42.78, "mss_breakdown": {"fx": 34.8, "flow": 48.0, "global": 28.6, "sentiment": 58.0, "_macro_baseline_ref": 45.0, "_macro_veto_ref": 30.0, "_aggressive_ref": 45.0, "_min_cash_ratio_ref": 0.1, "_max_price_deviation_pct_ref": 0.06, "_high_position_20d_ref": 0.65, "_min_volume_ratio_ref": 1.1, "_max_vwap_deviation_pct_ref": 0.03, "technical": 35.7, "quant": 36.8, "risk": 60.0}, "verdict": "观察", "confidence": "中", "price": 4.77, "audit_passed": true}}, {"id": 108750, "kind": "intraday_scan", "badge": "scan", "at": "2026-09-28T05:38:43.153652+00:00", "title": "盘中扫描 [S9]: 中兴通讯(000063)", "summary": "结论: 观察 | MSS: 42.72 | 置信度: 中", "details": {"scan_id": "S9", "as_of": "2026-09-28T05:38:43.153652+00:00", "code": "000063", "name": "中兴通讯", "mss_final": 42.72, "mss_breakdown": {"fx": 35.0, "flow": 48.0, "global": 29.0, "sentiment": 58.0, "_macro_baseline_ref": 45.0, "_macro_veto_ref": 30.0, "_aggressive_ref": 45.0, "_min_cash_ratio_ref": 0.1, "_max_price_deviation_pct_ref": 0.06, "_high_position_20d_ref": 0.65, "_min_volume_ratio_ref": 1.1, "_max_vwap_deviation_pct_ref": 0.03, "technical": 20.6, "quant": 34.6, "risk": 60.0}, "verdict": "观察", "confidence": "中", "price": 30.8, "audit_passed": true}}, {"id": 108749, "kind": "intraday_scan", "badge": "scan", "at": "2026-09-28T05:38:43.112831+00:00", "title": "盘中扫描 [S9]: 深天马A(000050)", "summary": "结论: 观察 | MSS: 42.9 | 置信度: 中", "details": {"scan_id": "S9", "as_of": "2026-09-28T05:38:43.112831+00:00", "code": "000050", "name": "深天马A", "mss_final": 42.9, "mss_breakdown": {"fx": 35.0, "flow": 48.0, "global": 28.9, "sentiment": 58.0, "_macro_baseline_ref": 45.0, "_macro_veto_ref": 30.0, "_aggressive_ref": 45.0, "_min_cash_ratio_ref": 0.1, "_max_price_deviation_pct_ref": 0.06, "_high_position_20d_ref": 0.65, "_min_volume_ratio_ref": 1.1, "_max_vwap_deviation_pct_ref": 0.03, "technical": 33.6, "quant": 40.8, "risk": 60.0}, "verdict": "观察", "confidence": "中", "price": 6.22, "audit_passed": true}}, {"id": 108748, "kind": "intraday_scan", "badge": "scan", "at": "2026-09-28T05:38:40.545229+00:00", "title": "盘中扫描 [S9]: 长电科技(600584)", "summary": "结论: 观察 | MSS: 42.66 | 置信度: 中", "details": {"scan_id": "S9", "as_of": "2026-09-28T05:38:40.545229+00:00", "code": "600584", "name": "长电科技", "mss_final": 42.66, "mss_breakdown": {"fx": 35.0, "flow": 48.0, "global": 28.9, "sentiment": 58.0, "_macro_baseline_ref": 45.0, "_macro_veto_ref": 30.0, "_aggressive_ref": 45.0, "_min_cash_ratio_ref": 0.1, "_max_price_deviation_pct_ref": 0.06, "_high_position_20d_ref": 0.65, "_min_volume_ratio_ref": 1.1, "_max_vwap_deviation_pct_ref": 0.03, "technical": 17.3, "quant": 33.5, "risk": 60.0}, "verdict": "观察", "confidence": "中", "price": 65.34, "audit_passed": true}}, {"id": 108747, "kind": "intraday_scan", "badge": "scan", "at": "2026-09-28T05:38:33.867190+00:00", "title": "盘中扫描 [S9]: 工业富联(601138)", "summary": "结论: 观察 | MSS: 42.72 | 置信度: 中", "details": {"scan_id": "S9", "as_of": "2026-09-28T05:38:33.867190+00:00", "code": "601138", "name": "工业富联", "mss_final": 42.72, "mss_breakdown": {"fx": 35.0, "flow": 48.0, "global": 29.1, "sentiment": 58.0, "_macro_baseline_ref": 45.0, "_macro_veto_ref": 30.0, "_aggressive_ref": 45.0, "_min_cash_ratio_ref": 0.1, "_max_price_deviation_pct_ref": 0.06, "_high_position_20d_ref": 0.65, "_min_volume_ratio_ref": 1.1, "_max_vwap_deviation_pct_ref": 0.03, "technical": 18.9, "quant": 33.9, "risk": 60.0}, "verdict": "观察", "confidence": "中", "price": 58.51, "audit_passed": true}}, {"id": 108746, "kind": "intraday_scan", "badge": "scan", "at": "2026-09-28T05:36:58.497435+00:00", "title": "盘中扫描 [S9]: 韦尔股份(603501)", "summary": "结论: 观察 | MSS: 43.79 | 置信度: 中", "details": {"scan_id": "S9", "as_of": "2026-09-28T05:36:58.497435+00:00", "code": "603501", "name": "韦尔股份", "mss_final": 43.79, "mss_breakdown": {"fx": 35.1, "flow": 48.0, "global": 29.2, "sentiment": 58.0, "_macro_baseline_ref": 45.0, "_macro_veto_ref": 30.0, "_aggressive_ref": 45.0, "_min_cash_ratio_ref": 0.1, "_max_price_deviation_pct_ref": 0.06, "_high_position_20d_ref": 0.65, "_min_volume_ratio_ref": 1.1, "_max_vwap_deviation_pct_ref": 0.03, "technical": 71.1, "quant": 40.2, "risk": 70.0}, "verdict": "观察", "confidence": "中", "price": 81.32, "audit_passed": true}}, {"id": 108745, "kind": "intraday_scan", "badge": "scan", "at": "2026-09-28T05:36:56.163519+00:00", "title": "盘中扫描 [S9]: 海康威视(002415)", "summary": "结论: 观察 | MSS: 42.97 | 置信度: 中", "details": {"scan_id": "S9", "as_of": "2026-09-28T05:36:56.163519+00:00", "code": "002415", "name": "海康威视", "mss_final": 42.97, "mss_breakdown": {"fx": 35.1, "flow": 48.0, "global": 29.2, "sentiment": 58.0, "_macro_baseline_ref": 45.0, "_macro_veto_ref": 30.0, "_aggressive_ref": 45.0, "_min_cash_ratio_ref": 0.1, "_max_price_deviation_pct_ref": 0.06, "_high_position_20d_ref": 0.65, "_min_volume_ratio_ref": 1.1, "_max_vwap_deviation_pct_ref": 0.03, "technical": 35.4, "quant": 36.3, "risk": 60.0}, "verdict": "观察", "confidence": "中", "price": 32.15, "audit_passed": true}}, {"id": 108744, "kind": "intraday_scan", "badge": "scan", "at": "2026-09-28T05:36:50.494736+00:00", "title": "盘中扫描 [S9]: 京东方A(000725)", "summary": "结论: 观察 | MSS: 43.88 | 置信度: 中", "details": {"scan_id": "S9", "as_of": "2026-09-28T05:36:50.494736+00:00", "code": "000725", "name": "京东方A", "mss_final": 43.88, "mss_breakdown": {"fx": 35.1, "flow": 48.0, "global": 29.2, "sentiment": 58.0, "_macro_baseline_ref": 45.0, "_macro_veto_ref": 30.0, "_aggressive_ref": 45.0, "_min_cash_ratio_ref": 0.1, "_max_price_deviation_pct_ref": 0.06, "_high_position_20d_ref": 0.65, "_min_volume_ratio_ref": 1.1, "_max_vwap_deviation_pct_ref": 0.03, "technical": 69.4, "quant": 40.7, "risk": 73.0}, "verdict": "观察", "confidence": "中", "price": 5.79, "audit_passed": true}}, {"id": 108743, "kind": "intraday_scan", "badge": "scan", "at": "2026-09-28T05:36:48.226584+00:00", "title": "盘中扫描 [S9]: 海能达(002583)", "summary": "结论: 观察 | MSS: 43.35 | 置信度: 中", "details": {"scan_id": "S9", "as_of": "2026-09-28T05:36:48.226584+00:00", "code": "002583", "name": "海能达", "mss_final": 43.35, "mss_breakdown": {"fx": 35.1, "flow": 48.0, "global": 29.2, "sentiment": 58.0, "_macro_baseline_ref": 45.0, "_macro_veto_ref": 30.0, "_aggressive_ref": 45.0, "_min_cash_ratio_ref": 0.1, "_max_price_deviation_pct_ref": 0.06, "_high_position_20d_ref": 0.65, "_min_volume_ratio_ref": 1.1, "_max_vwap_deviation_pct_ref": 0.03, "technical": 48.9, "quant": 51.5, "risk": 63.0}, "verdict": "观察", "confidence": "中", "price": 8.36, "audit_passed": true}}, {"id": 108742, "kind": "intraday_scan", "badge": "scan", "at": "2026-09-28T05:09:15.757234+00:00", "title": "盘中扫描 [S8]: TCL科技(000100)", "summary": "结论: 观察 | MSS: 43.91 | 置信度: 中", "details": {"scan_id": "S8", "as_of": "2026-09-28T05:09:15.757234+00:00", "code": "000100", "name": "TCL科技", "mss_final": 43.91, "mss_breakdown": {"fx": 36.6, "flow": 48.0, "global": 31.6, "sentiment": 58.0, "_macro_baseline_ref": 45.0, "_macro_veto_ref": 30.0, "_aggressive_ref": 45.0, "_min_cash_ratio_ref": 0.1, "_max_price_deviation_pct_ref": 0.06, "_high_position_20d_ref": 0.65, "_min_volume_ratio_ref": 1.1, "_max_vwap_deviation_pct_ref": 0.03, "technical": 37.8, "quant": 39.3, "risk": 60.0}, "verdict": "观察", "confidence": "中", "price": 4.81, "audit_passed": true}}, {"id": 108741, "kind": "intraday_scan", "badge": "scan", "at": "2026-09-28T05:07:44.069469+00:00", "title": "盘中扫描 [S8]: 中兴通讯(000063)", "summary": "结论: 观察 | MSS: 43.9 | 置信度: 中", "details": {"scan_id": "S8", "as_of": "2026-09-28T05:07:44.069469+00:00", "code": "000063", "name": "中兴通讯", "mss_final": 43.9, "mss_breakdown": {"fx": 37.0, "flow": 48.0, "global": 32.1, "sentiment": 58.0, "_macro_baseline_ref": 45.0, "_macro_veto_ref": 30.0, "_aggressive_ref": 45.0, "_min_cash_ratio_ref": 0.1, "_max_price_deviation_pct_ref": 0.06, "_high_position_20d_ref": 0.65, "_min_volume_ratio_ref": 1.1, "_max_vwap_deviation_pct_ref": 0.03, "technical": 21.1, "quant": 35.1, "risk": 60.0}, "verdict": "观察", "confidence": "中", "price": 30.86, "audit_passed": true}}, {"id": 108740, "kind": "intraday_scan", "badge": "scan", "at": "2026-09-28T05:07:43.332758+00:00", "title": "盘中扫描 [S8]: 深天马A(000050)", "summary": "结论: 观察 | MSS: 44.09 | 置信度: 中", "details": {"scan_id": "S8", "as_of": "2026-09-28T05:07:43.332758+00:00", "code": "000050", "name": "深天马A", "mss_final": 44.09, "mss_breakdown": {"fx": 37.0, "flow": 48.0, "global": 32.1, "sentiment": 58.0, "_macro_baseline_ref": 45.0, "_macro_veto_ref": 30.0, "_aggressive_ref": 45.0, "_min_cash_ratio_ref": 0.1, "_max_price_deviation_pct_ref": 0.06, "_high_position_20d_ref": 0.65, "_min_volume_ratio_ref": 1.1, "_max_vwap_deviation_pct_ref": 0.03, "technical": 33.6, "quant": 41.2, "risk": 60.0}, "verdict": "观察", "confidence": "中", "price": 6.22, "audit_passed": true}}]};</script>
+<script>window.__STATIC_EXPORT__ = true;</script>
+</head>
+<body>
+
+  <!-- Top Navigation Header -->
+  <header>
+    <div class="brand">
+      <div class="brand-logo">DR</div>
+      <div>
+        <div class="brand-title">Agent Reach Daily-Run 实时量化态势大屏</div>
+      </div>
+      <span class="brand-sub">Mission Control | TSP Quant Engine</span>
+    </div>
+
+    <div class="header-right">
+      <div class="status-badge">
+        <div id="sse-indicator" class="pulse-dot"></div>
+        <span id="sse-status-text">实时连接中</span>
+      </div>
+      <div class="status-badge">
+        <span id="market-status-badge">休市中</span>
+      </div>
+      <div class="status-badge num" id="clock-display">
+        --:--:--
+      </div>
+      <button class="btn" onclick="fetchLiveState()">
+        <span>🔄 刷新</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Grid Dashboard -->
+  <main>
+
+    <!-- Row 1: Key Metrics (4 Cards) -->
+    <div class="grid-4">
+      <div class="stat-box">
+        <div class="stat-label">总资产估值 (Total Equity)</div>
+        <div class="stat-value num" id="stat-total-equity">¥0.00</div>
+        <div class="stat-change" id="stat-pnl-summary">浮动盈亏: --</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">可用资金 / 仓位比率</div>
+        <div class="stat-value num" id="stat-cash">¥0.00</div>
+        <div class="stat-change" id="stat-cash-ratio">现金占比: --%</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">TSP 情绪周期</div>
+        <div class="stat-value" id="stat-regime-phase">--</div>
+        <div class="stat-change" id="stat-regime-desc">全市场温度评估中</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">涨跌比 / 连板高度</div>
+        <div class="stat-value num" id="stat-breadth-ratio">0 : 0</div>
+        <div class="stat-change" id="stat-limit-height">最高连板: 0 板</div>
+      </div>
+    </div>
+
+    <!-- Row 2: TSP Regime & Mainline Sectors -->
+    <div class="grid-2">
+      <!-- 2.1 TSP 6-Phase Regime & Retreat Brake -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <span>🧬 TSP 超短情绪周期与退潮急刹车探针</span>
+          </div>
+          <div class="card-subtitle" id="regime-update-time">--</div>
+        </div>
+
+        <!-- 6 Phase Stepper Bar -->
+        <div class="regime-stepper" id="regime-stepper-container">
+          <div class="regime-step" data-phase="freezing">冰点期 🧊</div>
+          <div class="regime-step" data-phase="launching">启动期 🚀</div>
+          <div class="regime-step" data-phase="main_up">主升期 🔥</div>
+          <div class="regime-step" data-phase="climax">高潮期 ⚡</div>
+          <div class="regime-step" data-phase="retreat">退潮期 🛑</div>
+          <div class="regime-step" data-phase="repair">修复期 🩹</div>
+        </div>
+
+        <!-- Broken Board Rate Meter -->
+        <div class="broken-meter-box">
+          <div style="font-size: 0.8rem; font-weight: 500;">
+            全市场炸板率: <span class="num font-bold" id="broken-rate-val">0.0%</span>
+          </div>
+          <div class="meter-bar-container">
+            <div id="broken-rate-fill" class="meter-fill" style="width: 0%; background-color: #3b82f6;"></div>
+          </div>
+          <div id="retreat-alert-container">
+            <span style="font-size: 0.75rem; color: #10b981;">🟢 盘口安全 (<35%)</span>
+          </div>
+        </div>
+
+        <!-- Market Breadth Numbers -->
+        <div style="display: flex; justify-content: space-between; font-size: 0.78rem; padding: 0 0.25rem;">
+          <div>上涨: <span class="num" style="color: #ef4444;" id="up-count-val">0</span> 家</div>
+          <div>下跌: <span class="num" style="color: #10b981;" id="down-count-val">0</span> 家</div>
+          <div>涨停: <span class="num" style="color: #ef4444;" id="limit-up-val">0</span> 家</div>
+          <div>跌停: <span class="num" style="color: #10b981;" id="down-limit-val">0</span> 家</div>
+        </div>
+      </div>
+
+      <!-- 2.2 Sector Mainlines -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <span>🔥 市场核心主线题材阵列 (Top 5 Mainlines)</span>
+          </div>
+          <span class="tag tag-blue">连板梯队加权</span>
+        </div>
+
+        <div id="mainlines-container" style="display: flex; flex-direction: column; gap: 0.55rem;">
+          <div style="color: var(--text-muted); font-size: 0.8rem;">正在扫描主线板块...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Row 3: Holdings & Abnormal Move Radar -->
+    <div class="grid-2">
+      <!-- 3.1 Portfolio Holdings -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <span>💼 实时持仓组合 (Portfolio Holdings)</span>
+          </div>
+          <span class="card-subtitle" id="holdings-count-badge">0 只持仓</span>
+        </div>
+
+        <div style="overflow-x: auto;">
+          <table class="custom-table">
+            <thead>
+              <tr>
+                <th>标的</th>
+                <th>持股</th>
+                <th>成本 / 现价</th>
+                <th>市值</th>
+                <th>浮动盈亏</th>
+                <th>涨跌</th>
+                <th>天数</th>
+              </tr>
+            </thead>
+            <tbody id="holdings-tbody">
+              <tr><td colspan="7" style="text-align: center; color: var(--text-muted);">暂无持仓数据</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- 3.2 Exchange Deviation Radar -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <span>🛑 交易所严重异动偏离雷达 (Deviation Radar)</span>
+          </div>
+          <span class="tag tag-amber">防高位停牌核查</span>
+        </div>
+
+        <div style="overflow-x: auto; max-height: 320px; overflow-y: auto;">
+          <table class="custom-table">
+            <thead>
+              <tr>
+                <th>标的</th>
+                <th>类型</th>
+                <th>3日涨跌</th>
+                <th>红线门槛</th>
+                <th>安全垫空间</th>
+                <th>风险定性</th>
+              </tr>
+            </thead>
+            <tbody id="deviation-tbody">
+              <tr><td colspan="6" style="text-align: center; color: var(--text-muted);">正在计算异动偏离度...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Row 4: Intraday 10-Cycle Execution & Agent Brain Telemetry -->
+    <div class="grid-2">
+      <!-- 4.1 Intraday Execution Timeline -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <span>🎯 交易日内 10 次量化扫描态势 (Intraday Cycles)</span>
+          </div>
+          <span class="tag tag-green" id="cycle-progress-tag">0 / 10 完成</span>
+        </div>
+
+        <!-- 10 dots -->
+        <div class="scan-dots" id="scan-dots-container">
+          <div class="scan-dot-item" id="dot-S1">S1</div>
+          <div class="scan-dot-item" id="dot-S2">S2</div>
+          <div class="scan-dot-item" id="dot-S3">S3</div>
+          <div class="scan-dot-item" id="dot-S4">S4</div>
+          <div class="scan-dot-item" id="dot-S5">S5</div>
+          <div class="scan-dot-item" id="dot-S6">S6</div>
+          <div class="scan-dot-item" id="dot-S7">S7</div>
+          <div class="scan-dot-item" id="dot-S8">S8</div>
+          <div class="scan-dot-item" id="dot-S9">S9</div>
+          <div class="scan-dot-item" id="dot-S10">S10</div>
+        </div>
+
+        <div id="latest-scan-summary" style="font-size: 0.78rem; color: var(--text-muted); line-height: 1.5; padding: 0.4rem 0;">
+          等待盘中量化事件触发...
+        </div>
+      </div>
+
+      <!-- 4.2 Agent Decision Stream -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <span>🧠 Agent 思考与决策事件时序流 (Agent Brain Telemetry)</span>
+          </div>
+          <span class="card-subtitle">L0 Event Log</span>
+        </div>
+
+        <div class="timeline" id="events-timeline">
+          <div style="color: var(--text-muted); font-size: 0.8rem;">正在同步决策流...</div>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Interactive JavaScript Logic -->
+  <script>
+    // State Store
+    let currentPanelState = window.__INITIAL_PANEL_DATA__ || null;
+    const isStaticExport = window.__STATIC_EXPORT__ === true;
+
+    // Clock
+    function updateClock() {
+      const now = new Date();
+      const timeStr = now.toTimeString().split(' ')[0];
+      const clockEl = document.getElementById('clock-display');
+      if (clockEl) clockEl.innerText = timeStr;
+    }
+    setInterval(updateClock, 1000);
+    updateClock();
+
+    // Render Everything
+    function renderDashboard(data) {
+      if (!data) return;
+      currentPanelState = data;
+
+      // 1. Meta & Market Status
+      const meta = data.meta || {};
+      const statusBadge = document.getElementById('market-status-badge');
+      if (statusBadge && meta.market_status) {
+        statusBadge.innerText = meta.market_status;
+      }
+
+      // 2. Portfolio Stats
+      const portfolio = data.portfolio || {};
+      const totalEq = document.getElementById('stat-total-equity');
+      if (totalEq) totalEq.innerText = `¥${Number(portfolio.total_equity || 0).toLocaleString('zh-CN', {minimumFractionDigits: 2})}`;
+
+      const cashEl = document.getElementById('stat-cash');
+      if (cashEl) cashEl.innerText = `¥${Number(portfolio.cash || 0).toLocaleString('zh-CN', {minimumFractionDigits: 2})}`;
+
+      const cashRatioEl = document.getElementById('stat-cash-ratio');
+      if (cashRatioEl) cashRatioEl.innerText = `现金占比: ${portfolio.cash_ratio || 0}%`;
+
+      const pnlSummaryEl = document.getElementById('stat-pnl-summary');
+      if (pnlSummaryEl) {
+        const pnl = Number(portfolio.unrealized_pnl || 0);
+        const pnlPct = Number(portfolio.unrealized_pnl_pct || 0);
+        const sign = pnl >= 0 ? '+' : '';
+        const color = pnl >= 0 ? 'var(--up-red)' : 'var(--down-green)';
+        pnlSummaryEl.innerHTML = `浮动盈亏: <span style="color: ${color}; font-weight: 600;">${sign}¥${pnl.toFixed(2)} (${sign}${pnlPct.toFixed(2)}%)</span>`;
+      }
+
+      // 3. TSP Regime
+      const regime = data.regime || {};
+      const phaseEl = document.getElementById('stat-regime-phase');
+      if (phaseEl) {
+        phaseEl.innerText = regime.phase_label || '--';
+        phaseEl.style.color = regime.phase_color || '#fff';
+      }
+      const regimeDesc = document.getElementById('stat-regime-desc');
+      if (regimeDesc) regimeDesc.innerText = regime.description || '超短情绪模型就绪';
+
+      const breadthRatio = document.getElementById('stat-breadth-ratio');
+      if (breadthRatio) breadthRatio.innerText = `${regime.up_count || 0} : ${regime.down_count || 0}`;
+
+      const limitHeight = document.getElementById('stat-limit-height');
+      if (limitHeight) limitHeight.innerText = `最高连板: ${regime.max_limit_up_streak || 0} 板`;
+
+      // Stepper highlight
+      const steps = document.querySelectorAll('.regime-step');
+      steps.forEach(st => {
+        const p = st.getAttribute('data-phase');
+        if (p === regime.phase) {
+          st.classList.add('active');
+          st.style.backgroundColor = 'rgba(239, 68, 68, 0.2)';
+          st.style.borderColor = regime.phase_color || '#ef4444';
+          st.style.color = regime.phase_color || '#fff';
+        } else {
+          st.classList.remove('active');
+          st.style.backgroundColor = 'rgba(31, 41, 55, 0.6)';
+          st.style.borderColor = 'transparent';
+          st.style.color = 'var(--text-muted)';
+        }
+      });
+
+      // Broken board rate meter
+      const brokenRate = Number(regime.broken_board_rate || 0);
+      const brokenRateVal = document.getElementById('broken-rate-val');
+      if (brokenRateVal) brokenRateVal.innerText = `${brokenRate.toFixed(1)}%`;
+
+      const brokenFill = document.getElementById('broken-rate-fill');
+      if (brokenFill) {
+        const fillW = Math.min(100, Math.max(0, brokenRate * 2));
+        brokenFill.style.width = `${fillW}%`;
+        brokenFill.style.backgroundColor = brokenRate >= 35 ? '#ef4444' : (brokenRate >= 25 ? '#f59e0b' : '#3b82f6');
+      }
+
+      const retreatAlert = document.getElementById('retreat-alert-container');
+      if (retreatAlert) {
+        if (regime.retreat_triggered) {
+          retreatAlert.innerHTML = `<span class="danger-flag">🛑 退潮急刹车触发! 已阻断开仓</span>`;
+        } else if (brokenRate >= 28) {
+          retreatAlert.innerHTML = `<span style="font-size: 0.75rem; color: #f59e0b;">⚠️ 炸板升温预警</span>`;
+        } else {
+          retreatAlert.innerHTML = `<span style="font-size: 0.75rem; color: #10b981;">🟢 盘口安全 (<35%)</span>`;
+        }
+      }
+
+      const upCountVal = document.getElementById('up-count-val');
+      if (upCountVal) upCountVal.innerText = regime.up_count || 0;
+      const downCountVal = document.getElementById('down-count-val');
+      if (downCountVal) downCountVal.innerText = regime.down_count || 0;
+      const limitUpVal = document.getElementById('limit-up-val');
+      if (limitUpVal) limitUpVal.innerText = regime.limit_up_count || 0;
+      const downLimitVal = document.getElementById('down-limit-val');
+      if (downLimitVal) downLimitVal.innerText = regime.down_limit_count || 0;
+
+      // 4. Sector Mainlines
+      const mainlinesContainer = document.getElementById('mainlines-container');
+      if (mainlinesContainer && regime.top_mainlines) {
+        if (regime.top_mainlines.length === 0) {
+          mainlinesContainer.innerHTML = `<div style="color: var(--text-muted); font-size: 0.8rem;">盘中暂未形成强势题材梯队</div>`;
+        } else {
+          let html = '';
+          const maxScore = Math.max(...regime.top_mainlines.map(m => m.score || 1), 10);
+          regime.top_mainlines.forEach((m, idx) => {
+            const pct = Math.min(100, (m.score / maxScore) * 100);
+            const rankBadge = idx < 2 ? `<span class="tag tag-red">Top ${idx+1} 核心</span>` : `<span class="tag tag-blue">No.${idx+1}</span>`;
+            html += `
+              <div>
+                <div style="display: flex; justify-content: space-between; font-size: 0.8rem; margin-bottom: 0.2rem;">
+                  <div style="font-weight: 600;">${rankBadge} ${m.sector} <span style="font-size: 0.72rem; color: var(--text-muted);">领涨: ${m.leader_stock || '--'}</span></div>
+                  <div class="num" style="color: #60a5fa; font-weight: 600;">${m.score}分 (${m.limit_up_count}板)</div>
+                </div>
+                <div style="width: 100%; height: 5px; background: #374151; border-radius: 3px; overflow: hidden;">
+                  <div style="width: ${pct}%; height: 100%; background: linear-gradient(90deg, #3b82f6, #ec4899); border-radius: 3px;"></div>
+                </div>
+              </div>
+            `;
+          });
+          mainlinesContainer.innerHTML = html;
+        }
+      }
+
+      // 5. Holdings Table
+      const holdingsTbody = document.getElementById('holdings-tbody');
+      const holdingsBadge = document.getElementById('holdings-count-badge');
+      if (holdingsBadge) holdingsBadge.innerText = `${(portfolio.holdings || []).length} 只持仓`;
+
+      if (holdingsTbody && portfolio.holdings) {
+        if (portfolio.holdings.length === 0) {
+          holdingsTbody.innerHTML = `<tr><td colspan="7" style="text-align: center; color: var(--text-muted);">当前为空仓状态</td></tr>`;
+        } else {
+          let rows = '';
+          portfolio.holdings.forEach(h => {
+            const pnl = Number(h.unrealized_pnl || 0);
+            const pnlPct = Number(h.unrealized_pnl_pct || 0);
+            const pnlColor = pnl >= 0 ? 'var(--up-red)' : 'var(--down-green)';
+            const sign = pnl >= 0 ? '+' : '';
+            const chg = Number(h.change_pct || 0);
+            const chgColor = chg >= 0 ? 'var(--up-red)' : 'var(--down-green)';
+
+            rows += `
+              <tr>
+                <td>
+                  <div style="font-weight: 600;">${h.name}</div>
+                  <div class="num" style="font-size: 0.72rem; color: var(--text-muted);">${h.code}</div>
+                </td>
+                <td class="num">${h.shares}</td>
+                <td>
+                  <div class="num" style="color: var(--text-muted);">¥${Number(h.cost).toFixed(2)}</div>
+                  <div class="num" style="font-weight: 600;">¥${Number(h.price).toFixed(2)}</div>
+                </td>
+                <td class="num font-semibold">¥${Number(h.market_value).toLocaleString('zh-CN', {minimumFractionDigits: 2})}</td>
+                <td class="num" style="color: ${pnlColor}; font-weight: 600;">
+                  ${sign}¥${pnl.toFixed(2)}<br>
+                  <span style="font-size: 0.72rem;">${sign}${pnlPct.toFixed(2)}%</span>
+                </td>
+                <td class="num" style="color: ${chgColor}; font-weight: 600;">${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%</td>
+                <td class="num" style="color: var(--text-muted);">${h.days_held}天</td>
+              </tr>
+            `;
+          });
+          holdingsTbody.innerHTML = rows;
+        }
+      }
+
+      // 6. Deviation Radar Table
+      const devTbody = document.getElementById('deviation-tbody');
+      if (devTbody && data.deviations) {
+        if (data.deviations.length === 0) {
+          devTbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--text-muted);">暂无监测标的</td></tr>`;
+        } else {
+          let rows = '';
+          data.deviations.forEach(d => {
+            const dist = Number(d.distance_to_limit_pct || 0);
+            const cum = Number(d.cumulative_3d_pct || 0);
+            const isHolding = d.is_holding;
+            const typeBadge = isHolding ? `<span class="tag tag-red">持仓</span>` : `<span class="tag tag-blue">自选</span>`;
+            let riskBadge = `<span class="tag tag-green">安全</span>`;
+            let barColor = 'var(--down-green)';
+
+            if (d.risk_level === 'critical') {
+              riskBadge = `<span class="tag tag-red">⚠️ 触碰红线</span>`;
+              barColor = 'var(--up-red)';
+            } else if (d.risk_level === 'warning') {
+              riskBadge = `<span class="tag tag-amber">临界预警</span>`;
+              barColor = 'var(--amber)';
+            }
+
+            const fillPct = Math.min(100, Math.max(0, (1 - (dist / d.threshold_3d_pct)) * 100));
+
+            rows += `
+              <tr>
+                <td>
+                  <span style="font-weight: 600;">${d.name}</span>
+                  <span class="num" style="font-size: 0.72rem; color: var(--text-muted);">(${d.code})</span>
+                </td>
+                <td>${typeBadge}</td>
+                <td class="num font-semibold" style="color: ${cum >= 0 ? 'var(--up-red)' : 'var(--down-green)'};">
+                  ${cum >= 0 ? '+' : ''}${cum.toFixed(2)}%
+                </td>
+                <td class="num" style="color: var(--text-muted);">±${d.threshold_3d_pct}%</td>
+                <td style="min-width: 110px;">
+                  <div class="num" style="display: flex; justify-content: space-between; font-size: 0.72rem;">
+                    <span>余: ${dist.toFixed(1)}%</span>
+                  </div>
+                  <div class="deviation-bar-bg">
+                    <div class="deviation-bar-fill" style="width: ${fillPct}%; background-color: ${barColor};"></div>
+                  </div>
+                </td>
+                <td>${riskBadge}</td>
+              </tr>
+            `;
+          });
+          devTbody.innerHTML = rows;
+        }
+      }
+
+      // 7. Intraday Scan Dots
+      const intraday = data.intraday || {};
+      const completed = intraday.completed_cycles || [];
+      const cycleProgressTag = document.getElementById('cycle-progress-tag');
+      if (cycleProgressTag) {
+        cycleProgressTag.innerText = `${completed.length} / 10 完成`;
+      }
+      for (let i = 1; i <= 10; i++) {
+        const dot = document.getElementById(`dot-S${i}`);
+        if (dot) {
+          if (completed.includes(`S${i}`)) {
+            dot.classList.add('done');
+          } else {
+            dot.classList.remove('done');
+          }
+        }
+      }
+
+      // 8. Event Timeline
+      const timelineEl = document.getElementById('events-timeline');
+      if (timelineEl && data.events) {
+        if (data.events.length === 0) {
+          timelineEl.innerHTML = `<div style="color: var(--text-muted); font-size: 0.8rem;">暂无近期待处理事件</div>`;
+        } else {
+          let tHtml = '';
+          data.events.forEach(ev => {
+            const atStr = ev.at ? ev.at.split('T')[1].split('.')[0] : '';
+            tHtml += `
+              <div class="timeline-item ${ev.badge}">
+                <div class="timeline-header">
+                  <span class="num">${atStr}</span>
+                  <span class="tag tag-${ev.badge === 'trade' ? 'red' : (ev.badge === 'scan' ? 'blue' : 'amber')}">${ev.badge}</span>
+                </div>
+                <div class="timeline-title">${ev.title}</div>
+                <div class="timeline-summary">${ev.summary}</div>
+              </div>
+            `;
+          });
+          timelineEl.innerHTML = tHtml;
+        }
+      }
+    }
+
+    // Live Fetch API
+    async function fetchLiveState() {
+      try {
+        const res = await fetch('/api/full');
+        if (res.ok) {
+          const data = await res.json();
+          renderDashboard(data);
+        }
+      } catch (err) {
+        console.warn('Live state poll error:', err);
+      }
+    }
+
+    // Setup SSE Stream
+    function initSSE() {
+      if (isStaticExport) {
+        const sseText = document.getElementById('sse-status-text');
+        if (sseText) sseText.innerText = '离线静态快照';
+        const sseInd = document.getElementById('sse-indicator');
+        if (sseInd) {
+          sseInd.style.backgroundColor = '#9ca3af';
+          sseInd.style.animation = 'none';
+        }
+        return;
+      }
+
+      if (!window.EventSource) return;
+
+      const source = new EventSource('/api/events/stream');
+      source.addEventListener('state', (e) => {
+        try {
+          const data = JSON.parse(e.data);
+          renderDashboard(data);
+        } catch (err) {}
+      });
+
+      source.addEventListener('new_events', (e) => {
+        fetchLiveState();
+      });
+
+      source.onopen = () => {
+        const sseText = document.getElementById('sse-status-text');
+        if (sseText) sseText.innerText = '实时推流中';
+      };
+
+      source.onerror = () => {
+        const sseText = document.getElementById('sse-status-text');
+        if (sseText) sseText.innerText = '连接中断(重连中)';
+      };
+    }
+
+    // Initial render
+    if (currentPanelState) {
+      renderDashboard(currentPanelState);
+    } else {
+      fetchLiveState();
+    }
+    initSSE();
+  </script>
+</body>
+</html>
