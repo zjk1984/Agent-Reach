@@ -56,14 +56,24 @@ def analyze_sectors(
         strongest = sorted_groups[0][0] if sorted_groups else "无"
         reasoning = f"题材分散：最强 {strongest} 仅 {top} 家涨停"
 
-    main_sectors = []
-    # Rank with TSP quant score if available
+    # Rank with TSP quant score if available, feeding pre-grouped groups to avoid redundant work
+    tsp_ranked_map: dict[str, float] = {}
     try:
         from agent_reach.daily_run.tsp.mainline_ranker import rank_tsp_mainlines
-        tsp_ranked = {r["sector"]: r["score"] for r in rank_tsp_mainlines(limit_up_stocks, limit=10)}
+        tsp_ranked_list = rank_tsp_mainlines(groups, limit=10)
+        tsp_ranked_map = {r["sector"]: float(r["score"]) for r in tsp_ranked_list}
     except Exception:
-        tsp_ranked = {}
+        tsp_ranked_list = []
 
+    # If TSP ranking is available, sort groups primarily by TSP score then limit-up count
+    if tsp_ranked_map:
+        sorted_groups = sorted(
+            groups.items(),
+            key=lambda x: (tsp_ranked_map.get(x[0], 0.0), len(x[1])),
+            reverse=True,
+        )
+
+    main_sectors = []
     for name, stocks in sorted_groups[:5]:
         item = {
             "name": name,
@@ -77,14 +87,18 @@ def analyze_sectors(
                 for s in stocks[:5]
             ],
         }
-        if name in tsp_ranked:
-            item["score"] = tsp_ranked[name]
+        if name in tsp_ranked_map:
+            item["score"] = tsp_ranked_map[name]
         main_sectors.append(item)
 
     ladder_map: dict[int, list[dict[str, Any]]] = {}
     for stock in limit_up_stocks:
         pct = float(stock.get("change_pct") or 0)
-        board = min(int(round(pct / 10)) if pct > 20 else 1, 10)
+        board = stock.get("consecutive_limit_ups")
+        if board is None:
+            board = min(int(round(pct / 10)) if pct > 20 else 1, 10)
+        else:
+            board = max(1, int(board))
         ladder_map.setdefault(board, []).append(stock)
 
     ladder = [

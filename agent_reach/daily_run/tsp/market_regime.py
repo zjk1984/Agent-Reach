@@ -93,8 +93,10 @@ def classify_tsp_market_phase(
     ):
         return "retreat"
 
-    # 3. Freezing: Market is extremely quiet or deeply depressed
+    # 3. Freezing: Market is extremely quiet or deeply depressed (or 0 limit up)
     if limit_up_count <= 18 and highest_board <= 3:
+        return "freezing"
+    if limit_up_count == 0:
         return "freezing"
 
     # 4. Repair: Following a retreat/freezing, broken rate drops and floor stabilizes

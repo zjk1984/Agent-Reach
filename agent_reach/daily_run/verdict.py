@@ -334,6 +334,7 @@ def _check_tsp_deviation_filter(
         return False, []
     try:
         from agent_reach.daily_run.tsp.deviation_monitor import compute_exchange_deviation_risk
+        # Ensure snapshot or nested quote/reference_price has candidate data
         risk = compute_exchange_deviation_risk(
             snapshot,
             warning_ratio=float(tsp_cfg.get("deviation_warning_ratio", 0.85)),

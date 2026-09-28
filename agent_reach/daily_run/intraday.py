@@ -199,6 +199,7 @@ TRADE_BLOCK_MESSAGES: dict[str, str] = {
     "buy_kronos": "⚠️ **风控阻断：** Kronos 看空信号，不允许买入",
     "buy_cash": "⚠️ **风控阻断：** 现金比例不足，不允许加仓",
     "buy_budget": "⚠️ **风控阻断：** 可部署买入预算不足一手，维持观望",
+    "tsp_deviation": "⚠️ **风控阻断：** 3日涨跌幅接近交易所异动偏离监管红线，禁止追高买入",
     "buy_deep_loss": "⚠️ **风控阻断：** 深度套牢标的需连续 3 次买入建议才允许加仓",
     "sell_deep_loss": "⚠️ **风控阻断：** 深度套牢且组合覆盖不足，暂不允许卖出",
     "sell_defensive_trim": (
@@ -1743,17 +1744,27 @@ def _decide_trade(
                 "buy",
             )
         if buy_block:
+            is_tsp = "TSP" in buy_block or "偏离" in buy_block
+            is_week_open = "周日" in buy_block
+            if is_tsp:
+                reasoning = f"{buy_block}{overlay_note}"
+                kind = "tsp_deviation"
+            elif is_week_open:
+                reasoning = f"{buy_block}{overlay_note}"
+                kind = "week_open_plan"
+            else:
+                reasoning = f"已证伪策略阻断买入：{buy_block}{overlay_note}"
+                kind = "buy_rejected"
+
             return TradeDecision(
                 action="hold",
                 trade_id=trade_id,
                 lookback_mss=lookback_mss,
                 lookback_detail=[],
                 trend=trend,
-                reasoning=f"已证伪策略阻断买入：{buy_block}{overlay_note}"
-                if "周日" not in buy_block
-                else f"{buy_block}{overlay_note}",
+                reasoning=reasoning,
                 blocked=True,
-                block_kind="buy_rejected" if "周日" not in buy_block else "week_open_plan",
+                block_kind=kind,
                 friction_blocked=friction_blocked,
                 expected_return_pct=exp_ret,
             )

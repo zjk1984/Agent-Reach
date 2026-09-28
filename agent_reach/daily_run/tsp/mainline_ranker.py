@@ -51,21 +51,27 @@ def score_mainline_sector(
 
 
 def rank_tsp_mainlines(
-    limit_up_stocks: list[dict[str, Any]],
+    limit_up_stocks_or_groups: Any,
     *,
     min_limit_ups: int = 2,
     limit: int = 5,
 ) -> list[dict[str, Any]]:
-    """Group limit-up stocks by sector/industry and rank by mainline strength score."""
-    if not limit_up_stocks:
+    """Group limit-up stocks or use pre-grouped sectors and rank by mainline strength score."""
+    if not limit_up_stocks_or_groups:
         return []
 
-    groups: dict[str, list[dict[str, Any]]] = {}
-    for s in limit_up_stocks:
-        sec = str(s.get("industry") or s.get("sector") or "其他").strip() or "其他"
-        if sec == "其他":
-            continue
-        groups.setdefault(sec, []).append(s)
+    if isinstance(limit_up_stocks_or_groups, dict):
+        groups = {
+            k: list(v) for k, v in limit_up_stocks_or_groups.items()
+            if str(k).strip() and str(k).strip() != "其他"
+        }
+    else:
+        groups = {}
+        for s in limit_up_stocks_or_groups:
+            sec = str(s.get("industry") or s.get("sector") or "其他").strip() or "其他"
+            if sec == "其他":
+                continue
+            groups.setdefault(sec, []).append(s)
 
     if not groups:
         return []

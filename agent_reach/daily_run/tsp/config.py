@@ -8,6 +8,12 @@ from typing import Any, Optional
 
 def tsp_quant_cfg(settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     """Resolve TSP quant configuration with safe fail-open defaults."""
+    if settings is None:
+        try:
+            from agent_reach.daily_run.settings import load_settings
+            settings = load_settings()
+        except Exception:
+            settings = {}
     raw = dict((settings or {}).get("tsp_quant") or {})
     return {
         "enabled": raw.get("enabled", True) is not False,
