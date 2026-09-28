@@ -187,8 +187,16 @@ def test_panel_config():
     url = panel_url()
     assert "reports/" in url
     assert "index" in url
-    assert "htmlpreview.github.io" in url
+    assert "cdn.jsdelivr.net" in url
     assert panel_card_link_enabled() is True
+
+    from agent_reach.daily_run.panel.config import build_public_report_url
+
+    jsdelivr = build_public_report_url(
+        "reports/index.html",
+        settings={"panel": {"url_mode": "jsdelivr", "github_repo": "zjk1984/Agent-Reach", "branch": "main"}},
+    )
+    assert jsdelivr.startswith("https://cdn.jsdelivr.net/gh/zjk1984/Agent-Reach@main/reports/index.html")
 
     # Custom override
     custom_cfg = {"panel": {"url": "https://quant.example.com", "card_link_enabled": False}}
@@ -357,10 +365,13 @@ def test_find_latest_report_file_resolution(tmp_path):
     assert latest is not None
     assert latest.name == "index_20260928_150000.html"
 
-    # 4. Check panel_url resolution with custom reports_dir
-    url = panel_url(reports_dir=rep_dir)
+    # 4. Check panel_url resolution with custom reports_dir (local fallback when remote unknown)
+    from unittest.mock import patch
+
+    with patch("agent_reach.daily_run.panel.config.find_latest_remote_report_file", return_value=None):
+        url = panel_url(reports_dir=rep_dir)
     assert "index_20260928_150000.html" in url
-    assert "htmlpreview.github.io" in url
+    assert "cdn.jsdelivr.net" in url
 
 
 def test_prepend_panel_card_header():
@@ -476,6 +487,9 @@ def test_publish_panel_report_archives_and_generates(isolated_panel_env, tmp_pat
     assert report_file_1.suffix == ".html"
     first_content = report_file_1.read_text(encoding="utf-8")
     assert "__INITIAL_PANEL_DATA__" in first_content
+    stable_alias = rep_dir / "index.html"
+    assert stable_alias.exists()
+    assert stable_alias.read_text(encoding="utf-8") == first_content
 
     # Second run: archives first index_<ts>.html into reports/backup/, generates fresh index_<ts>.html
     res2 = publish_panel_report(
@@ -487,12 +501,12 @@ def test_publish_panel_report_archives_and_generates(isolated_panel_env, tmp_pat
         job="close",
     )
     assert res2["success"] is True
-    assert res2["archived_count"] == 1
-    assert len(res2["archived"]) == 1
-    archived_file = Path(res2["archived"][0])
+    assert res2["archived_count"] >= 1
+    archived_names = {Path(p).name for p in res2["archived"]}
+    assert report_file_1.name in archived_names
+    archived_file = Path(next(p for p in res2["archived"] if Path(p).name == report_file_1.name))
     assert archived_file.exists()
     assert archived_file.parent == bak_dir
-    assert archived_file.name == report_file_1.name
 
     report_file_2 = Path(res2["report_path"])
     assert report_file_2.exists()

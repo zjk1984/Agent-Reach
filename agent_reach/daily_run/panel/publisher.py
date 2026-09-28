@@ -149,6 +149,14 @@ def publish_panel_report(
 
     generated = export_panel_html(output_path=target_html, db_path=db_path, data_root=data_root)
 
+    # Stable alias for Feishu / mobile links (short CDN URL: reports/index.html)
+    stable_alias = rep_dir / "index.html"
+    try:
+        shutil.copy2(generated, stable_alias)
+        logger.info("Updated stable panel alias: {}", stable_alias.name)
+    except Exception as exc:
+        logger.warning("Failed to write stable panel alias index.html: {}", exc)
+
     # Ensure .gitkeep exists in backup directory if empty
     gitkeep = bak_dir / ".gitkeep"
     if not any(bak_dir.iterdir()):
