@@ -503,7 +503,9 @@ def run_intraday_for_symbols(
             title = f"📊 盘中 {scan_id} · {len(scan_bodies)}只"
         tpl = cfg.get("report", {}).get("feishu_template_intraday", "blue")
         from agent_reach.integrations.feishu import send_card
+        from agent_reach.daily_run.panel.config import prepend_panel_card_header
 
+        body = prepend_panel_card_header(body, settings=cfg)
         feishu_result = send_card(config or Config(), title, body, template=tpl)
         from agent_reach.daily_run.macro_collector import fetch_intraday_xueqiu_cross_alerts
         from agent_reach.daily_run.report_narrative import push_intraday_narrative_card
@@ -620,6 +622,9 @@ def run_midday_for_symbols(
         from agent_reach.daily_run.berkshire.news_pulse import append_news_pulse_markdown
 
         body = append_news_pulse_markdown(body, pf, settings=cfg, workflow="midday")
+        from agent_reach.daily_run.panel.config import prepend_panel_card_header
+
+        body = prepend_panel_card_header(body, settings=cfg)
         title = f"☀️ 午盘分析 · {scan_id or '—'} · {len(body_rows)}只"
         tpl = cfg.get("report", {}).get("feishu_template_midday", "blue")
         feishu_result = send_card(config or Config(), title, body, template=tpl)

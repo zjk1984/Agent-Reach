@@ -332,7 +332,7 @@
     "enabled": true,
     "host": "127.0.0.1",
     "port": 8788,
-    "url": "http://127.0.0.1:8788",
+    "url": "auto",
     "card_link_enabled": true
   },
 

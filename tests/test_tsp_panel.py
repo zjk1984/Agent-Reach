@@ -184,7 +184,10 @@ def test_panel_config():
     assert cfg["enabled"] is True
     assert cfg["port"] == 8788
     assert "url" in cfg
-    assert panel_url() == "http://127.0.0.1:8788"
+    url = panel_url()
+    assert "reports/" in url
+    assert "index" in url
+    assert "htmlpreview.github.io" in url
     assert panel_card_link_enabled() is True
 
     # Custom override
@@ -301,18 +304,78 @@ def test_panel_export_html(isolated_panel_env, tmp_path):
 
 
 def test_feishu_card_link_in_intraday():
-    """Verify that format_tsp_intraday_card_markdown embeds panel link when enabled."""
+    """Verify that format_tsp_intraday_card_markdown embeds panel link at the very top."""
     card_lines = format_tsp_intraday_card_markdown(
         "688008",
         symbol_data={"code": "688008", "name": "澜起科技", "industry": "半导体"},
         settings={
             "tsp_quant": {"enabled": True, "intraday": {"card_display_enabled": True}},
-            "panel": {"enabled": True, "card_link_enabled": True, "url": "http://127.0.0.1:8788"},
+            "panel": {"enabled": True, "card_link_enabled": True, "url": "auto"},
         },
     )
+    assert len(card_lines) > 0
+    assert card_lines[0].startswith("🖥️ 实时大屏：")
+    assert "reports/" in card_lines[0]
+    assert "index" in card_lines[0]
     text = "\n".join(card_lines)
-    assert "🖥️ 实时大屏" in text
-    assert "http://127.0.0.1:8788" in text
+    assert "TSP 量化哨兵" in text
+
+
+def test_find_latest_report_file_resolution(tmp_path):
+    """Verify find_latest_report_file discovers newest file by timestamp or falls back to backup."""
+    from agent_reach.daily_run.panel.config import find_latest_report_file, panel_url
+
+    rep_dir = tmp_path / "reports"
+    rep_dir.mkdir(parents=True)
+    bak_dir = rep_dir / "backup"
+    bak_dir.mkdir(parents=True)
+
+    # 1. Empty reports dir -> None
+    assert find_latest_report_file(reports_dir=rep_dir) is None
+
+    # 2. Only backup dir has files
+    bak_file = bak_dir / "index_20260928_100000.html"
+    bak_file.write_text("<html>backup</html>", encoding="utf-8")
+    found_bak = find_latest_report_file(reports_dir=rep_dir)
+    assert found_bak is not None
+    assert found_bak.name == "index_20260928_100000.html"
+
+    # 3. reports dir has newer files
+    f1 = rep_dir / "index_20260928_140000.html"
+    f1.write_text("<html>14:00</html>", encoding="utf-8")
+    f2 = rep_dir / "index_20260928_150000.html"
+    f2.write_text("<html>15:00</html>", encoding="utf-8")
+
+    latest = find_latest_report_file(reports_dir=rep_dir)
+    assert latest is not None
+    assert latest.name == "index_20260928_150000.html"
+
+    # 4. Check panel_url resolution with custom reports_dir
+    url = panel_url(reports_dir=rep_dir)
+    assert "index_20260928_150000.html" in url
+    assert "htmlpreview.github.io" in url
+
+
+def test_prepend_panel_card_header():
+    """Verify prepending header at line 0 and deduplicating old panel links."""
+    from agent_reach.daily_run.panel.config import prepend_panel_card_header
+
+    settings = {"panel": {"enabled": True, "card_link_enabled": True}}
+
+    # Standard markdown without header
+    raw_md = "## 标题\n内容正文"
+    prepended = prepend_panel_card_header(raw_md, settings=settings)
+    lines = prepended.split("\n")
+    assert lines[0].startswith("🖥️ 实时大屏：")
+    assert "## 标题" in prepended
+
+    # Legacy markdown with panel link at bottom
+    legacy_md = "## 标题\n内容正文\n- 🖥️ 实时大屏：[http://127.0.0.1:8788](http://127.0.0.1:8788)\n- 其它条目"
+    cleaned = prepend_panel_card_header(legacy_md, settings=settings)
+    assert cleaned.count("实时大屏") == 1
+    assert cleaned.split("\n")[0].startswith("🖥️ 实时大屏：")
+    assert "http://127.0.0.1:8788" not in cleaned
+    assert "- 其它条目" in cleaned
 
 
 def test_panel_cli(isolated_panel_env, capsys, tmp_path):

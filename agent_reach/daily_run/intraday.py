@@ -1137,7 +1137,10 @@ def run_intraday(
             if trace_md and trace_md not in (trade_result.get("markdown") or ""):
                 md_parts.append("\n---\n\n" + trace_md)
         try:
-            feishu_result = send_card(cfg_obj, card_title, "\n".join(md_parts), template=tpl)
+            from agent_reach.daily_run.panel.config import prepend_panel_card_header
+
+            full_card_md = prepend_panel_card_header("\n".join(md_parts), settings=cfg)
+            feishu_result = send_card(cfg_obj, card_title, full_card_md, template=tpl)
             steps.append("push")
             from agent_reach.daily_run.report_narrative import push_intraday_narrative_card
 
@@ -1253,13 +1256,20 @@ def render_intraday_scan_markdown(
                 str(report.get("code") or (enriched or {}).get("code") or scan.get("code") or ""),
                 symbol_data=enriched if isinstance(enriched, dict) else report,
                 settings=settings,
+                include_panel_header=False,
             )
             if tsp_lines:
                 lines.extend([""] + tsp_lines)
         except Exception:
             pass
 
-    return "\n".join(lines)
+    raw_markdown = "\n".join(lines)
+    try:
+        from agent_reach.daily_run.panel.config import prepend_panel_card_header
+
+        return prepend_panel_card_header(raw_markdown, settings=settings)
+    except Exception:
+        return raw_markdown
 
 
 def infer_trade_block_kind(decision: TradeDecision | dict[str, Any]) -> Optional[str]:

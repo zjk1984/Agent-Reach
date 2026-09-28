@@ -1636,11 +1636,13 @@ def _push_markdown(
 ) -> dict[str, Any]:
     from agent_reach.config import Config
     from agent_reach.integrations.feishu import send_card
+    from agent_reach.daily_run.panel.config import prepend_panel_card_header
 
     cfg_obj = config or Config()
     templates = settings.get("report", {})
     tpl = template or templates.get(f"feishu_template_{report_type}", "blue")
-    return send_card(cfg_obj, title, markdown, template=tpl)
+    card_md = prepend_panel_card_header(markdown, settings=settings)
+    return send_card(cfg_obj, title, card_md, template=tpl)
 
 
 def scheduled_start_notify_enabled(settings: dict[str, Any]) -> bool:
@@ -1750,6 +1752,12 @@ def send_scheduled_job_start_notification(
         f"正在执行：{pipeline}\n\n"
         f"预计完成时间：**{duration}**"
     )
+    try:
+        from agent_reach.daily_run.panel.config import prepend_panel_card_header
+
+        body = prepend_panel_card_header(body, settings=settings)
+    except Exception:
+        pass
     send_card(cfg, title, body, template=tpl)
 
 
