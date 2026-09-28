@@ -13,8 +13,10 @@ from __future__ import annotations
 
 from agent_reach.daily_run.panel.reader import PanelDataReader
 from agent_reach.daily_run.panel.export import export_panel_html
+from agent_reach.daily_run.panel.publisher import publish_panel_report
 
 __all__ = [
     "PanelDataReader",
     "export_panel_html",
+    "publish_panel_report",
 ]

@@ -358,3 +358,62 @@ def test_panel_cli(isolated_panel_env, capsys, tmp_path):
     assert "离线 HTML 报告已生成" in captured.out
     assert export_path.exists()
 
+    # 4. Test publish via CLI (no-push)
+    rep_dir = tmp_path / "cli_reports"
+    args_publish = Namespace(
+        panel_action="publish",
+        reports_dir=str(rep_dir),
+        backup_dir=str(rep_dir / "backup"),
+        no_push=True,
+        job="morning",
+        db=str(env["db_path"]),
+    )
+    cmd_panel(args_publish)
+    captured = capsys.readouterr()
+    assert "态势大屏报告已生成并发布" in captured.out
+    assert (rep_dir / "index.html").exists()
+
+
+def test_publish_panel_report_archives_and_generates(isolated_panel_env, tmp_path):
+    """Verify publish_panel_report generates index.html and archives existing reports into backup/."""
+    from agent_reach.daily_run.panel.publisher import publish_panel_report
+
+    env = isolated_panel_env
+    rep_dir = tmp_path / "reports"
+    bak_dir = rep_dir / "backup"
+
+    # First run: generates reports/index.html with no previous archive
+    res1 = publish_panel_report(
+        reports_dir=rep_dir,
+        backup_dir=bak_dir,
+        db_path=env["db_path"],
+        data_root=env["data_root"],
+        push_git=False,
+        job="intraday",
+    )
+    assert res1["success"] is True
+    assert res1["archived_count"] == 0
+    assert (rep_dir / "index.html").exists()
+    first_content = (rep_dir / "index.html").read_text(encoding="utf-8")
+    assert "__INITIAL_PANEL_DATA__" in first_content
+
+    # Second run: archives first index.html into reports/backup/, generates fresh index.html
+    res2 = publish_panel_report(
+        reports_dir=rep_dir,
+        backup_dir=bak_dir,
+        db_path=env["db_path"],
+        data_root=env["data_root"],
+        push_git=False,
+        job="close",
+    )
+    assert res2["success"] is True
+    assert res2["archived_count"] == 1
+    assert len(res2["archived"]) == 1
+    archived_file = Path(res2["archived"][0])
+    assert archived_file.exists()
+    assert archived_file.parent == bak_dir
+    assert archived_file.name.startswith("index_")
+    assert archived_file.suffix == ".html"
+    assert (rep_dir / "index.html").exists()
+
+

@@ -76,4 +76,13 @@ set -e
 {
   echo "=== exit=${ec} ==="
 } >>"$LOG_FILE"
+
+# 每次 cron 任务执行结束后，生成静态 HTML 上传到 github 的 reports 目录下，上一次的报告归档到 reports/backup 里
+{
+  echo "=== $(date -Iseconds) publishing static report to reports/ ==="
+  "$PYTHON" -m agent_reach.cli daily-run panel publish --job "$JOB" 2>&1 || {
+    echo "⚠️ publish static report failed (see log above)"
+  }
+} >>"$LOG_FILE"
+
 exit "$ec"
