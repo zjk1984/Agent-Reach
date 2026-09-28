@@ -187,11 +187,17 @@ def test_panel_config():
     url = panel_url()
     assert "reports/" in url
     assert "index" in url
-    assert "cdn.jsdelivr.net" in url
+    assert "github.io" in url
+    assert "reports/index.html" in url
     assert panel_card_link_enabled() is True
 
     from agent_reach.daily_run.panel.config import build_public_report_url
 
+    pages = build_public_report_url(
+        "reports/index.html",
+        settings={"panel": {"url_mode": "pages", "github_repo": "zjk1984/Agent-Reach", "branch": "main"}},
+    )
+    assert pages == "https://zjk1984.github.io/Agent-Reach/reports/index.html"
     jsdelivr = build_public_report_url(
         "reports/index.html",
         settings={"panel": {"url_mode": "jsdelivr", "github_repo": "zjk1984/Agent-Reach", "branch": "main"}},
@@ -368,10 +374,11 @@ def test_find_latest_report_file_resolution(tmp_path):
     # 4. Check panel_url resolution with custom reports_dir (local fallback when remote unknown)
     from unittest.mock import patch
 
-    with patch("agent_reach.daily_run.panel.config.find_latest_remote_report_file", return_value=None):
-        url = panel_url(reports_dir=rep_dir)
-    assert "index_20260928_150000.html" in url
-    assert "cdn.jsdelivr.net" in url
+    url = panel_url(
+        reports_dir=rep_dir,
+        settings={"panel": {"url_mode": "pages", "github_repo": "zjk1984/Agent-Reach"}},
+    )
+    assert url == "https://zjk1984.github.io/Agent-Reach/reports/index.html"
 
 
 def test_prepend_panel_card_header():
