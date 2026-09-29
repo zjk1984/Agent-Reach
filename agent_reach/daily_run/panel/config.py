@@ -22,15 +22,17 @@ _DEFAULT_PANEL_CFG: dict[str, Any] = {
     "host": "127.0.0.1",
     "port": 8788,
     "url": "auto",
-    # jsdelivr: mobile-friendly CDN, works in Feishu in-app browser (CN-friendly).
-    # Alternatives: raw, pages, htmlpreview (legacy proxy — often blocked).
-    "url_mode": "jsdelivr",
+    # pages: GitHub Pages serves HTML with text/html (browser + Feishu in-app OK).
+    # jsdelivr/raw return text/plain — browsers show source, not the dashboard.
+    "url_mode": "pages",
     "branch": "main",
     "card_link_enabled": True,
     "provenance_in_cards": True,
     "publish_before_card": False,
     "fetch_remote_before_url": False,
     "stable_url_filename": "index.html",
+    "panel_public_path": "reports/index.html",
+    "github_pages_base": "",
 }
 
 
@@ -205,6 +207,19 @@ def list_recent_report_snapshots(
     return items
 
 
+def github_pages_base_url(
+    settings: Optional[dict[str, Any]] = None,
+    repo_root: Optional[Path | str] = None,
+) -> str:
+    """Return GitHub Pages site base URL for this repository."""
+    cfg = panel_cfg(settings)
+    custom = str(cfg.get("github_pages_base") or "").strip()
+    if custom:
+        return custom.rstrip("/")
+    owner, repo = detect_github_repo(settings, repo_root=repo_root)
+    return f"https://{owner}.github.io/{repo}"
+
+
 def build_public_report_url(
     relative_path: str,
     *,
@@ -216,17 +231,16 @@ def build_public_report_url(
     owner, repo = detect_github_repo(settings, repo_root=repo_root)
     branch = str(cfg.get("branch") or "main")
     rel = relative_path.lstrip("/")
-    mode = str(cfg.get("url_mode") or "jsdelivr").lower()
+    mode = str(cfg.get("url_mode") or "pages").lower()
 
     if mode in ("pages", "github_pages") or cfg.get("github_pages_base"):
-        base = cfg.get("github_pages_base") or f"https://{owner}.github.io/{repo}"
-        return f"{base.rstrip('/')}/{rel}"
+        return f"{github_pages_base_url(settings, repo_root=repo_root)}/{rel}"
     if mode in ("raw", "rawgithub"):
         return f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{rel}"
     if mode in ("htmlpreview", "preview"):
         gh_blob = f"https://github.com/{owner}/{repo}/blob/{branch}/{rel}"
         return f"https://htmlpreview.github.io/?{gh_blob}"
-    # jsdelivr (default)
+    # jsdelivr — note: serves HTML as text/plain; not suitable for in-browser viewing
     return f"https://cdn.jsdelivr.net/gh/{owner}/{repo}@{branch}/{rel}"
 
 
@@ -386,11 +400,7 @@ def panel_url(
     reports_dir: Optional[Path | str] = None,
     repo_root: Optional[Path | str] = None,
 ) -> str:
-    """Return the browser-viewable dashboard URL.
-
-    Resolves to the latest static report in reports/ via htmlpreview.github.io
-    (or GitHub Pages) unless explicitly overridden.
-    """
+    """Return a browser-viewable dashboard URL (GitHub Pages by default)."""
     url = os.environ.get("AGENT_REACH_PANEL_URL", "").strip()
     if url:
         return url
@@ -405,6 +415,11 @@ def panel_url(
         "127.0.0.1:8788",
     ):
         return custom_url
+
+    mode = str(cfg.get("url_mode") or "pages").lower()
+    if mode in ("pages", "github_pages") or cfg.get("github_pages_base"):
+        public_path = str(cfg.get("panel_public_path") or "reports/index.html").lstrip("/")
+        return f"{github_pages_base_url(settings, repo_root=repo_root)}/{public_path}"
 
     filename = resolve_panel_report_filename(
         reports_dir=reports_dir,
