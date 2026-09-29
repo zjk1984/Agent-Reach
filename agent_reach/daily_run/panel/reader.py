@@ -64,6 +64,30 @@ class PanelDataReader:
             except Exception:
                 yield None
 
+    def _holding_row_from_dict(self, h: dict[str, Any]) -> Optional[dict[str, Any]]:
+        shares = int(h.get("shares") or 0)
+        if shares <= 0:
+            return None
+        price = float(h.get("price") or h.get("cost") or 0.0)
+        cost = float(h.get("cost") or 0.0)
+        market_val = round(shares * price, 2)
+        cost_val = round(shares * cost, 2)
+        pnl = round(market_val - cost_val, 2)
+        pnl_pct = round((pnl / cost_val * 100.0) if cost_val > 0 else 0.0, 2)
+        return {
+            "code": str(h.get("code") or ""),
+            "name": str(h.get("name") or h.get("code") or ""),
+            "shares": shares,
+            "cost": cost,
+            "price": price,
+            "market_value": market_val,
+            "unrealized_pnl": pnl,
+            "unrealized_pnl_pct": pnl_pct,
+            "change_pct": float(h.get("change_pct") or 0.0),
+            "ma20": float(h.get("ma20") or 0.0),
+            "days_held": int(h.get("days_held") or 0),
+        }
+
     def get_portfolio_status(self) -> dict[str, Any]:
         """Extract latest portfolio snapshot and holdings."""
         cash = 0.0
@@ -71,7 +95,28 @@ class PanelDataReader:
         as_of = ""
         holdings: list[dict[str, Any]] = []
 
-        # 1. Try SQLite first
+        portfolio_path = self.data_root / "portfolio.json"
+        portfolio_data: dict[str, Any] = {}
+        if portfolio_path.exists():
+            try:
+                with open(portfolio_path, "r", encoding="utf-8") as fp:
+                    loaded = json.load(fp)
+                if isinstance(loaded, dict):
+                    portfolio_data = loaded
+                    cash = float(loaded.get("cash") or 0.0)
+                    total = float(loaded.get("total") or 0.0)
+                    as_of = str(loaded.get("trade_session_date") or "")
+                    for h in loaded.get("holdings") or []:
+                        if isinstance(h, dict):
+                            row = self._holding_row_from_dict(h)
+                            if row:
+                                holdings.append(row)
+            except Exception:
+                portfolio_data = {}
+
+        live_codes = {str(h.get("code") or "") for h in holdings if h.get("code")}
+
+        # SQLite: snapshot timestamps + quote enrichment for authoritative holdings
         with self._ro_conn() as conn:
             if conn:
                 try:
@@ -79,84 +124,67 @@ class PanelDataReader:
                         "SELECT at, cash, total, payload_json FROM portfolio_snapshots ORDER BY id DESC LIMIT 1"
                     ).fetchone()
                     if snap:
-                        cash = float(snap["cash"] or 0.0)
-                        total = float(snap["total"] or 0.0)
-                        as_of = str(snap["at"] or "")
+                        if not portfolio_data:
+                            cash = float(snap["cash"] or 0.0)
+                            total = float(snap["total"] or 0.0)
+                        as_of = as_of or str(snap["at"] or "")
 
-                    pos_rows = conn.execute(
-                        "SELECT code, name, shares, cost, payload_json, updated_at FROM positions WHERE shares > 0"
-                    ).fetchall()
-                    for r in pos_rows:
-                        payload = {}
-                        if r["payload_json"]:
+                    if not holdings:
+                        pos_rows = conn.execute(
+                            "SELECT code, name, shares, cost, payload_json, updated_at FROM positions WHERE shares > 0"
+                        ).fetchall()
+                        for r in pos_rows:
+                            payload = {}
+                            if r["payload_json"]:
+                                try:
+                                    payload = json.loads(r["payload_json"])
+                                except Exception:
+                                    payload = {}
+                            row = self._holding_row_from_dict(
+                                {
+                                    "code": r["code"],
+                                    "name": r["name"] or payload.get("name") or r["code"],
+                                    "shares": r["shares"],
+                                    "cost": r["cost"],
+                                    **payload,
+                                }
+                            )
+                            if row:
+                                holdings.append(row)
+                    elif live_codes:
+                        quote_by_code: dict[str, dict[str, Any]] = {}
+                        pos_rows = conn.execute(
+                            "SELECT code, payload_json FROM positions WHERE shares > 0"
+                        ).fetchall()
+                        for r in pos_rows:
+                            code = str(r["code"] or "")
+                            if code not in live_codes or not r["payload_json"]:
+                                continue
                             try:
                                 payload = json.loads(r["payload_json"])
                             except Exception:
-                                payload = {}
-                        price = float(payload.get("price") or r["cost"] or 0.0)
-                        shares = int(r["shares"] or 0)
-                        cost = float(r["cost"] or 0.0)
-                        market_val = round(shares * price, 2)
-                        cost_val = round(shares * cost, 2)
-                        pnl = round(market_val - cost_val, 2)
-                        pnl_pct = round((pnl / cost_val * 100.0) if cost_val > 0 else 0.0, 2)
-
-                        holdings.append(
-                            {
-                                "code": str(r["code"]),
-                                "name": str(r["name"] or payload.get("name") or r["code"]),
-                                "shares": shares,
-                                "cost": cost,
-                                "price": price,
-                                "market_value": market_val,
-                                "unrealized_pnl": pnl,
-                                "unrealized_pnl_pct": pnl_pct,
-                                "change_pct": float(payload.get("change_pct") or 0.0),
-                                "ma20": float(payload.get("ma20") or 0.0),
-                                "days_held": int(payload.get("days_held") or 0),
-                            }
-                        )
+                                continue
+                            if isinstance(payload, dict):
+                                quote_by_code[code] = payload
+                        for h in holdings:
+                            payload = quote_by_code.get(str(h.get("code") or ""))
+                            if not payload:
+                                continue
+                            if h.get("price") in (None, 0) and payload.get("price") is not None:
+                                h["price"] = float(payload["price"])
+                            if payload.get("change_pct") is not None:
+                                h["change_pct"] = float(payload["change_pct"])
+                            if payload.get("ma20") is not None:
+                                h["ma20"] = float(payload["ma20"])
+                            h["market_value"] = round(int(h["shares"]) * float(h["price"]), 2)
+                            cost_val = round(int(h["shares"]) * float(h["cost"]), 2)
+                            h["unrealized_pnl"] = round(h["market_value"] - cost_val, 2)
+                            h["unrealized_pnl_pct"] = round(
+                                (h["unrealized_pnl"] / cost_val * 100.0) if cost_val > 0 else 0.0,
+                                2,
+                            )
                 except Exception:
                     pass
-
-        # 2. Fall back to portfolio.json if SQLite had no positions or snapshot
-        if (total == 0.0 or not holdings) and (self.data_root / "portfolio.json").exists():
-            try:
-                with open(self.data_root / "portfolio.json", "r", encoding="utf-8") as fp:
-                    p = json.load(fp)
-                    cash = float(p.get("cash") or cash)
-                    total = float(p.get("total") or total)
-                    as_of = as_of or str(p.get("trade_session_date") or "")
-                    if not holdings:
-                        for h in p.get("holdings") or []:
-                            if not isinstance(h, dict):
-                                continue
-                            shares = int(h.get("shares") or 0)
-                            if shares <= 0:
-                                continue
-                            price = float(h.get("price") or h.get("cost") or 0.0)
-                            cost = float(h.get("cost") or 0.0)
-                            market_val = round(shares * price, 2)
-                            cost_val = round(shares * cost, 2)
-                            pnl = round(market_val - cost_val, 2)
-                            pnl_pct = round((pnl / cost_val * 100.0) if cost_val > 0 else 0.0, 2)
-                            holdings.append(
-                                {
-                                    "code": str(h.get("code") or ""),
-                                    "name": str(h.get("name") or h.get("code") or ""),
-                                    "shares": shares,
-                                    "cost": cost,
-                                    "price": price,
-                                    "market_value": market_val,
-                                    "unrealized_pnl": pnl,
-                                    "unrealized_pnl_pct": pnl_pct,
-                                    "change_pct": float(h.get("change_pct") or 0.0),
-                                    "ma20": float(h.get("ma20") or 0.0),
-                                    "days_held": int(h.get("days_held") or 0),
-                                }
-                            )
-            except Exception:
-                pass
 
         market_value = sum(h["market_value"] for h in holdings)
         if total <= 0.0:

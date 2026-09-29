@@ -152,6 +152,8 @@ def apply_portfolio_cash_reconcile(
     capital_flow: float = 0.0,
     enriched: Optional[dict[str, dict[str, Any]]] = None,
     tolerance: float = 1.0,
+    max_auto_correction: float = 5000.0,
+    morning_cash_anchor: Optional[float] = None,
 ) -> tuple[dict[str, Any], bool, Optional[str]]:
     """Align portfolio cash with morning baseline + ledger when drift exceeds tolerance."""
     recorded = float(portfolio.get("cash") or 0)
@@ -161,6 +163,24 @@ def apply_portfolio_cash_reconcile(
         capital_flow=capital_flow,
     )
     drift = round(recorded - expected, 2)
+    if morning_cash_anchor is not None and abs(float(morning_cash) - float(morning_cash_anchor)) > tolerance:
+        return (
+            portfolio,
+            False,
+            (
+                f"跳过 cash reconcile：baseline 现金 ¥{morning_cash:,.0f} 与 handoff 锚点 "
+                f"¥{float(morning_cash_anchor):,.0f} 偏差 ¥{float(morning_cash) - float(morning_cash_anchor):+,.0f}"
+            ),
+        )
+    if abs(drift) > max_auto_correction:
+        return (
+            portfolio,
+            False,
+            (
+                f"跳过 cash reconcile：ledger 推算偏差 ¥{drift:+,.0f} 超过自动修正上限 "
+                f"¥{max_auto_correction:,.0f}（疑似 stale baseline）"
+            ),
+        )
     if abs(drift) <= tolerance:
         return portfolio, False, None
     pf = dict(portfolio)

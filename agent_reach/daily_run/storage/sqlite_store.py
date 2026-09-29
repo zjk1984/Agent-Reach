@@ -251,6 +251,17 @@ class SqliteDailyRunStore:
                         event_at,
                     ),
                 )
+            live_codes = {
+                str(h.get("code") or "").strip()
+                for h in (portfolio.get("holdings") or [])
+                if isinstance(h, dict) and str(h.get("code") or "").strip()
+            }
+            if live_codes:
+                placeholders = ",".join("?" for _ in live_codes)
+                conn.execute(
+                    f"DELETE FROM positions WHERE code NOT IN ({placeholders})",
+                    tuple(sorted(live_codes)),
+                )
             return snap_id
 
     def sync_harness_state(self, state_payload: dict[str, Any], *, at: str = "") -> None:

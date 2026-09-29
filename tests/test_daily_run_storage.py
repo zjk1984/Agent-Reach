@@ -89,6 +89,39 @@ def test_sqlite_trade_and_portfolio_dual_write(storage_env):
     assert trades[0]["action"]["side"] == "buy"
 
 
+def test_upsert_portfolio_prunes_ghost_positions(storage_env):
+    settings = storage_env["settings"]
+    on_portfolio_save(
+        {
+            "cash": 50000.0,
+            "total": 150000.0,
+            "holdings": [
+                {"code": "688008", "name": "澜起科技", "shares": 100, "cost": 200.0},
+                {"code": "300308", "name": "幽灵", "shares": 100, "cost": 900.0},
+            ],
+        },
+        source="seed",
+        settings=settings,
+    )
+    on_portfolio_save(
+        {
+            "cash": 80000.0,
+            "total": 102000.0,
+            "holdings": [
+                {"code": "002583", "name": "海能达", "shares": 400, "cost": 12.6},
+            ],
+        },
+        source="repair",
+        settings=settings,
+    )
+    import sqlite3
+
+    conn = sqlite3.connect(storage_env["db_path"])
+    codes = sorted(row[0] for row in conn.execute("SELECT code FROM positions ORDER BY code"))
+    conn.close()
+    assert codes == ["002583"]
+
+
 def test_schema_v2_tables(storage_env):
     store = get_store(storage_env["settings"])
     status = store.status()
