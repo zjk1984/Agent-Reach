@@ -215,6 +215,8 @@ class PanelDataReader:
                 }
             )
 
+        from agent_reach.daily_run.eastmoney_breadth_collector import format_breadth_source_label
+
         return {
             "phase": phase,
             "phase_label": badge_info["label"],
@@ -231,6 +233,10 @@ class PanelDataReader:
             "retreat_reason": retreat_reason,
             "promotion_ladder": breadth.get("promotion_ladder") or {},
             "top_mainlines": top_mainlines,
+            "source": str(breadth.get("source") or ""),
+            "ladder_degraded": bool(breadth.get("ladder_degraded")),
+            "limit_degraded": bool(breadth.get("limit_degraded")),
+            "data_source_label": format_breadth_source_label(breadth),
             "as_of": breadth.get("as_of", datetime.now(timezone.utc).isoformat()),
         }
 

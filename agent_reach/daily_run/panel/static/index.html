@@ -586,6 +586,7 @@
         <div class="stat-label">涨跌比 / 连板高度</div>
         <div class="stat-value num" id="stat-breadth-ratio">0 : 0</div>
         <div class="stat-change" id="stat-limit-height">最高连板: 0 板</div>
+        <div class="stat-change" id="stat-breadth-source" style="font-size: 0.7rem; opacity: 0.75;">数据源: --</div>
       </div>
     </div>
 
@@ -884,7 +885,17 @@
       if (breadthRatio) breadthRatio.innerText = `${regime.up_count || 0} : ${regime.down_count || 0}`;
 
       const limitHeight = document.getElementById('stat-limit-height');
-      if (limitHeight) limitHeight.innerText = `最高连板: ${regime.max_limit_up_streak || 0} 板`;
+      if (limitHeight) {
+        const streak = regime.max_limit_up_streak || 0;
+        const ladderNote = regime.ladder_degraded ? ' (近似)' : '';
+        limitHeight.innerText = `最高连板: ${streak} 板${ladderNote}`;
+      }
+
+      const breadthSource = document.getElementById('stat-breadth-source');
+      if (breadthSource) {
+        const label = regime.data_source_label || regime.source || '--';
+        breadthSource.innerText = `数据源: ${label}`;
+      }
 
       // Stepper highlight
       const steps = document.querySelectorAll('.regime-step');
