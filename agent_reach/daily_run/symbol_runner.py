@@ -798,7 +798,9 @@ def run_close_for_symbols(
         merged_intraday_trades = collect_merged_intraday_trades(targets)
         day = today_shanghai()
         ledger_trades = _load_trade_ledger_range(day, day)
-        morning_cash = float((morning_bl.get("portfolio") or {}).get("cash") or 0)
+        morning_pf = morning_bl.get("portfolio") or {}
+        morning_cash = float(morning_pf.get("cash") or 0)
+        morning_cash_anchor = morning_cash if morning_pf.get("cash") is not None else None
         enriched = build_enriched_symbols(primary_snap)
         pf_work, cash_fixed, _cash_note = apply_portfolio_cash_reconcile(
             pf_work,
@@ -806,6 +808,7 @@ def run_close_for_symbols(
             ledger_trades=ledger_trades,
             capital_flow=net_capital_flow(day),
             enriched=enriched,
+            morning_cash_anchor=morning_cash_anchor,
         )
         if cash_fixed:
             save_portfolio(pf_work)

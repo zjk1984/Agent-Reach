@@ -46,6 +46,54 @@ def _default_baseline_path() -> Path:
     return Path.home() / ".agent-reach" / "daily_run" / "last_morning.json"
 
 
+def _baseline_session_date(data: dict[str, Any]) -> Optional[date]:
+    """Best-effort trading session date embedded in a morning baseline snapshot."""
+    for key in ("morning_date", "baseline_saved_at", "as_of"):
+        raw = data.get(key)
+        if not raw:
+            continue
+        try:
+            return date.fromisoformat(str(raw)[:10])
+        except ValueError:
+            continue
+    return None
+
+
+def _load_morning_baseline_from_holdings(*, session: Optional[date] = None) -> Optional[dict[str, Any]]:
+    """Load the newest per-symbol morning baseline for current portfolio holdings."""
+    import json
+
+    from agent_reach.daily_run.snapshot_builder import _normalize_code, load_portfolio
+    from agent_reach.daily_run.trade_calendar import today_shanghai
+
+    day = session or today_shanghai()
+    pf = load_portfolio() or {}
+    codes = [
+        _normalize_code(str(h.get("code") or ""))
+        for h in (pf.get("holdings") or [])
+        if isinstance(h, dict) and _normalize_code(str(h.get("code") or ""))
+    ]
+    best: Optional[dict[str, Any]] = None
+    best_at = ""
+    for code in codes:
+        per = morning_baseline_path(code)
+        if not per.is_file():
+            continue
+        try:
+            data = json.loads(per.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        if _baseline_session_date(data) != day:
+            continue
+        saved = str(data.get("baseline_saved_at") or data.get("as_of") or "")
+        if saved >= best_at:
+            best = data
+            best_at = saved
+    return best
+
+
 def _holdings_baseline_snapshot(holdings: list[dict[str, Any]]) -> list[dict[str, Any]]:
     from agent_reach.daily_run.snapshot_builder import _normalize_code
 
@@ -1602,6 +1650,35 @@ def load_morning_baseline(path: Optional[Path] = None, *, code: Optional[str] = 
             f"未找到 {norm} 的早盘基线：{per}，请先运行 daily-run morning --save-baseline"
         )
 
+    if path is None:
+        from agent_reach.daily_run.trade_calendar import today_shanghai
+
+        hit = _load_morning_baseline_from_holdings(session=today_shanghai())
+        if hit:
+            return hit
+        try:
+            from agent_reach.daily_run.close_morning_handoff import load_morning_handoff
+            from agent_reach.daily_run.snapshot_builder import load_portfolio
+
+            handoff = load_morning_handoff(morning_day=today_shanghai())
+            if handoff:
+                for code in [
+                    _normalize_code(str(h.get("code") or ""))
+                    for h in ((load_portfolio() or {}).get("holdings") or [])
+                    if isinstance(h, dict)
+                ]:
+                    if not code:
+                        continue
+                    per = morning_baseline_path(code)
+                    if per.is_file():
+                        data = json.loads(per.read_text(encoding="utf-8"))
+                        if isinstance(data, dict) and (data.get("portfolio") or {}).get("cash") is not None:
+                            merged = dict(data)
+                            merged["morning_handoff"] = handoff
+                            return merged
+        except Exception:
+            pass
+
     p = path or _default_baseline_path()
     if path is None:
         try:
@@ -1616,7 +1693,17 @@ def load_morning_baseline(path: Optional[Path] = None, *, code: Optional[str] = 
             pass
     if not p.exists():
         raise FileNotFoundError(f"未找到早盘基线：{p}，请先运行 daily-run morning --save-baseline")
-    return json.loads(p.read_text(encoding="utf-8"))
+    legacy = json.loads(p.read_text(encoding="utf-8"))
+    if path is None:
+        from agent_reach.daily_run.trade_calendar import today_shanghai
+
+        legacy_day = _baseline_session_date(legacy)
+        if legacy_day is not None and legacy_day != today_shanghai():
+            raise FileNotFoundError(
+                f"legacy 早盘基线日期 {legacy_day} 与今日 {today_shanghai()} 不符，"
+                f"请先运行 daily-run morning --save-baseline"
+            )
+    return legacy
 
 
 def _morning_title(report: dict[str, Any]) -> str:
