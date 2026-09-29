@@ -258,6 +258,19 @@ def _project_stock_weight_after_buy(
     return round((current_mv + buy_notional) / total * 100.0, 2)
 
 
+def _resolve_watchlist_rows(
+    portfolio: dict[str, Any],
+    snapshot: Optional[dict[str, Any]] = None,
+) -> list[dict[str, Any]]:
+    """Watchlist lives on snapshot root; portfolio sub-dict often omits it."""
+    rows = list(portfolio.get("watchlist") or [])
+    if rows:
+        return rows
+    if snapshot:
+        return list(snapshot.get("watchlist") or [])
+    return []
+
+
 def playbook_contract_buy_block(
     *,
     settings: dict[str, Any],
@@ -280,7 +293,8 @@ def playbook_contract_buy_block(
 
     is_holding = _symbol_is_holding(norm, portfolio)
     in_watchlist = any(
-        _normalize_code(str(w.get("code") or "")) == norm for w in (portfolio.get("watchlist") or [])
+        _normalize_code(str(w.get("code") or "")) == norm
+        for w in _resolve_watchlist_rows(portfolio, snapshot)
     )
 
     if session_active:

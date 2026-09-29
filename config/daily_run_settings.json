@@ -306,6 +306,7 @@
       "non_mainline_penalty_enabled": true,
       "live_breadth_enabled": true,
       "live_breadth_cache_ttl_seconds": 300,
+      "eastmoney_breadth_fallback": true,
       "intraday_retreat_broken_rate": 0.35,
       "holding_deviation_alert": true,
       "card_display_enabled": true
@@ -1002,6 +1003,7 @@
     "fetch_timeout_seconds": 15,
     "emotion_mss_fusion_enabled": true,
     "macro_fallback_enabled": true,
+    "eastmoney_breadth_fallback": true,
     "xueqiu_breadth_fallback": true,
     "akshare_limit_pool_fallback": true
   },

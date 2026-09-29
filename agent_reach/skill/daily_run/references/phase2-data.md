@@ -37,4 +37,18 @@ agent-reach daily-run backtest -i config/daily_run_history.example.json
 
 示例 history 格式：`[{ "date", "mss", "price", "return" }, ...]`
 
+### D3 盘中宽度 fallback（东财 clist）
+
+盘中 TSP / Panel / D3 连板天梯抓取顺序（与收盘 `market_review` 对齐）：
+
+1. **akshare 涨跌停池** — 权威：连板数、炸板池、精确涨跌停
+2. **东财 clist → analyze_emotion** — 宽度 + 近似涨跌停（≥9.8%），无需 cookie
+3. **akshare legu + 前日 pool 重试** — enrich 连板/炸板
+4. **雪球宽度** — 仅 up/down/flat（需 cookie）
+5. **market_review 磁盘缓存**
+
+配置：`market_review.eastmoney_breadth_fallback` · `tsp_quant.intraday.eastmoney_breadth_fallback`（默认 true）。
+
+**能力边界：** 东财 clist 无真实炸板池与连板数；`ladder_degraded` / `limit_degraded` 会在 Panel 与 D3 provenance 标注。收盘 akshare 池落盘后为权威快照。
+
 ---

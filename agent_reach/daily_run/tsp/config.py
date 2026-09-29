@@ -37,6 +37,7 @@ def tsp_quant_cfg(settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:
             "non_mainline_penalty_enabled": raw_intraday.get("non_mainline_penalty_enabled", True) is not False,
             "live_breadth_enabled": raw_intraday.get("live_breadth_enabled", True) is not False,
             "live_breadth_cache_ttl_seconds": int(raw_intraday.get("live_breadth_cache_ttl_seconds", 300)),
+            "eastmoney_breadth_fallback": raw_intraday.get("eastmoney_breadth_fallback", True) is not False,
             "intraday_retreat_broken_rate": float(raw_intraday.get("intraday_retreat_broken_rate", 0.35)),
             "holding_deviation_alert": raw_intraday.get("holding_deviation_alert", True) is not False,
             "card_display_enabled": raw_intraday.get("card_display_enabled", True) is not False,

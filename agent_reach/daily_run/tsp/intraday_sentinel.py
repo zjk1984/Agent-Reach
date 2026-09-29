@@ -32,6 +32,64 @@ def clear_intraday_sentinel_cache() -> None:
     }
 
 
+def normalize_breadth_for_panel(breadth: dict[str, Any]) -> dict[str, Any]:
+    """Align TSP breadth payload with panel/dashboard field names and units."""
+    out = dict(breadth or {})
+    ladder = out.get("promotion_ladder") or {}
+
+    broken_raw = out.get("broken_board_rate")
+    if broken_raw is None:
+        broken_raw = out.get("broken_rate")
+    broken = float(broken_raw or 0.0)
+    if broken <= 1.0:
+        out["broken_rate"] = broken
+        out["broken_board_rate"] = round(broken * 100.0, 2)
+    else:
+        out["broken_board_rate"] = round(broken, 2)
+        out["broken_rate"] = round(broken / 100.0, 4)
+
+    out["max_limit_up_streak"] = int(
+        out.get("max_limit_up_streak")
+        or out.get("highest_board")
+        or ladder.get("highest_board")
+        or 1
+    )
+    out["highest_board"] = int(out.get("highest_board") or out["max_limit_up_streak"])
+    out["description"] = str(
+        out.get("description") or out.get("summary") or out.get("phase_name") or ""
+    )
+    out["limit_up_count"] = int(out.get("limit_up_count") or out.get("limit_up") or 0)
+    out["down_limit_count"] = int(
+        out.get("down_limit_count") or out.get("limit_down_count") or out.get("limit_down") or 0
+    )
+    out["up_count"] = int(out.get("up_count") or 0)
+    out["down_count"] = int(out.get("down_count") or 0)
+    return out
+
+
+def _maybe_attach_xueqiu_breadth(result: dict[str, Any]) -> None:
+    """Fill up/down counts from Xueqiu when limit-pool sources omit market breadth."""
+    if int(result.get("up_count") or 0) + int(result.get("down_count") or 0) > 0:
+        return
+    import os
+
+    is_pytest = bool(os.environ.get("PYTEST_CURRENT_TEST"))
+    allow_live = bool(os.environ.get("AGENT_REACH_TSP_LIVE"))
+    if is_pytest and not allow_live:
+        return
+    try:
+        from agent_reach.daily_run.xueqiu_breadth_collector import fetch_xueqiu_market_breadth
+
+        breadth = fetch_xueqiu_market_breadth(timeout=12.0)
+        result["up_count"] = int(breadth.get("up_count") or 0)
+        result["down_count"] = int(breadth.get("down_count") or 0)
+        result["flat_count"] = int(breadth.get("flat_count") or 0)
+        if result.get("breadth_source") in (None, "", "none"):
+            result["breadth_source"] = str(breadth.get("source") or "xueqiu")
+    except Exception as exc:
+        logger.debug(f"[TSP Intraday] xueqiu breadth fallback skipped: {exc}")
+
+
 class TSPMainlineMatch(NamedTuple):
     """Result of matching a symbol against TSP mainline sectors."""
     is_mainline: bool
@@ -111,14 +169,21 @@ def get_live_market_breadth_and_phase(
         broken_rate = 0.0
         limit_up_stocks: list[dict[str, Any]] = []
         source = "none"
+        up_count = 0
+        down_count = 0
+        flat_count = 0
+        ladder_degraded = False
+        limit_degraded = False
+
+        import os
+
+        is_pytest = bool(os.environ.get("PYTEST_CURRENT_TEST"))
+        allow_live = bool(os.environ.get("AGENT_REACH_TSP_LIVE"))
 
         # 1. Try akshare limit pools first
         try:
             from agent_reach.daily_run.limit_pool_collector import fetch_akshare_limit_pools
-            import os
 
-            is_pytest = bool(os.environ.get("PYTEST_CURRENT_TEST"))
-            allow_live = bool(os.environ.get("AGENT_REACH_TSP_LIVE"))
             is_mocked = hasattr(fetch_akshare_limit_pools, "mock_calls") or hasattr(
                 fetch_akshare_limit_pools, "_mock_return_value"
             )
@@ -132,17 +197,92 @@ def get_live_market_breadth_and_phase(
                     broken_rate = float(pool.get("broken_rate") or 0.0)
                     limit_up_stocks = list(pool.get("limit_up_stocks") or [])
                     source = str(pool.get("source") or "akshare_pool")
+                    up_count = int(pool.get("up_count") or 0)
+                    down_count = int(pool.get("down_count") or 0)
+                    flat_count = int(pool.get("flat_count") or 0)
+                    ladder_degraded = not limit_up_stocks
+                    limit_degraded = broken_count == 0 and limit_up > 0
         except Exception as exc:
             logger.debug(f"[TSP Intraday] akshare limit pool fetch failed: {exc}")
 
-        # 2. If akshare failed or empty, fallback to today's market review if loaded
+        akshare_has_pools = (
+            limit_up > 0 or limit_down > 0 or broken_count > 0 or bool(limit_up_stocks)
+        )
+
+        # 1.5 Eastmoney clist when akshare pools are empty (width + approximate limits)
+        if not akshare_has_pools:
+            try:
+                from agent_reach.daily_run.eastmoney_breadth_collector import (
+                    eastmoney_breadth_fallback_enabled,
+                    fetch_eastmoney_breadth_pool,
+                    merge_akshare_pool_enrichment,
+                )
+
+                em_mocked = hasattr(fetch_eastmoney_breadth_pool, "mock_calls") or hasattr(
+                    fetch_eastmoney_breadth_pool, "_mock_return_value"
+                )
+                if eastmoney_breadth_fallback_enabled(settings) and (
+                    not is_pytest or allow_live or em_mocked
+                ):
+                    em_pool = fetch_eastmoney_breadth_pool(settings=settings)
+                    if em_pool:
+                        limit_up = int(em_pool.get("limit_up") or 0)
+                        limit_down = int(em_pool.get("limit_down") or 0)
+                        broken_count = int(em_pool.get("broken_count") or 0)
+                        broken_rate = float(em_pool.get("broken_rate") or 0.0)
+                        limit_up_stocks = list(em_pool.get("limit_up_stocks") or [])
+                        up_count = int(em_pool.get("up_count") or 0)
+                        down_count = int(em_pool.get("down_count") or 0)
+                        flat_count = int(em_pool.get("flat_count") or 0)
+                        source = str(em_pool.get("source") or "eastmoney_clist")
+                        ladder_degraded = bool(em_pool.get("ladder_degraded", True))
+                        limit_degraded = bool(em_pool.get("limit_degraded", True))
+
+                        try:
+                            from agent_reach.daily_run.limit_pool_collector import (
+                                fetch_akshare_limit_pools,
+                            )
+
+                            ak_mocked = hasattr(fetch_akshare_limit_pools, "mock_calls") or hasattr(
+                                fetch_akshare_limit_pools, "_mock_return_value"
+                            )
+                            if not is_pytest or allow_live or ak_mocked:
+                                enrich_pool = fetch_akshare_limit_pools(
+                                    review_date, include_stocks=True
+                                )
+                                if enrich_pool:
+                                    merged = merge_akshare_pool_enrichment(em_pool, enrich_pool)
+                                    limit_up = int(merged.get("limit_up") or limit_up)
+                                    limit_down = int(merged.get("limit_down") or limit_down)
+                                    broken_count = int(merged.get("broken_count") or broken_count)
+                                    broken_rate = float(
+                                        merged.get("broken_rate") or broken_rate
+                                    )
+                                    limit_up_stocks = list(
+                                        merged.get("limit_up_stocks") or limit_up_stocks
+                                    )
+                                    up_count = int(merged.get("up_count") or up_count)
+                                    down_count = int(merged.get("down_count") or down_count)
+                                    flat_count = int(merged.get("flat_count") or flat_count)
+                                    source = str(merged.get("source") or source)
+                                    ladder_degraded = bool(
+                                        merged.get("ladder_degraded", ladder_degraded)
+                                    )
+                                    limit_degraded = bool(
+                                        merged.get("limit_degraded", limit_degraded)
+                                    )
+                        except Exception as enrich_exc:
+                            logger.debug(
+                                f"[TSP Intraday] akshare enrich after eastmoney skipped: {enrich_exc}"
+                            )
+            except Exception as exc:
+                logger.debug(f"[TSP Intraday] eastmoney breadth fallback failed: {exc}")
+
+        # 2. If still empty, fallback to today's market review if loaded
         if not limit_up_stocks and limit_up == 0:
             try:
                 from agent_reach.daily_run.market_review import load_market_review
-                import os
 
-                is_pytest = bool(os.environ.get("PYTEST_CURRENT_TEST"))
-                allow_live = bool(os.environ.get("AGENT_REACH_TSP_LIVE"))
                 is_mr_mocked = hasattr(load_market_review, "mock_calls") or hasattr(
                     load_market_review, "_mock_return_value"
                 )
@@ -165,7 +305,14 @@ def get_live_market_breadth_and_phase(
                         limit_up_stocks = list(
                             sa.get("limit_up_stocks") or mr.get("limit_up_stocks") or []
                         )
+                        up_count = int(em.get("up_count") or up_count or 0)
+                        down_count = int(em.get("down_count") or down_count or 0)
+                        flat_count = int(em.get("flat_count") or flat_count or 0)
                         source = "market_review"
+                        ladder_degraded = not any(
+                            s.get("consecutive_limit_ups") for s in limit_up_stocks
+                        )
+                        limit_degraded = broken_count == 0 and limit_up > 0
             except Exception as exc:
                 logger.debug(f"[TSP Intraday] market_review load failed: {exc}")
 
@@ -201,25 +348,34 @@ def get_live_market_breadth_and_phase(
             settings=settings,
         )
 
-        result = {
-            "limit_up": limit_up,
-            "limit_up_count": limit_up,
-            "limit_down": limit_down,
-            "limit_down_count": limit_down,
-            "broken_count": broken_count,
-            "broken_rate": round(broken_rate, 4),
-            "highest_board": highest_board,
-            "two_board_count": two_board_count,
-            "phase": phase_info["phase"],
-            "phase_name": phase_info["phase_name"],
-            "session_regime": phase_info["session_regime"],
-            "summary": phase_info["summary"],
-            "promotion_ladder": phase_info.get("promotion_ladder") or {},
-            "top_mainlines": top_mainlines,
-            "limit_up_stocks": limit_up_stocks,
-            "source": source,
-            "cached_at": now,
-        }
+        result = normalize_breadth_for_panel(
+            {
+                "limit_up": limit_up,
+                "limit_up_count": limit_up,
+                "limit_down": limit_down,
+                "limit_down_count": limit_down,
+                "broken_count": broken_count,
+                "broken_rate": round(broken_rate, 4),
+                "highest_board": highest_board,
+                "two_board_count": two_board_count,
+                "phase": phase_info["phase"],
+                "phase_name": phase_info["phase_name"],
+                "session_regime": phase_info["session_regime"],
+                "summary": phase_info["summary"],
+                "promotion_ladder": phase_info.get("promotion_ladder") or {},
+                "top_mainlines": top_mainlines,
+                "limit_up_stocks": limit_up_stocks,
+                "up_count": up_count,
+                "down_count": down_count,
+                "flat_count": flat_count,
+                "source": source,
+                "ladder_degraded": ladder_degraded,
+                "limit_degraded": limit_degraded,
+                "cached_at": now,
+            }
+        )
+        _maybe_attach_xueqiu_breadth(result)
+        result = normalize_breadth_for_panel(result)
 
         _LIVE_BREADTH_CACHE = {
             "data": result,
@@ -229,7 +385,7 @@ def get_live_market_breadth_and_phase(
 
     except Exception as exc:
         logger.warning(f"[TSP Intraday] get_live_market_breadth_and_phase fallback due to error: {exc}")
-        return fallback_data
+        return normalize_breadth_for_panel(fallback_data)
 
 
 def _extract_symbol_candidates(code: str, symbol_data: Optional[dict[str, Any]]) -> list[str]:
