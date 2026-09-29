@@ -14,6 +14,7 @@ from agent_reach.daily_run.tsp.intraday_sentinel import (
     get_live_market_breadth_and_phase,
     is_symbol_in_top_n_mainlines,
     match_symbol_tsp_mainline,
+    normalize_breadth_for_panel,
 )
 from agent_reach.daily_run.intraday import (
     TRADE_BLOCK_MESSAGES,
@@ -43,6 +44,24 @@ def test_tsp_intraday_config():
     assert intra["live_breadth_cache_ttl_seconds"] == 300
     assert intra["intraday_retreat_broken_rate"] == 0.35
     assert intra["card_display_enabled"] is True
+
+
+def test_normalize_breadth_for_panel_aliases():
+    normalized = normalize_breadth_for_panel(
+        {
+            "limit_up": 33,
+            "limit_down": 11,
+            "broken_rate": 0.25,
+            "highest_board": 5,
+            "summary": "TSP 情绪周期：主升期",
+            "promotion_ladder": {"highest_board": 5},
+        }
+    )
+    assert normalized["limit_up_count"] == 33
+    assert normalized["down_limit_count"] == 11
+    assert normalized["broken_board_rate"] == 25.0
+    assert normalized["max_limit_up_streak"] == 5
+    assert normalized["description"] == "TSP 情绪周期：主升期"
 
 
 def test_intraday_sentinel_ttl_cache():

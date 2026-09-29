@@ -181,7 +181,9 @@ class PanelDataReader:
 
     def get_tsp_regime(self) -> dict[str, Any]:
         """Query live market breadth, 6-phase sentiment regime and mainline rankings."""
-        breadth = get_live_market_breadth_and_phase(self.settings)
+        from agent_reach.daily_run.tsp.intraday_sentinel import normalize_breadth_for_panel
+
+        breadth = normalize_breadth_for_panel(get_live_market_breadth_and_phase(self.settings))
         phase = breadth.get("phase", "unknown")
         broken_rate = float(breadth.get("broken_board_rate") or 0.0)
         down_limit = int(breadth.get("down_limit_count") or 0)
