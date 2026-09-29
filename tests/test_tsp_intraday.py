@@ -42,6 +42,7 @@ def test_tsp_intraday_config():
     assert intra["non_mainline_penalty_enabled"] is True
     assert intra["live_breadth_enabled"] is True
     assert intra["live_breadth_cache_ttl_seconds"] == 300
+    assert intra["eastmoney_breadth_fallback"] is True
     assert intra["intraday_retreat_broken_rate"] == 0.35
     assert intra["card_display_enabled"] is True
 

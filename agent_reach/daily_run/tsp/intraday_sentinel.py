@@ -172,14 +172,18 @@ def get_live_market_breadth_and_phase(
         up_count = 0
         down_count = 0
         flat_count = 0
+        ladder_degraded = False
+        limit_degraded = False
+
+        import os
+
+        is_pytest = bool(os.environ.get("PYTEST_CURRENT_TEST"))
+        allow_live = bool(os.environ.get("AGENT_REACH_TSP_LIVE"))
 
         # 1. Try akshare limit pools first
         try:
             from agent_reach.daily_run.limit_pool_collector import fetch_akshare_limit_pools
-            import os
 
-            is_pytest = bool(os.environ.get("PYTEST_CURRENT_TEST"))
-            allow_live = bool(os.environ.get("AGENT_REACH_TSP_LIVE"))
             is_mocked = hasattr(fetch_akshare_limit_pools, "mock_calls") or hasattr(
                 fetch_akshare_limit_pools, "_mock_return_value"
             )
@@ -196,17 +200,89 @@ def get_live_market_breadth_and_phase(
                     up_count = int(pool.get("up_count") or 0)
                     down_count = int(pool.get("down_count") or 0)
                     flat_count = int(pool.get("flat_count") or 0)
+                    ladder_degraded = not limit_up_stocks
+                    limit_degraded = broken_count == 0 and limit_up > 0
         except Exception as exc:
             logger.debug(f"[TSP Intraday] akshare limit pool fetch failed: {exc}")
 
-        # 2. If akshare failed or empty, fallback to today's market review if loaded
+        akshare_has_pools = (
+            limit_up > 0 or limit_down > 0 or broken_count > 0 or bool(limit_up_stocks)
+        )
+
+        # 1.5 Eastmoney clist when akshare pools are empty (width + approximate limits)
+        if not akshare_has_pools:
+            try:
+                from agent_reach.daily_run.eastmoney_breadth_collector import (
+                    eastmoney_breadth_fallback_enabled,
+                    fetch_eastmoney_breadth_pool,
+                    merge_akshare_pool_enrichment,
+                )
+
+                em_mocked = hasattr(fetch_eastmoney_breadth_pool, "mock_calls") or hasattr(
+                    fetch_eastmoney_breadth_pool, "_mock_return_value"
+                )
+                if eastmoney_breadth_fallback_enabled(settings) and (
+                    not is_pytest or allow_live or em_mocked
+                ):
+                    em_pool = fetch_eastmoney_breadth_pool(settings=settings)
+                    if em_pool:
+                        limit_up = int(em_pool.get("limit_up") or 0)
+                        limit_down = int(em_pool.get("limit_down") or 0)
+                        broken_count = int(em_pool.get("broken_count") or 0)
+                        broken_rate = float(em_pool.get("broken_rate") or 0.0)
+                        limit_up_stocks = list(em_pool.get("limit_up_stocks") or [])
+                        up_count = int(em_pool.get("up_count") or 0)
+                        down_count = int(em_pool.get("down_count") or 0)
+                        flat_count = int(em_pool.get("flat_count") or 0)
+                        source = str(em_pool.get("source") or "eastmoney_clist")
+                        ladder_degraded = bool(em_pool.get("ladder_degraded", True))
+                        limit_degraded = bool(em_pool.get("limit_degraded", True))
+
+                        try:
+                            from agent_reach.daily_run.limit_pool_collector import (
+                                fetch_akshare_limit_pools,
+                            )
+
+                            ak_mocked = hasattr(fetch_akshare_limit_pools, "mock_calls") or hasattr(
+                                fetch_akshare_limit_pools, "_mock_return_value"
+                            )
+                            if not is_pytest or allow_live or ak_mocked:
+                                enrich_pool = fetch_akshare_limit_pools(
+                                    review_date, include_stocks=True
+                                )
+                                if enrich_pool:
+                                    merged = merge_akshare_pool_enrichment(em_pool, enrich_pool)
+                                    limit_up = int(merged.get("limit_up") or limit_up)
+                                    limit_down = int(merged.get("limit_down") or limit_down)
+                                    broken_count = int(merged.get("broken_count") or broken_count)
+                                    broken_rate = float(
+                                        merged.get("broken_rate") or broken_rate
+                                    )
+                                    limit_up_stocks = list(
+                                        merged.get("limit_up_stocks") or limit_up_stocks
+                                    )
+                                    up_count = int(merged.get("up_count") or up_count)
+                                    down_count = int(merged.get("down_count") or down_count)
+                                    flat_count = int(merged.get("flat_count") or flat_count)
+                                    source = str(merged.get("source") or source)
+                                    ladder_degraded = bool(
+                                        merged.get("ladder_degraded", ladder_degraded)
+                                    )
+                                    limit_degraded = bool(
+                                        merged.get("limit_degraded", limit_degraded)
+                                    )
+                        except Exception as enrich_exc:
+                            logger.debug(
+                                f"[TSP Intraday] akshare enrich after eastmoney skipped: {enrich_exc}"
+                            )
+            except Exception as exc:
+                logger.debug(f"[TSP Intraday] eastmoney breadth fallback failed: {exc}")
+
+        # 2. If still empty, fallback to today's market review if loaded
         if not limit_up_stocks and limit_up == 0:
             try:
                 from agent_reach.daily_run.market_review import load_market_review
-                import os
 
-                is_pytest = bool(os.environ.get("PYTEST_CURRENT_TEST"))
-                allow_live = bool(os.environ.get("AGENT_REACH_TSP_LIVE"))
                 is_mr_mocked = hasattr(load_market_review, "mock_calls") or hasattr(
                     load_market_review, "_mock_return_value"
                 )
@@ -233,6 +309,10 @@ def get_live_market_breadth_and_phase(
                         down_count = int(em.get("down_count") or down_count or 0)
                         flat_count = int(em.get("flat_count") or flat_count or 0)
                         source = "market_review"
+                        ladder_degraded = not any(
+                            s.get("consecutive_limit_ups") for s in limit_up_stocks
+                        )
+                        limit_degraded = broken_count == 0 and limit_up > 0
             except Exception as exc:
                 logger.debug(f"[TSP Intraday] market_review load failed: {exc}")
 
@@ -289,6 +369,8 @@ def get_live_market_breadth_and_phase(
                 "down_count": down_count,
                 "flat_count": flat_count,
                 "source": source,
+                "ladder_degraded": ladder_degraded,
+                "limit_degraded": limit_degraded,
                 "cached_at": now,
             }
         )

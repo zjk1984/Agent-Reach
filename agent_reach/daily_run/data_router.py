@@ -274,6 +274,13 @@ class MarketDataRouter:
                 "label": "连板天梯情绪 (D3)",
                 "status": "healthy" if self._cache["d3_ladder"]["ts"] > 0 else "standby",
                 "age_seconds": round(now - self._cache["d3_ladder"]["ts"], 1) if self._cache["d3_ladder"]["ts"] > 0 else None,
+                "source": (self._cache["d3_ladder"].get("data") or {}).get("source"),
+                "ladder_degraded": (self._cache["d3_ladder"].get("data") or {}).get(
+                    "ladder_degraded"
+                ),
+                "limit_degraded": (self._cache["d3_ladder"].get("data") or {}).get(
+                    "limit_degraded"
+                ),
             },
             "d4_technicals": {
                 "label": "日K量价均线 (D4)",
