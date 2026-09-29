@@ -182,6 +182,33 @@ def test_weight_ceiling_blocks_over_target(playbook_settings, morning_handoff):
     assert block.block_kind == "playbook_weight_ceiling"
 
 
+def test_watchlist_on_snapshot_root_allows_new_buy(playbook_settings, morning_handoff):
+    """Regression: intraday snapshots keep watchlist on root, not portfolio sub-dict."""
+    portfolio = {
+        "total": 102_496.79,
+        "cash": 76_958.79,
+        "holdings": [
+            {"code": "002583", "name": "海能达", "shares": 600, "price": 8.46, "cost": 8.0},
+        ],
+    }
+    snapshot = {
+        "code": "002236",
+        "name": "大华股份",
+        "price": 15.25,
+        "watchlist": [
+            {"code": "002236", "name": "大华股份"},
+            {"code": "000100", "name": "TCL科技"},
+        ],
+    }
+    block = playbook_contract_buy_block(
+        settings=playbook_settings,
+        portfolio=portfolio,
+        snapshot=snapshot,
+        code="002236",
+    )
+    assert block is None
+
+
 def test_total_cap_blocks_when_stock_weight_high(playbook_settings):
     from agent_reach.daily_run.playbook_contract_guard import _project_stock_weight_after_buy
 
