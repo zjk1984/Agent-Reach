@@ -107,14 +107,14 @@ def test_auto_fix_cash_vs_ledger_recalcs_total(tmp_path, monkeypatch):
         "harness": {**(settings.get("harness") or {}), "enabled": False, "runtime_overlay": False},
     }
     # No ledger trades today, no capital events -> expected end cash = morning
-    # cash (50000). portfolio.json on disk claims cash=60000 (drift +10000) and
-    # a stale, already-inconsistent `total` (999999, unrelated to cash/MV) —
-    # deliberately NOT `old_total - drift`, so a naive "shift total by drift"
-    # fix (999999 - 10000 = 989999) would still be wrong; only a genuine
-    # recompute (cash + MV) lands on the correct 70000.
+    # cash (50000). portfolio.json on disk claims cash=54000 (drift +4000, within
+    # max_auto_correction) and a stale, already-inconsistent `total` (999999,
+    # unrelated to cash/MV) — deliberately NOT `old_total - drift`, so a naive
+    # "shift total by drift" fix would still be wrong; only a genuine recompute
+    # (cash + MV) lands on the correct 70000.
     portfolio = {
         "total": 999999.0,
-        "cash": 60000.0,
+        "cash": 54000.0,
         "cash_ratio": 0.5,
         "holdings": [{"code": "000725", "name": "京东方A", "shares": 1000, "cost": 4.0}],
         "watchlist": [],

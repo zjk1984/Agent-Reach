@@ -166,13 +166,14 @@ class TestClosePortfolioSummary:
         )
 
     def test_daily_pnl_reconciles_inflated_cash_with_ledger(self, monkeypatch):
-        """When portfolio cash drifts from ledger, PnL uses ledger-implied cash."""
+        """When portfolio cash drifts from ledger (within auto-fix cap), PnL uses ledger-implied cash."""
         morning = _morning_baseline()
         close = _close_snapshot()
         close = dict(close)
         close["portfolio"] = dict(close["portfolio"])
-        close["portfolio"]["cash"] = 135412.55
-        close["portfolio"]["total"] = float(close["portfolio"]["total"]) + 86839.55
+        expected_cash = 48673.0 - 20200.32
+        close["portfolio"]["cash"] = expected_cash + 3000.0
+        close["portfolio"]["total"] = float(close["portfolio"]["total"]) + 3000.0
 
         ledger = [
             {
@@ -213,7 +214,6 @@ class TestClosePortfolioSummary:
         )
 
         summary = _build_summary(close, morning)
-        expected_cash = 48673.0 - 20200.32
         assert summary.cash == pytest.approx(expected_cash, abs=0.05)
         assert summary.daily_pnl is not None
         assert summary.daily_pnl < 10000

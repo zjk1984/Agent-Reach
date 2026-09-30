@@ -27,6 +27,8 @@ def playbook_contract_cfg(settings: Optional[dict[str, Any]] = None) -> dict[str
         "watchlist_buy_codes": [
             _normalize_code(str(c)) for c in (raw.get("watchlist_buy_codes") or ["603986"]) if str(c).strip()
         ],
+        "watchlist_first_buy_enabled": raw.get("watchlist_first_buy_enabled", True) is not False,
+        "watchlist_first_buy_pct": float(raw.get("watchlist_first_buy_pct") or 3.0),
         "symbols": symbols,
         "hard_stop_prices": {
             _normalize_code(str(k)): float(v)
