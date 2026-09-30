@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from agent_reach.daily_run.defensive_trim_guards import (
+    defensive_trim_blocked_by_falling_scan_confirm,
     defensive_trim_blocked_by_near_day_low,
     defensive_trim_blocked_by_recovery_zone,
     defensive_trim_blocked_by_sector_outperform,
@@ -234,6 +235,7 @@ def test_near_day_low_allows_deep_loss_bypass():
         settings,
         code="000725",
         snapshot={
+            "change_pct": -1.0,
             "portfolio": {
                 "holdings": [
                     {
@@ -242,19 +244,85 @@ def test_near_day_low_allows_deep_loss_bypass():
                         "day_low": 5.79,
                         "cost": 8.0,
                         "shares": 900,
+                        "change_pct": -1.0,
                     }
                 ]
             },
-            "symbols": [{"code": "000725", "price": 5.80}],
+            "symbols": [{"code": "000725", "price": 5.80, "change_pct": -1.0}],
         },
     )
     assert reason is None
 
 
+def test_near_day_low_blocks_deep_loss_bypass_on_crash_day():
+    settings = {
+        "intraday": {
+            "defensive_trim": {
+                "near_day_low_tolerance_pct": 0.5,
+                "crash_day_change_pct": -5.0,
+            }
+        },
+        "harness_runtime": {
+            "deep_loss_policy": {
+                "loss_cny_threshold": 100,
+                "loss_pct_threshold": 5,
+            }
+        },
+    }
+    reason = defensive_trim_blocked_by_near_day_low(
+        settings,
+        code="002583",
+        snapshot={
+            "change_pct": -6.86,
+            "portfolio": {
+                "holdings": [
+                    {
+                        "code": "002583",
+                        "price": 7.81,
+                        "day_low": 7.80,
+                        "cost": 12.6,
+                        "shares": 600,
+                        "change_pct": -6.86,
+                    }
+                ]
+            },
+            "symbols": [{"code": "002583", "price": 7.81, "change_pct": -6.86}],
+        },
+    )
+    assert reason is not None
+    assert "日内低点" in reason
+
+
+def test_falling_scan_confirm_blocks_trim_without_streak(tmp_path, monkeypatch):
+    scans = [
+        {"scan_id": "S6", "mss_final": 48.0, "trend": "mixed"},
+        {"scan_id": "S7", "mss_final": 45.0, "trend": "falling"},
+    ]
+    _write_intraday_state(tmp_path, scans)
+    monkeypatch.setattr(
+        "agent_reach.daily_run.intraday.default_state_path",
+        lambda code=None: tmp_path / "intraday_state.json",
+    )
+    monkeypatch.setattr("agent_reach.daily_run.intraday._today_str", lambda: "2026-08-27")
+
+    reason = defensive_trim_blocked_by_falling_scan_confirm(
+        {"intraday": {"defensive_trim": {"confirm_falling_scans": 2}}},
+        code="002583",
+        trend="falling",
+    )
+    assert reason is not None
+    assert "1/2" in reason
+
+
 def test_once_per_day_blocks_second_defensive_trim():
     allow, reason = evaluate_defensive_trim_sell(
         {
-            "intraday": {"defensive_trim": {"once_per_symbol_per_day": True}},
+            "intraday": {
+                "defensive_trim": {
+                    "once_per_symbol_per_day": True,
+                    "confirm_falling_scans": 1,
+                }
+            },
             "harness_runtime": {"trend_policy": {"sell_trends": ["falling"]}},
         },
         lookback_mss=45.0,

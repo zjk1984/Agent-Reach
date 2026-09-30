@@ -1300,6 +1300,61 @@ def _apply_buy(
     return ApplyResult(applied=True, portfolio=pf, actions=[trade], message=trade.reasoning)
 
 
+def _holding_codes_with_shares(pf: dict[str, Any]) -> set[str]:
+    out: set[str] = set()
+    for row in pf.get("holdings") or []:
+        if not isinstance(row, dict):
+            continue
+        code = _normalize_code(str(row.get("code") or ""))
+        if code and int(row.get("shares") or 0) > 0:
+            out.add(code)
+    return out
+
+
+def _watchlist_codes(pf: dict[str, Any]) -> set[str]:
+    out: set[str] = set()
+    for row in pf.get("watchlist") or []:
+        if isinstance(row, dict):
+            code = _normalize_code(str(row.get("code") or ""))
+        else:
+            code = _normalize_code(str(row or ""))
+        if code:
+            out.add(code)
+    return out
+
+
+def _cap_watchlist_first_buy_shares(
+    pf: dict[str, Any],
+    *,
+    code: str,
+    shares: int,
+    price: float,
+    settings: dict[str, Any],
+) -> int:
+    """Cap first-time watchlist entries to a small % of NAV (default 3%)."""
+    from agent_reach.daily_run.playbook_contract_guard import playbook_contract_cfg
+
+    cfg = playbook_contract_cfg(settings)
+    if not cfg.get("watchlist_first_buy_enabled", True):
+        return shares
+    cap_pct = float(cfg.get("watchlist_first_buy_pct") or 0)
+    if cap_pct <= 0:
+        return shares
+    norm = _normalize_code(code)
+    if norm in _holding_codes_with_shares(pf):
+        return shares
+    if norm not in _watchlist_codes(pf):
+        return shares
+    total = float(pf.get("total") or 0)
+    if total <= 0 or price <= 0:
+        return shares
+    max_notional = total * cap_pct / 100.0
+    max_shares = _round_lot(norm, int(max_notional // price))
+    if max_shares <= 0:
+        return 0
+    return min(shares, max_shares)
+
+
 def simulate_buy_analysis(
     pf: dict[str, Any],
     enriched: dict[str, dict[str, Any]],
@@ -1446,6 +1501,22 @@ def simulate_buy_analysis(
                 "deploy_ratio": float(position.get("deploy_ratio", 1.0)),
                 "max_position_pct": float(position.get("max_position_pct", 35.0)),
             }
+
+    shares = _cap_watchlist_first_buy_shares(
+        pf,
+        code=code,
+        shares=shares,
+        price=price,
+        settings=settings,
+    )
+    if shares <= 0:
+        return {
+            "allowed": False,
+            "buy_shares": 0,
+            "block_reason": "观察池首笔小步建仓预算不足一手",
+            "deploy_ratio": float(position.get("deploy_ratio", 1.0)),
+            "max_position_pct": float(position.get("max_position_pct", 35.0)),
+        }
 
     return {
         "allowed": True,

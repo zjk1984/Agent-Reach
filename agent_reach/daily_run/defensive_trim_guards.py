@@ -23,6 +23,8 @@ _DEFENSIVE_TRIM_NEUTRAL: dict[str, Any] = {
     "block_sell_near_day_low": True,
     "near_day_low_tolerance_pct": 0.5,
     "near_day_low_bypass_deep_loss": True,
+    "crash_day_change_pct": -5.0,
+    "confirm_falling_scans": 0,
     "sector_outperform_guard": True,
     "min_outperform_sector_pct": 2.0,
     "min_symbol_change_without_sector_pct": 4.0,
@@ -200,10 +202,14 @@ def defensive_trim_blocked_by_near_day_low(
         return None
 
     if cfg.get("near_day_low_bypass_deep_loss", True):
-        from agent_reach.daily_run.portfolio_manager import symbol_is_deep_loss_holding
+        crash_floor = float(cfg.get("crash_day_change_pct", -5.0))
+        change_pct = _symbol_change_pct(snapshot, code)
+        is_crash_day = change_pct is not None and float(change_pct) <= crash_floor + 1e-9
+        if not is_crash_day:
+            from agent_reach.daily_run.portfolio_manager import symbol_is_deep_loss_holding
 
-        if symbol_is_deep_loss_holding(snapshot, settings, str(code or "")):
-            return None
+            if symbol_is_deep_loss_holding(snapshot, settings, str(code or "")):
+                return None
 
     return (
         f"现价 {price:.2f} 距日内低点 {day_low:.2f} ≤{tolerance_pct:.1f}%，"
@@ -342,6 +348,43 @@ def defensive_trim_already_applied(
     return False
 
 
+def defensive_trim_blocked_by_falling_scan_confirm(
+    settings: dict[str, Any],
+    *,
+    code: Any,
+    trend: str,
+) -> Optional[str]:
+    """Require consecutive falling scans before memory-driven defensive trim."""
+    cfg = defensive_trim_cfg(settings)
+    required = int(cfg.get("confirm_falling_scans", 0) or 0)
+    if required <= 1:
+        return None
+    weak_trends = {"falling", "turning_down"}
+    if str(trend or "") not in weak_trends:
+        return None
+    try:
+        from agent_reach.daily_run.intraday import load_state
+        from agent_reach.daily_run.intraday_scan_filters import scans_for_trend_detection
+
+        st = load_state(code=str(code or ""))
+        session = scans_for_trend_detection(st.scans)
+    except Exception:
+        return None
+    streak = 0
+    for scan in reversed(session):
+        scan_trend = str(scan.get("trend") or "")
+        if scan_trend in weak_trends:
+            streak += 1
+        else:
+            break
+    if streak >= required:
+        return None
+    return (
+        f"defensive_trim 需连续 {required} 次 falling 扫描确认"
+        f"（当前 {streak}/{required}）"
+    )
+
+
 def defensive_trim_blocked_by_daily_cap(
     settings: dict[str, Any],
     *,
@@ -386,6 +429,11 @@ def evaluate_defensive_trim_sell(
     for blocker in (
         lambda: defensive_trim_blocked_by_recovery_zone(
             settings, lookback_mss=lookback_mss, trade_signals=trade_signals
+        ),
+        lambda: defensive_trim_blocked_by_falling_scan_confirm(
+            settings,
+            code=report.get("code"),
+            trend=trend,
         ),
         lambda: defensive_trim_blocked_by_daily_cap(
             settings, prior_trades=prior_trades, code=report.get("code")
