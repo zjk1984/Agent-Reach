@@ -556,6 +556,9 @@ def main():
     from agent_reach.daily_run.quant_cli import add_quant_subparser
 
     add_quant_subparser(p_daily_sub)
+    from agent_reach.daily_run.ops_cli import add_ops_subparser
+
+    add_ops_subparser(p_daily_sub)
     from agent_reach.daily_run.panel_cli import add_panel_subparser
 
     add_panel_subparser(p_daily_sub)
@@ -2968,6 +2971,12 @@ def _cmd_daily_run(args):
         cmd_quant(args)
         return
 
+    if args.daily_action == "ops":
+        from agent_reach.daily_run.ops_cli import cmd_ops
+
+        cmd_ops(args)
+        return
+
     if args.daily_action == "panel":
         from agent_reach.daily_run.panel_cli import cmd_panel
 
@@ -2977,7 +2986,7 @@ def _cmd_daily_run(args):
     if args.daily_action not in ("evaluate", "push"):
         print(
             "Usage: agent-reach daily-run "
-            "{morning|close|intraday|build-snapshot|schedule|hot-news|configure|redfox|kronos|harness|capital|pnl|storage|quant|panel|evaluate|push|fetch|verify|verify-lookahead|pit-guard|execution-quality|risk-panel|drift-trigger|backtest|optimize|hyperopt-lite|plugins|sample} ..."
+            "{morning|close|intraday|build-snapshot|schedule|hot-news|configure|redfox|kronos|harness|capital|pnl|storage|quant|ops|panel|evaluate|push|fetch|verify|verify-lookahead|pit-guard|execution-quality|risk-panel|drift-trigger|backtest|optimize|hyperopt-lite|plugins|sample} ..."
         )
         sys.exit(1)
 
