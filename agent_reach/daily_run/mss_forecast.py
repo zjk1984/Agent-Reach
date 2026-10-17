@@ -37,6 +37,8 @@ def forecast_mss_range(
         forecast_int_default(settings, "vol_multiplier")
     )
     spread += _emotion_spread_bonus(breakdown, cfg)
+    mainline_bonus = _mainline_rotation_spread_bonus(snapshot, cfg)
+    spread += mainline_bonus
     technical = breakdown.get("technical")
     if technical is not None:
         try:
@@ -70,6 +72,7 @@ def forecast_mss_range(
         "simulations": sims,
         "base_mss": base,
         "volatility_hint": vol_hint,
+        "mainline_rotation_spread_bonus": mainline_bonus,
         "median": round(samples[sims // 2], 1),
     }
     return [lo, hi], meta
@@ -83,6 +86,48 @@ def _volatility_hint(snapshot: dict[str, Any]) -> float:
     if len(scans) >= 2:
         return min(3.0, abs(float(scans[-1]) - float(scans[-2])) / 5)
     return 1.0
+
+
+def _symbol_sector_label(snapshot: dict[str, Any]) -> str:
+    for key in ("sector", "industry"):
+        val = str(snapshot.get(key) or "").strip()
+        if val:
+            return val
+    code = str(snapshot.get("code") or "").strip()
+    pf = snapshot.get("portfolio") or {}
+    for holding in pf.get("holdings") or []:
+        if not isinstance(holding, dict):
+            continue
+        if code and str(holding.get("code") or "") != code:
+            continue
+        for key in ("sector", "industry"):
+            val = str(holding.get(key) or "").strip()
+            if val:
+                return val
+    return ""
+
+
+def _mainline_rotation_spread_bonus(snapshot: dict[str, Any], cfg: dict[str, Any]) -> float:
+    """Widen forecast band when symbol sector aligns with live TSP top mainline (rotation days)."""
+    if cfg.get("mainline_rotation_enabled", True) is False:
+        return 0.0
+    bonus = float(cfg.get("mainline_rotation_spread_bonus", 2.0))
+    if bonus <= 0:
+        return 0.0
+    sector = _symbol_sector_label(snapshot)
+    if not sector:
+        return 0.0
+    breadth = snapshot.get("tsp_intraday") or snapshot.get("tsp_breadth") or {}
+    mainlines = breadth.get("top_mainlines") or []
+    for row in mainlines:
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("name") or row.get("sector") or "").strip()
+        if not name:
+            continue
+        if name == sector or name in sector or sector in name:
+            return bonus
+    return 0.0
 
 
 def _emotion_spread_bonus(breakdown: dict[str, Any], cfg: dict[str, Any]) -> float:

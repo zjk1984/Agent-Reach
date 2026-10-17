@@ -36,7 +36,8 @@ def forecast_mss_miss_streak(*, as_of: Optional[date] = None) -> int:
             continue
         row = actuals.get(ds)
         if not row:
-            break
+            # Schedule gap / no close verify — exclude from miss streak (run_guard playbook).
+            continue
         mss_hit = row.get("mss_hit")
         if mss_hit is False:
             streak += 1

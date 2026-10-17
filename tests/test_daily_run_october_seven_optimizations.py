@@ -49,7 +49,7 @@ def test_audit_fail_blocks_buy_not_sell():
     assert intraday_audit_block_reason(settings, report, trade_side="sell") is None
 
 
-def test_warmth_gates_buy_not_defensive_trim():
+def test_warmth_gates_buy_and_memory_trim_recovery_guard():
     settings = {"harness": {"reading_signals": {"recovery_min_lookback": 50.0}}}
     buy_block = mss_warmth_buy_block_reason(
         settings,
@@ -62,7 +62,14 @@ def test_warmth_gates_buy_not_defensive_trim():
         lookback_mss=55.0,
         trade_signals={"defensive_trim": True, "mss_forecast_miss": True},
     )
-    assert sell_block is None
+    assert sell_block is not None
+    assert "回暖线" in sell_block
+    below_line = defensive_trim_blocked_by_recovery_zone(
+        settings,
+        lookback_mss=48.0,
+        trade_signals={"defensive_trim": True, "mss_forecast_miss": True},
+    )
+    assert below_line is None
 
 
 def test_forecast_miss_overlay_widens_on_hit_rate(monkeypatch):

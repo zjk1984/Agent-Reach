@@ -965,7 +965,9 @@
   },
 
   "mss_forecast": {
-    "simulations": 200
+    "simulations": 200,
+    "mainline_rotation_enabled": true,
+    "mainline_rotation_spread_bonus": 2.0
   },
 
   "schedule": {
