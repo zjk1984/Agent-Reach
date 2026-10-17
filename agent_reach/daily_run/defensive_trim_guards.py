@@ -52,7 +52,7 @@ def _recovery_thresholds(settings: dict[str, Any]) -> dict[str, float]:
 
 
 def mss_warmth_line(settings: dict[str, Any]) -> float:
-    """Warmth threshold (≥): gates buys only; must not block defensive trim."""
+    """Warmth threshold (≥): gates new buys under macro defense; separate from memory-trim recovery guard."""
     return float(_recovery_thresholds(settings)["recovery_min_lookback"])
 
 
@@ -86,8 +86,23 @@ def defensive_trim_blocked_by_recovery_zone(
     code: Any = None,
     snapshot: Optional[dict[str, Any]] = None,
 ) -> Optional[str]:
-    """Legacy hook — warmth line no longer blocks defensive sells (buy gate is separate)."""
-    _ = lookback_mss, trade_signals, code, snapshot, settings
+    """Block memory-driven defensive trim when MSS is already in macro-warming territory."""
+    cfg = defensive_trim_cfg(settings)
+    if not cfg.get("block_sell_in_recovery_zone", True):
+        return None
+    if trade_signals.get("pnl_target_miss"):
+        return None
+    if trade_signals.get("mss_recovery") or trade_signals.get("macro_warming"):
+        return "盘中 MSS 回暖已解除 stale 防御，记忆驱动减仓暂缓"
+
+    thresholds = _recovery_thresholds(settings)
+    min_lookback = thresholds["recovery_min_lookback"]
+    if float(lookback_mss) >= min_lookback:
+        return (
+            f"Lookback MSS {lookback_mss:.0f} ≥ 回暖线 {min_lookback:.0f}，"
+            "记忆 MSS 偏离暂不执行防御减仓"
+        )
+    _ = code, snapshot
     return None
 
 
