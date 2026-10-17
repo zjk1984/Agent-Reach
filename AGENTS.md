@@ -34,6 +34,9 @@ Non-obvious environment notes:
   Logs: `~/.agent-reach/daily_run/logs/cron-YYYY-MM-DD.log`. GHA workflow is manual-only (`workflow_dispatch`).
 - **Ops trading-day precheck (Phase A):** weekday ~06:50 CST run `bash scripts/ops-trading-day-precheck.sh`
   (git main、pip editable、job_health close/morning、doctor smoke、磁盘；非交易日自动跳过).
+- **Quant PM weekly digest** (no user input): after the Saturday `weekly` job (~08:30), schedule
+  `30 9 * * 6 … python3 -m agent_reach.cli daily-run ops quant-digest -o ~/.agent-reach/daily_run/reports/quant-digest-latest.md --push`
+  for a single Feishu summary card plus local markdown (distinct from the multi-card weekly close push).
 - **Hot news (60s API)**: daily-run macro collection pulls multi-platform hot topics via
   [60s](https://github.com/vikiboss/60s). Auto-deploy (native, no Docker):
   `python3 -m agent_reach.cli daily-run hot-news install` — requires Node.js 22.6+, git, npm.
