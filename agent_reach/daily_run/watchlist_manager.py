@@ -329,6 +329,15 @@ def adjust_watchlist(
         )
 
     if phase == "close":
+        _evict_low_score_watchlist_at_total_cap(
+            pf,
+            enriched,
+            settings,
+            changes,
+            held_codes=held_codes,
+            base_mss=base_mss,
+            snapshot=snapshot,
+        )
         _fill_watchlist_to_min(
             pf,
             snapshot,
@@ -779,6 +788,57 @@ def _add_candidates(
                 entry["name"],
                 entry["reason"],
                 sector=entry["sector"],
+            )
+        )
+
+
+def _evict_low_score_watchlist_at_total_cap(
+    pf: dict[str, Any],
+    enriched: dict[str, dict[str, Any]],
+    settings: dict[str, Any],
+    changes: list[WatchlistChange],
+    *,
+    held_codes: set[str],
+    base_mss: float,
+    snapshot: Optional[dict[str, Any]] = None,
+) -> None:
+    """When at max_total_symbols, drop weakest watchlist names before refill to min_size."""
+    target_min = effective_watchlist_min(settings, pf)
+    if target_min <= 0:
+        return
+    while (
+        unique_symbol_count(pf) >= max_total_symbols(settings)
+        and _watchlist_only_count(pf, held_codes) > target_min
+    ):
+        scored = [
+            (
+                _symbol_score(
+                    {**w, **enriched.get(_normalize_code(str(w.get("code", ""))), {})},
+                    base_mss=base_mss,
+                    settings=settings,
+                    snapshot=snapshot,
+                ),
+                w,
+            )
+            for w in pf.get("watchlist") or []
+            if _normalize_code(str(w.get("code", ""))) not in held_codes
+        ]
+        if not scored:
+            break
+        scored.sort(key=lambda x: x[0])
+        _score, weakest = scored[0]
+        code = _normalize_code(str(weakest.get("code", "")))
+        pf["watchlist"] = [
+            w
+            for w in pf.get("watchlist") or []
+            if _normalize_code(str(w.get("code", ""))) != code
+        ]
+        changes.append(
+            WatchlistChange(
+                "remove",
+                code,
+                str(weakest.get("name", code)),
+                f"合计上限 {max_total_symbols(settings)} 只，按评分移出低分观察标的",
             )
         )
 

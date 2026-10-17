@@ -51,28 +51,43 @@ def _recovery_thresholds(settings: dict[str, Any]) -> dict[str, float]:
     }
 
 
-def defensive_trim_blocked_by_recovery_zone(
+def mss_warmth_line(settings: dict[str, Any]) -> float:
+    """Warmth threshold (≥): gates buys only; must not block defensive trim."""
+    return float(_recovery_thresholds(settings)["recovery_min_lookback"])
+
+
+def mss_warmth_buy_block_reason(
     settings: dict[str, Any],
     *,
     lookback_mss: float,
     trade_signals: dict[str, Any],
 ) -> Optional[str]:
-    """Block memory-driven trim when live MSS is already in macro-warming territory."""
-    cfg = defensive_trim_cfg(settings)
-    if not cfg.get("block_sell_in_recovery_zone", True):
+    """Block new buys below the warmth line while macro defense is still active."""
+    if not trade_signals.get("defensive_trim"):
         return None
     if trade_signals.get("pnl_target_miss"):
         return None
-    if trade_signals.get("mss_recovery") or trade_signals.get("macro_warming"):
-        return "盘中 MSS 回暖已解除 stale 防御，记忆驱动减仓暂缓"
+    if trade_signals.get("intraday_rebound") or trade_signals.get("mss_recovery"):
+        return None
+    warmth = mss_warmth_line(settings)
+    if float(lookback_mss) + 1e-9 >= warmth:
+        return None
+    return (
+        f"Lookback MSS {lookback_mss:.0f} < 回暖线 {warmth:.0f}，"
+        "宏观防御态下暂不允许进攻建仓"
+    )
 
-    thresholds = _recovery_thresholds(settings)
-    min_lookback = thresholds["recovery_min_lookback"]
-    if float(lookback_mss) >= min_lookback:
-        return (
-            f"Lookback MSS {lookback_mss:.0f} ≥ 回暖线 {min_lookback:.0f}，"
-            "记忆 MSS 偏离暂不执行防御减仓"
-        )
+
+def defensive_trim_blocked_by_recovery_zone(
+    settings: dict[str, Any],
+    *,
+    lookback_mss: float,
+    trade_signals: dict[str, Any],
+    code: Any = None,
+    snapshot: Optional[dict[str, Any]] = None,
+) -> Optional[str]:
+    """Legacy hook — warmth line no longer blocks defensive sells (buy gate is separate)."""
+    _ = lookback_mss, trade_signals, code, snapshot, settings
     return None
 
 
@@ -409,6 +424,7 @@ def evaluate_defensive_trim_sell(
     report: dict[str, Any],
     snapshot: dict[str, Any],
     prior_trades: Optional[list[dict[str, Any]]] = None,
+    session_scans: Optional[list[dict[str, Any]]] = None,
 ) -> tuple[bool, Optional[str]]:
     """Return (allow_sell, hold_reason)."""
     from agent_reach.daily_run.intraday_policy import defensive_trim_allows_sell
@@ -418,6 +434,14 @@ def evaluate_defensive_trim_sell(
         return False, None
     if not trade_signals.get("defensive_trim"):
         return False, None
+    from agent_reach.daily_run.midday_pm_trim import pm_trim_active_for_code
+
+    if pm_trim_active_for_code(
+        str(report.get("code") or ""),
+        settings=settings,
+        scans=session_scans,
+    ):
+        return True, None
     if not defensive_trim_allows_sell(
         settings,
         lookback_mss=lookback_mss,
@@ -428,7 +452,11 @@ def evaluate_defensive_trim_sell(
 
     for blocker in (
         lambda: defensive_trim_blocked_by_recovery_zone(
-            settings, lookback_mss=lookback_mss, trade_signals=trade_signals
+            settings,
+            lookback_mss=lookback_mss,
+            trade_signals=trade_signals,
+            code=report.get("code"),
+            snapshot=snapshot,
         ),
         lambda: defensive_trim_blocked_by_falling_scan_confirm(
             settings,
@@ -487,6 +515,14 @@ def defensive_trim_effective_sell_ratio(
     days = effective_days_held(holding, settings=settings)
     if days <= lock_days + short_grace:
         return min(float(base_ratio), short_ratio)
+    signals = runtime.get("trade_signals") or {}
+    if is_deep_loss and (
+        signals.get("mss_forecast_miss") or signals.get("deviation_active")
+    ):
+        from agent_reach.daily_run.harness_policy import deep_loss_policy_default
+
+        floor = float(deep_loss_policy_default(settings, "sell_ratio"))
+        return max(float(base_ratio), floor)
     if is_deep_loss:
         return min(float(base_ratio), memory_ratio)
     return min(float(base_ratio), memory_ratio)
