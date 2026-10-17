@@ -8,18 +8,12 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
-from datetime import date
 from pathlib import Path
 from typing import Any, Callable, Optional
 
 from agent_reach.daily_run.job_health import _load as load_job_health
 from agent_reach.daily_run.settings import load_settings
-from agent_reach.daily_run.trade_calendar import (
-    is_trading_day,
-    shanghai_date_of_iso,
-    today_shanghai,
-    trading_day_before,
-)
+from agent_reach.daily_run.trade_calendar import is_trading_day, today_shanghai
 
 # Channels / integrations that must not be hard-failed before the open.
 _DOCTOR_CRITICAL_CHANNELS = frozenset({"xueqiu", "web", "rss"})
@@ -132,53 +126,17 @@ def check_pip_editable(repo_root: Path) -> CheckResult:
     return CheckResult("pip", True, f"editable @ {editable}")
 
 
-def _job_last_success_date(job: str, jobs: dict[str, Any]) -> Optional[date]:
-    entry = jobs.get(job) or {}
-    raw = entry.get("last_success_at")
-    if not raw:
-        return None
-    return shanghai_date_of_iso(str(raw))
-
-
 def check_job_health(*, settings: Optional[dict] = None) -> list[CheckResult]:
-    settings = settings or load_settings()
-    today = today_shanghai()
-    prev_td = trading_day_before(today, 1, settings=settings)
-    acceptable = {today, prev_td}
+    from agent_reach.daily_run.job_health import PRECHECK_HEALTH_JOBS, assess_job_health_entry
 
+    settings = settings or load_settings()
     data = load_job_health()
     jobs = data.get("jobs") or {}
     results: list[CheckResult] = []
 
-    for job in ("close", "morning"):
-        entry = jobs.get(job) or {}
-        streak = int(entry.get("consecutive_failures") or 0)
-        last_d = _job_last_success_date(job, jobs)
-        label = f"job_health:{job}"
-
-        if streak > 0:
-            err = (entry.get("last_error") or "unknown")[:120]
-            results.append(
-                CheckResult(label, False, f"连续失败 {streak} 次 · {err}"),
-            )
-            continue
-
-        if last_d is None:
-            results.append(CheckResult(label, False, "无 last_success_at 记录"))
-            continue
-
-        if last_d not in acceptable:
-            results.append(
-                CheckResult(
-                    label,
-                    False,
-                    f"末次成功 {last_d.isoformat()}，期望 {prev_td} 或 {today}（交易日）",
-                ),
-            )
-        else:
-            results.append(
-                CheckResult(label, True, f"末次成功 {last_d.isoformat()}"),
-            )
+    for job in PRECHECK_HEALTH_JOBS:
+        ok, detail = assess_job_health_entry(job, settings=settings, jobs=jobs)
+        results.append(CheckResult(f"job_health:{job}", ok, detail))
 
     return results
 
@@ -343,6 +301,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         skip_non_trading=not args.force_non_trading,
     )
 
+    summary = format_summary(results, exit_code=exit_code)
+
     if args.json:
         payload = {
             "exit_code": exit_code,
@@ -358,7 +318,14 @@ def main(argv: Optional[list[str]] = None) -> int:
         }
         print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
-        print(format_summary(results, exit_code=exit_code))
+        print(summary)
+
+    if exit_code != 0:
+        from agent_reach.config import Config
+        from agent_reach.daily_run.job_health import notify_ops_precheck_fail
+        from agent_reach.daily_run.settings import load_settings
+
+        notify_ops_precheck_fail(summary, settings=load_settings(), config=Config())
 
     return exit_code
 
