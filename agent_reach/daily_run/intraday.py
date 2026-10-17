@@ -198,6 +198,7 @@ TRADE_BLOCK_MESSAGES: dict[str, str] = {
     "buy_ledger": "⚠️ **风控阻断：** 标的账本不允许买入",
     "buy_kronos": "⚠️ **风控阻断：** Kronos 看空信号，不允许买入",
     "buy_cash": "⚠️ **风控阻断：** 现金比例不足，不允许加仓",
+    "mss_warmth_veto": "⚠️ **风控阻断：** Lookback 低于 MSS 回暖线，宏观防御态下暂不允许进攻建仓",
     "buy_budget": "⚠️ **风控阻断：** 可部署买入预算不足一手，维持观望",
     "tsp_deviation": "⚠️ **风控阻断：** 3日涨跌幅接近交易所异动偏离监管红线，禁止追高买入",
     "tsp_retreat": "⚠️ **风控阻断：** 盘中情绪退潮（高炸板率且跌停扩增），禁止追高买入",
@@ -935,6 +936,32 @@ def evaluate_trade(
     st.trades.append(trade_record)
     save_state(st, state_path)
 
+    try:
+        from agent_reach.daily_run.midday_pm_trim import (
+            afternoon_scan_num,
+            pm_trim_active_for_code,
+            record_pm_trim_skip,
+        )
+
+        symbol_code = str(report.get("code") or "")
+        scan_id = str(st.scans[-1].get("scan_id") or "S?") if st.scans else "S?"
+        if pm_trim_active_for_code(symbol_code, settings=cfg, scans=st.scans):
+            sold = decision.action == "sell" and apply_result.applied
+            if not sold:
+                record_pm_trim_skip(
+                    symbol_code,
+                    reason=str(decision.reasoning or "午盘减仓未执行")[:240],
+                    scan_id=scan_id,
+                    settings=cfg,
+                    decision=decision.to_dict(),
+                )
+        if afternoon_scan_num(st.scans) >= 11:
+            from agent_reach.daily_run.midday_pm_trim import finalize_pm_trim_obligations
+
+            finalize_pm_trim_obligations(st.to_dict(), settings=cfg)
+    except Exception:
+        pass
+
     from agent_reach.daily_run.portfolio_manager import render_apply_markdown
 
     markdown = render_intraday_trade_markdown(
@@ -1585,8 +1612,6 @@ def _decide_trade(
         except Exception:
             pass
 
-    min_cash = min_cash_ratio_default(settings)
-
     trade_id = f"T{trade_index}"
     portfolio = snapshot.get("portfolio") or {}
     cash_ratio = portfolio.get("cash_ratio")
@@ -1595,6 +1620,19 @@ def _decide_trade(
         overlay_note = f"{overlay_note}{sector_gap_note}"
     if systemic_note:
         overlay_note = f"{overlay_note}{systemic_note}"
+
+    from agent_reach.daily_run.intraday_min_cash import effective_intraday_min_cash_ratio
+
+    min_cash, min_cash_relax_note = effective_intraday_min_cash_ratio(
+        settings,
+        lookback_mss=lookback_mss,
+        live_breadth=live_breadth,
+    )
+    if min_cash_relax_note:
+        thresholds = dict(settings.get("thresholds") or {})
+        thresholds["min_cash_ratio"] = min_cash
+        settings = {**settings, "thresholds": thresholds}
+        overlay_note = f"{overlay_note} [{min_cash_relax_note}]"
 
     sh_now = _intraday_shanghai_now(snapshot, report, session_scans)
     from agent_reach.daily_run.protections.engine import (
@@ -1720,21 +1758,6 @@ def _decide_trade(
             breakout_exp = max(0.0, float(chg) / 100.0 * 0.35)
             exp_ret = max(float(exp_ret or 0.0), breakout_exp)
             friction_blocked = not _passes_friction(exp_ret, settings)
-
-    audit_block = intraday_audit_block_reason(settings, report)
-    if audit_block:
-        return TradeDecision(
-            action="hold",
-            trade_id=trade_id,
-            lookback_mss=lookback_mss,
-            lookback_detail=[],
-            trend=trend,
-            reasoning=f"{audit_block}{overlay_note}",
-            blocked=True,
-            block_kind="audit",
-            friction_blocked=friction_blocked,
-            expected_return_pct=exp_ret,
-        )
 
     if lookback_mss < macro_veto:
         return TradeDecision(
@@ -1942,6 +1965,43 @@ def _decide_trade(
                 reasoning=f"{systemic_block}{overlay_note}",
                 blocked=True,
                 block_kind="buy_systemic_risk",
+                friction_blocked=friction_blocked,
+                expected_return_pct=exp_ret,
+            )
+
+        audit_buy_block = intraday_audit_block_reason(settings, report, trade_side="buy")
+        if audit_buy_block:
+            return TradeDecision(
+                action="hold",
+                trade_id=trade_id,
+                lookback_mss=lookback_mss,
+                lookback_detail=[],
+                trend=trend,
+                reasoning=f"{audit_buy_block}{overlay_note}",
+                blocked=True,
+                block_kind="audit",
+                friction_blocked=friction_blocked,
+                expected_return_pct=exp_ret,
+            )
+        runtime = settings.get("harness_runtime") or {}
+        trade_signals = runtime.get("trade_signals") or {}
+        from agent_reach.daily_run.defensive_trim_guards import mss_warmth_buy_block_reason
+
+        warmth_buy_block = mss_warmth_buy_block_reason(
+            settings,
+            lookback_mss=lookback_mss,
+            trade_signals=trade_signals,
+        )
+        if warmth_buy_block:
+            return TradeDecision(
+                action="hold",
+                trade_id=trade_id,
+                lookback_mss=lookback_mss,
+                lookback_detail=[],
+                trend=trend,
+                reasoning=f"{warmth_buy_block}{overlay_note}",
+                blocked=True,
+                block_kind="mss_warmth_veto",
                 friction_blocked=friction_blocked,
                 expected_return_pct=exp_ret,
             )
@@ -2236,6 +2296,7 @@ def _decide_trade(
             report=report,
             snapshot=snapshot,
             prior_trades=prior_trades,
+            session_scans=session_scans,
         )
         from agent_reach.daily_run.hold_debounce_guards import touch_week_open_hold_debounce
 
@@ -2362,6 +2423,9 @@ def _decide_trade(
                     expected_return_pct=exp_ret,
                 )
         elif defensive_block:
+            block_kind = "sell_defensive_trim"
+            if "回暖线" in str(defensive_block):
+                block_kind = "mss_warmth_veto"
             return TradeDecision(
                 action="hold",
                 trade_id=trade_id,
@@ -2370,7 +2434,7 @@ def _decide_trade(
                 trend=trend,
                 reasoning=f"{defensive_block}{overlay_note}",
                 blocked=True,
-                block_kind="sell_defensive_trim",
+                block_kind=block_kind,
                 friction_blocked=False,
                 expected_return_pct=exp_ret,
             )

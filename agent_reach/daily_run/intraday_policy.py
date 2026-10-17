@@ -260,18 +260,28 @@ def estimate_expected_return(
 def intraday_audit_block_reason(
     settings: dict[str, Any],
     report: dict[str, Any],
+    *,
+    trade_side: str = "all",
 ) -> Optional[str]:
+    """Audit fail blocks buys by default; sells/trims may still proceed (trim-only path)."""
+    if str(trade_side or "all").lower() == "sell":
+        return None
     policy = intraday_audit_policy(settings)
     if policy.get("intraday_block_on_audit_fail", 0.0) <= 0.5:
         return None
     if report.get("audit_passed") is False:
+        if str(trade_side or "all").lower() == "buy":
+            return "盘中数据审计未通过，暂停买入（减仓/持仓路径仍可用）"
         return "盘中数据审计未通过，暂缓调仓"
     warnings = list(report.get("audit_warnings") or [])
     min_cov = float(policy.get("min_quote_coverage_pct", 0.8))
     for warning in warnings:
         text = str(warning)
         if "行情覆盖率" in text and "低于阈值" in text:
-            return f"行情覆盖率不足（阈值 {min_cov:.0%}），暂缓调仓"
+            msg = f"行情覆盖率不足（阈值 {min_cov:.0%}），暂缓调仓"
+            if str(trade_side or "all").lower() == "buy":
+                return f"{msg}（仅阻断买入）"
+            return msg
     return None
 
 

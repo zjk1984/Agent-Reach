@@ -251,7 +251,8 @@
         "enabled": true,
         "register_min_cash_ratio": 0.5,
         "relax_delta": 0.02,
-        "rebound_mss_level": 55.0
+        "rebound_mss_level": 55.0,
+        "attack_min_cash_ratio": 0.35
       }
     },
     "session_verdict_guards": {

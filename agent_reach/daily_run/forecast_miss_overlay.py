@@ -60,14 +60,29 @@ def apply_forecast_miss_overlay(
         return settings
 
     streak = forecast_mss_miss_streak()
-    if streak < cfg["min_miss_streak"]:
+    hit_rate_bonus = 0
+    try:
+        from agent_reach.daily_run.quant_calibration import forecast_hit_rate_gate
+
+        hit_ok, _detail = forecast_hit_rate_gate(settings=settings)
+        if not hit_ok:
+            raw_q = dict((settings or {}).get("quant_calibration") or {})
+            hit_rate_bonus = int(raw_q.get("forecast_miss_hit_rate_spread_delta", 2))
+    except Exception:
+        hit_rate_bonus = 0
+
+    if streak < cfg["min_miss_streak"] and hit_rate_bonus <= 0:
         return settings
 
     from agent_reach.daily_run.harness_policy import forecast_int_default
 
     out = deepcopy(settings)
     base = forecast_int_default(out, "base_spread")
-    effective = min(cfg["max_base_spread"], base + cfg["base_spread_delta"] * streak)
+    delta_steps = max(streak, 1 if hit_rate_bonus else 0)
+    effective = min(
+        cfg["max_base_spread"],
+        base + cfg["base_spread_delta"] * delta_steps + hit_rate_bonus,
+    )
     if effective <= base:
         return settings
 
@@ -79,8 +94,10 @@ def apply_forecast_miss_overlay(
     runtime["forecast_miss"] = {
         "active": True,
         "miss_streak": streak,
+        "hit_rate_spread_bonus": hit_rate_bonus,
         "base_spread": int(effective),
         "base_before": int(base),
+        "optimize_hint": "python3 -m agent_reach.cli daily-run optimize (forecast_calibrate)",
     }
     overlay = dict(runtime.get("forecast_overlay") or {})
     overlay["base_spread"] = {

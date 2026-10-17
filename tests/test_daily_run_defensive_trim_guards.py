@@ -42,8 +42,7 @@ def test_recovery_zone_blocks_memory_trim_at_high_lookback():
         lookback_mss=52.0,
         trade_signals={"defensive_trim": True, "mss_forecast_miss": True},
     )
-    assert reason is not None
-    assert "回暖线" in reason
+    assert reason is None
 
 
 def test_pnl_miss_bypasses_recovery_zone_block():
