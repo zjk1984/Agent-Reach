@@ -295,6 +295,15 @@ def main():
                             help="Print crontab block without installing (install action)")
     p_dr_sched.add_argument("--force", action="store_true",
                             help="Bypass guard dedupe/lock for schedule run")
+    p_dr_sched.add_argument(
+        "--trade-date",
+        default="",
+        metavar="YYYY-MM-DD",
+        help=(
+            "Trading session day for schedule run (manifest paths, intraday state date). "
+            "Historical dates on canonical ~/.agent-reach require AGENT_REACH_ALLOW_PROD_BACKFILL=1"
+        ),
+    )
     p_dr_hot = p_daily_sub.add_parser("hot-news", help="Self-hosted 60s API for hot news")
     p_dr_hot_sub = p_dr_hot.add_subparsers(dest="hot_news_action", required=True)
     p_dr_hot_install = p_dr_hot_sub.add_parser("install", help="Deploy local 60s (native Node by default)")
@@ -2274,16 +2283,36 @@ def _cmd_daily_run(args):
             if job not in ("morning", "midday", "intraday", "close", "weekly", "forecast", "alerts"):
                 print("❌ job must be morning, midday, intraday, close, weekly, forecast, or alerts")
                 sys.exit(1)
+            trade_date = None
+            if getattr(args, "trade_date", ""):
+                from agent_reach.daily_run.schedule import parse_schedule_trade_date
+
+                try:
+                    trade_date = parse_schedule_trade_date(args.trade_date)
+                except ValueError as exc:
+                    print(f"❌ {exc}")
+                    sys.exit(1)
             try:
-                result = run_scheduled(job, push=not args.dry_run, config=Config(), force=args.force)
+                result = run_scheduled(
+                    job,
+                    push=not args.dry_run,
+                    config=Config(),
+                    force=args.force,
+                    trade_date=trade_date,
+                )
             except Exception as exc:
                 print(f"❌ Schedule run failed: {exc}")
                 sys.exit(1)
             if result.get("skipped"):
                 print(f"⏭️  Skipped: {result.get('reason')}")
+                if result.get("guard") == "trade_date_backfill":
+                    print(f"   guard={result.get('guard')} · 设置 AGENT_REACH_ALLOW_PROD_BACKFILL=1 后重试")
+                    sys.exit(1)
                 if result.get("guard"):
                     print(f"   guard={result.get('guard')} · 补跑请加 --force")
                 sys.exit(0)
+            if trade_date is not None:
+                print(f"   trade_date: {trade_date.isoformat()}")
             from agent_reach.daily_run.schedule import format_scheduled_run_summary
 
             summary = format_scheduled_run_summary(result, job)

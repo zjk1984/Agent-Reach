@@ -6,8 +6,9 @@ from __future__ import annotations
 import subprocess
 import sys
 import time
+import os
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
@@ -44,6 +45,43 @@ INTRADAY_SCAN_TIMES: list[tuple[str, str]] = [
 ]
 # S1 + S2 + midday + len(INTRADAY_SCAN_TIMES)
 INTRADAY_MAX_SCANS = 1 + 1 + 1 + len(INTRADAY_SCAN_TIMES)
+
+ALLOW_PROD_BACKFILL_ENV = "AGENT_REACH_ALLOW_PROD_BACKFILL"
+
+
+def _truthy_env(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def parse_schedule_trade_date(raw: Optional[str]) -> date:
+    """Parse CLI ``--trade-date`` (YYYY-MM-DD)."""
+    text = str(raw or "").strip()
+    if not text:
+        raise ValueError("trade-date is empty")
+    try:
+        return date.fromisoformat(text)
+    except ValueError as exc:
+        raise ValueError(f"trade-date must be YYYY-MM-DD, got {raw!r}") from exc
+
+
+def schedule_trade_date_guard_reason(trade_date: Optional[date]) -> Optional[str]:
+    """Block historical session backfill on canonical prod unless explicitly allowed."""
+    if trade_date is None:
+        return None
+    from agent_reach.daily_run.trade_calendar import real_today_shanghai
+
+    if trade_date == real_today_shanghai():
+        return None
+    from agent_reach.daily_run.storage.guard import is_canonical_daily_run_data_root
+
+    if not is_canonical_daily_run_data_root():
+        return None
+    if _truthy_env(ALLOW_PROD_BACKFILL_ENV):
+        return None
+    return (
+        f"历史 trade_date={trade_date.isoformat()} 会写入 ~/.agent-reach/daily_run "
+        f"(manifest / session 日)；确认 prod 补跑请设置 {ALLOW_PROD_BACKFILL_ENV}=1"
+    )
 
 
 @dataclass
@@ -267,8 +305,38 @@ def run_scheduled(
     push: bool = True,
     config=None,
     force: bool = False,
+    trade_date: Optional[date] = None,
 ) -> dict:
     """Execute morning | intraday | close with auto snapshot + doctor + manifest."""
+    from agent_reach.daily_run.trade_calendar import schedule_session_day
+
+    guard = schedule_trade_date_guard_reason(trade_date)
+    if guard:
+        return {
+            "job": job,
+            "skipped": True,
+            "reason": guard,
+            "guard": "trade_date_backfill",
+            "trade_date": trade_date.isoformat() if trade_date else None,
+        }
+
+    with schedule_session_day(trade_date):
+        return _run_scheduled_impl(
+            job,
+            push=push,
+            config=config,
+            force=force,
+        )
+
+
+def _run_scheduled_impl(
+    job: str,
+    *,
+    push: bool,
+    config,
+    force: bool,
+) -> dict:
+    """Inner schedule runner (expects ``schedule_session_day`` context when backfilling)."""
     from agent_reach.config import Config
     from agent_reach.daily_run.settings import effective_settings, load_settings
 

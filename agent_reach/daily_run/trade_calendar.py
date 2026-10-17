@@ -3,11 +3,13 @@
 
 from __future__ import annotations
 
+import contextvars
 import json
 import time as time_module
+from contextlib import contextmanager
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import Iterator, Optional
 from zoneinfo import ZoneInfo
 
 _SH_TZ = ZoneInfo("Asia/Shanghai")
@@ -22,8 +24,35 @@ CONTINUOUS_SESSIONS: tuple[tuple[time, time], ...] = (
 )
 
 
-def today_shanghai() -> date:
+_schedule_session_day: contextvars.ContextVar[Optional[date]] = contextvars.ContextVar(
+    "schedule_session_day",
+    default=None,
+)
+
+
+def real_today_shanghai() -> date:
+    """Wall-clock Asia/Shanghai calendar date (ignores schedule session override)."""
     return datetime.now(_SH_TZ).date()
+
+
+def today_shanghai() -> date:
+    override = _schedule_session_day.get()
+    if override is not None:
+        return override
+    return real_today_shanghai()
+
+
+@contextmanager
+def schedule_session_day(day: Optional[date]) -> Iterator[None]:
+    """Temporarily bind ``today_shanghai()`` to a trading session day (schedule backfill)."""
+    if day is None:
+        yield
+        return
+    token = _schedule_session_day.set(day)
+    try:
+        yield
+    finally:
+        _schedule_session_day.reset(token)
 
 
 def is_weekend(d: Optional[date] = None) -> bool:
