@@ -306,6 +306,7 @@ def run_scheduled(
     config=None,
     force: bool = False,
     trade_date: Optional[date] = None,
+    auto_heal: bool = True,
 ) -> dict:
     """Execute morning | intraday | close with auto snapshot + doctor + manifest."""
     from agent_reach.daily_run.trade_calendar import schedule_session_day
@@ -326,6 +327,7 @@ def run_scheduled(
             push=push,
             config=config,
             force=force,
+            auto_heal=auto_heal,
         )
 
 
@@ -335,6 +337,7 @@ def _run_scheduled_impl(
     push: bool,
     config,
     force: bool,
+    auto_heal: bool = True,
 ) -> dict:
     """Inner schedule runner (expects ``schedule_session_day`` context when backfilling)."""
     from agent_reach.config import Config
@@ -382,6 +385,7 @@ def _run_scheduled_impl(
                 config=cfg_obj,
                 settings=settings,
                 t0=t0,
+                auto_heal=auto_heal,
             )
     except JobBusyError as exc:
         result = {"job": job, "skipped": True, "reason": str(exc), "guard": "lock"}
@@ -529,9 +533,11 @@ def _run_scheduled_inner(
     config,
     settings: dict,
     t0: float,
+    auto_heal: bool = True,
 ) -> dict:
     from agent_reach.daily_run.job_health import (
-        maybe_alert_consecutive_failures,
+        attempt_auto_resume_close,
+        notify_scheduled_job_failure,
         record_job_outcome,
     )
 
@@ -550,9 +556,39 @@ def _run_scheduled_inner(
     except Exception as exc:
         job_error = str(exc)
         streak = record_job_outcome(job, success=False, error=job_error)
-        maybe_alert_consecutive_failures(job, settings=settings, config=config)
+        heal_result: dict | None = None
+        heal_hint: str | None = None
+        if auto_heal and job == "close":
+            heal_result = attempt_auto_resume_close(
+                settings=settings,
+                config=config,
+                push=push,
+            )
+            if heal_result.get("resumed"):
+                heal_hint = "已检测到 close checkpoint，已自动续跑 schedule run close"
+            elif heal_result.get("error"):
+                heal_hint = f"续跑 close 失败：{heal_result.get('error')}"
+            elif heal_result.get("skipped"):
+                reason = heal_result.get("reason") or ""
+                if reason == "no_resumable_checkpoint":
+                    heal_hint = "无可用 checkpoint；请手动 `schedule run close`"
+                elif reason != "auto_resume_close_disabled":
+                    heal_hint = f"未续跑：{reason}"
+        notify_scheduled_job_failure(
+            job,
+            error=job_error,
+            streak=streak,
+            settings=settings,
+            config=config,
+            heal_hint=heal_hint,
+        )
         duration_ms = (time.perf_counter() - t0) * 1000
-        fail_payload = {"job": job, "error": job_error, "consecutive_failures": streak}
+        fail_payload = {
+            "job": job,
+            "error": job_error,
+            "consecutive_failures": streak,
+            "ops_auto_heal": heal_result,
+        }
         _apply_scheduled_guard_harness(
             job, job_error, "failure", settings, consecutive_failures=streak, result=fail_payload
         )

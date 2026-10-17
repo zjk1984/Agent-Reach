@@ -25,9 +25,15 @@ def test_check_job_health_accepts_prev_trading_day():
         },
     }
 
-    with patch.object(pre, "today_shanghai", return_value=today), patch.object(
-        pre, "trading_day_before", return_value=prev
-    ), patch.object(pre, "load_job_health", return_value={"jobs": jobs}):
+    with patch.object(
+        pre, "load_job_health", return_value={"jobs": jobs}
+    ), patch(
+        "agent_reach.daily_run.job_health.today_shanghai",
+        return_value=today,
+    ), patch(
+        "agent_reach.daily_run.job_health.trading_day_before",
+        return_value=prev,
+    ):
         results = pre.check_job_health(settings=settings)
 
     assert len(results) == 2
@@ -50,9 +56,15 @@ def test_check_job_health_fails_stale_close():
         },
     }
 
-    with patch.object(pre, "today_shanghai", return_value=today), patch.object(
-        pre, "trading_day_before", return_value=prev
-    ), patch.object(pre, "load_job_health", return_value={"jobs": jobs}):
+    with patch.object(
+        pre, "load_job_health", return_value={"jobs": jobs}
+    ), patch(
+        "agent_reach.daily_run.job_health.today_shanghai",
+        return_value=today,
+    ), patch(
+        "agent_reach.daily_run.job_health.trading_day_before",
+        return_value=prev,
+    ):
         results = pre.check_job_health(settings=settings)
 
     close = next(r for r in results if r.name == "job_health:close")

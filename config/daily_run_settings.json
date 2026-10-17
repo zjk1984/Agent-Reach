@@ -1801,5 +1801,10 @@
     "mild_deploy_ratio_cap": 0.45,
     "observe_weekly_trigger_max": 3,
     "observe_bump_to_mild": 35.0
+  },
+
+  "ops": {
+    "push_job_health_fail": true,
+    "auto_resume_close": true
   }
 }
