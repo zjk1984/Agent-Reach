@@ -1303,13 +1303,7 @@ def render_intraday_scan_markdown(
         except Exception:
             pass
 
-    raw_markdown = "\n".join(lines)
-    try:
-        from agent_reach.daily_run.panel.config import prepend_panel_card_header
-
-        return prepend_panel_card_header(raw_markdown, settings=settings)
-    except Exception:
-        return raw_markdown
+    return "\n".join(lines)
 
 
 def infer_trade_block_kind(decision: TradeDecision | dict[str, Any]) -> Optional[str]:
@@ -1457,7 +1451,8 @@ def render_intraday_trade_markdown(
     for s in scans[-3:]:
         lines.append(f"- {s['scan_id']}: MSS {s.get('mss_final')} · {s.get('verdict')}")
 
-    if lookback_detail:
+    # audit_only cards append scan markdown first (already includes Lookback 加权拆解 + overlay).
+    if lookback_detail and not audit_only:
         lines.extend(["", "**Lookback 权重计算：**"])
         for item in lookback_detail:
             lines.append(

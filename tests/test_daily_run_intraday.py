@@ -796,3 +796,74 @@ class TestBatchScanId:
         scan_id, at_limit = next_scan_id_for_codes(["688008", "002273"])
         assert scan_id is None
         assert at_limit is True
+
+
+class TestFeishuP0Simplification:
+    def test_scan_markdown_omits_panel_header(self):
+        from agent_reach.daily_run.intraday import render_intraday_scan_markdown
+
+        settings = {"panel": {"enabled": True, "card_link_enabled": True}}
+        md = render_intraday_scan_markdown(
+            scan={"scan_id": "S1", "mss_final": 60, "verdict": "可做"},
+            lookback_mss=58.0,
+            lookback_detail=[
+                {"scan_id": "S1", "mss_final": 60, "weight": 1.0, "weighted": 60},
+            ],
+            trend="flat",
+            report={"code": "688008"},
+            settings=settings,
+        )
+        assert "实时大屏" not in md
+        assert "**Lookback 加权拆解：**" in md
+
+    def test_audit_only_trade_skips_lookback_weight_table(self):
+        from agent_reach.daily_run.intraday import TradeDecision, render_intraday_trade_markdown
+
+        detail = [{"scan_id": "S1", "mss_final": 60, "weight": 1.0, "weighted": 60.0}]
+        decision = TradeDecision(
+            action="hold",
+            trade_id=None,
+            lookback_mss=60.0,
+            lookback_detail=detail,
+            trend="横盘",
+            reasoning="维持观望",
+        )
+        audit_md = render_intraday_trade_markdown(
+            decision,
+            detail,
+            {},
+            [],
+            audit_only=True,
+            skip_reason="非连续竞价",
+        )
+        assert "Lookback 权重计算" not in audit_md
+        assert "审核摘要" in audit_md
+        assert "本轮未写入调仓序列" in audit_md
+
+        trade_md = render_intraday_trade_markdown(decision, detail, {}, [], audit_only=False)
+        assert "Lookback 权重计算" in trade_md
+
+    def test_run_intraday_push_single_panel_header(
+        self, intraday_snapshot, tmp_path, monkeypatch
+    ):
+        state_path = tmp_path / "intraday.json"
+        reset_state(state_path)
+        sends: list[str] = []
+
+        def _fake_send(_cfg, _title, body, template="blue"):
+            sends.append(body)
+            return {"code": 0}
+
+        monkeypatch.setattr("agent_reach.integrations.feishu.send_card", _fake_send)
+        settings = load_settings()
+        settings.setdefault("panel", {})["card_link_enabled"] = True
+        settings["panel"]["enabled"] = True
+        run_intraday(
+            intraday_snapshot,
+            settings=settings,
+            push=True,
+            trade=False,
+            state_path=state_path,
+        )
+        assert len(sends) == 1
+        assert sends[0].count("实时大屏") == 1
