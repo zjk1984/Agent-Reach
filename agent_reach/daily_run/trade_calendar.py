@@ -214,6 +214,32 @@ def trading_days_held(
     return count
 
 
+def trading_day_on_or_before(
+    d: date,
+    *,
+    settings: Optional[dict] = None,
+) -> date:
+    """Latest A-share trading day on or before ``d`` (maps weekend/holiday runs to session day)."""
+    ok, _ = is_trading_day(d, settings=settings)
+    if ok:
+        return d
+
+    trade_dates = sorted(_load_trade_dates_akshare())
+    if trade_dates:
+        d_s = d.isoformat()
+        earlier = [x for x in trade_dates if x <= d_s]
+        if earlier:
+            return date.fromisoformat(earlier[-1])
+
+    cursor = d
+    for _ in range(366):
+        cursor -= timedelta(days=1)
+        ok, _ = is_trading_day(cursor, settings=settings)
+        if ok:
+            return cursor
+    return d
+
+
 def trading_day_before(
     as_of: date,
     n: int,

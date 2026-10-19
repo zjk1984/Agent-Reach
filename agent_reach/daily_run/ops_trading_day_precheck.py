@@ -127,15 +127,36 @@ def check_pip_editable(repo_root: Path) -> CheckResult:
 
 
 def check_job_health(*, settings: Optional[dict] = None) -> list[CheckResult]:
-    from agent_reach.daily_run.job_health import PRECHECK_HEALTH_JOBS, assess_job_health_entry
+    from agent_reach.daily_run.job_health import (
+        PRECHECK_HEALTH_JOBS,
+        assess_job_health_entry,
+        attempt_auto_resume_close,
+        close_has_resumable_checkpoint,
+        reconcile_stale_job_health,
+    )
 
     settings = settings or load_settings()
+    reconcile_stale_job_health(settings=settings)
     data = load_job_health()
     jobs = data.get("jobs") or {}
     results: list[CheckResult] = []
 
     for job in PRECHECK_HEALTH_JOBS:
         ok, detail = assess_job_health_entry(job, settings=settings, jobs=jobs)
+        if (
+            not ok
+            and job == "close"
+            and close_has_resumable_checkpoint()
+            and (settings.get("ops") or {}).get("auto_resume_close", True) is not False
+        ):
+            heal = attempt_auto_resume_close(settings=settings, push=False)
+            if heal.get("resumed"):
+                reconcile_stale_job_health(settings=settings)
+                data = load_job_health()
+                jobs = data.get("jobs") or {}
+                ok, detail = assess_job_health_entry(job, settings=settings, jobs=jobs)
+                if ok:
+                    detail = f"{detail}（已 auto_resume_close 续跑）"
         results.append(CheckResult(f"job_health:{job}", ok, detail))
 
     return results
