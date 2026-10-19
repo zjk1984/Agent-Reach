@@ -1003,6 +1003,37 @@ def evaluate_trade(
     except Exception:
         pass
 
+    closure = None
+    closure_line = ""
+    if decision_trace_event is not None:
+        closure = dict(decision_trace_event.closure or {})
+    else:
+        try:
+            from agent_reach.daily_run.decision_trace import (
+                build_decision_closure,
+                render_decision_closure_tier_a_line,
+            )
+
+            closure = build_decision_closure(decision, apply_result.to_dict())
+            closure_line = render_decision_closure_tier_a_line(
+                closure,
+                code=str(report.get("code") or ""),
+                name=str(report.get("name") or report.get("code") or ""),
+            )
+        except Exception:
+            pass
+    if closure and not closure_line:
+        try:
+            from agent_reach.daily_run.decision_trace import render_decision_closure_tier_a_line
+
+            closure_line = render_decision_closure_tier_a_line(
+                closure,
+                code=str(report.get("code") or ""),
+                name=str(report.get("name") or report.get("code") or ""),
+            )
+        except Exception:
+            pass
+
     return {
         "decision": decision.to_dict(),
         "trade": trade_record,
@@ -1014,6 +1045,8 @@ def evaluate_trade(
             decision_trace_event.to_dict() if decision_trace_event is not None else None
         ),
         "decision_trace_markdown": decision_trace_md or None,
+        "decision_closure": closure,
+        "decision_closure_line": closure_line or None,
     }
 
 
@@ -1058,11 +1091,27 @@ def build_intraday_trade_audit_summary(
         audit_only=True,
         skip_reason=skip_reason,
     )
+    closure = None
+    closure_line = ""
+    try:
+        from agent_reach.daily_run.decision_trace import (
+            build_decision_closure,
+            render_decision_closure_tier_a_line,
+        )
+
+        closure = build_decision_closure(decision, None, skip_reason=skip_reason)
+        code = str(report.get("code") or "")
+        name = str(report.get("name") or code)
+        closure_line = render_decision_closure_tier_a_line(closure, code=code, name=name)
+    except Exception:
+        pass
     return {
         "decision": decision.to_dict(),
         "markdown": markdown,
         "audit_only": True,
         "skip_reason": skip_reason,
+        "decision_closure": closure,
+        "decision_closure_line": closure_line or None,
     }
 
 
@@ -1172,6 +1221,9 @@ def run_intraday(
                 warn_lines.append(f"- {w}")
             md_parts.insert(0, "\n".join(warn_lines) + "\n\n---\n\n")
         if trade_result:
+            tier_line = trade_result.get("decision_closure_line")
+            if tier_line:
+                md_parts.append("\n---\n\n" + tier_line)
             md_parts.append("\n---\n\n" + trade_result["markdown"])
             trace_md = trade_result.get("decision_trace_markdown")
             if trace_md and trace_md not in (trade_result.get("markdown") or ""):
@@ -1205,6 +1257,11 @@ def run_intraday(
         "narrative_feishu": narrative_feishu if push else None,
         "scan_count": len(scan_result.get("state", {}).get("scans") or []),
     }
+    if trade_result:
+        closure = trade_result.get("decision_closure")
+        if closure:
+            out["decision_closure"] = closure
+            out["decision_closure_line"] = trade_result.get("decision_closure_line")
     if push_error:
         out["push_error"] = push_error
     return out

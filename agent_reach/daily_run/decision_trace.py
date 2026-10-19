@@ -128,6 +128,233 @@ def build_decision_state(
     }
 
 
+def _decision_action(decision: Any) -> str:
+    if hasattr(decision, "action"):
+        return str(decision.action or "hold").lower()
+    if isinstance(decision, dict):
+        return str(decision.get("action") or "hold").lower()
+    return "hold"
+
+
+def _decision_blocked(decision: Any) -> bool:
+    if hasattr(decision, "blocked"):
+        return bool(decision.blocked)
+    if isinstance(decision, dict):
+        return bool(decision.get("blocked"))
+    return False
+
+
+def ledger_delta_from_apply(apply: Optional[dict[str, Any]]) -> Optional[list[dict[str, Any]]]:
+    """Ledger rows written on apply; None when no fill."""
+    if not apply or not apply.get("applied"):
+        return None
+    delta: list[dict[str, Any]] = []
+    for action in apply.get("actions") or []:
+        if not isinstance(action, dict):
+            continue
+        side = str(action.get("side") or "").lower()
+        if side not in ("buy", "sell"):
+            continue
+        delta.append(
+            {
+                "side": side,
+                "code": action.get("code"),
+                "shares": action.get("shares"),
+                "amount": action.get("amount"),
+            }
+        )
+    return delta or None
+
+
+def build_gate_from_decision_apply(
+    decision: Any,
+    apply: Optional[dict[str, Any]],
+) -> dict[str, Any]:
+    from agent_reach.daily_run.intraday import infer_trade_block_kind
+
+    blocked = _decision_blocked(decision)
+    block_kind = infer_trade_block_kind(decision if isinstance(decision, dict) else decision)
+    guard_capped = bool((apply or {}).get("guard_capped"))
+    if blocked:
+        status = "blocked"
+    elif guard_capped:
+        status = "guard_capped"
+    elif str((apply or {}).get("status") or "") == "hold":
+        status = "hold"
+    else:
+        status = "open"
+    return {
+        "blocked": blocked,
+        "block_kind": block_kind,
+        "guard_capped": guard_capped,
+        "status": status,
+    }
+
+
+def _resolve_skip_reason(
+    decision_action: str,
+    *,
+    ledger_delta: Optional[list[dict[str, Any]]],
+    gate: dict[str, Any],
+    apply: Optional[dict[str, Any]],
+    decision: Any,
+    explicit_skip: Optional[str] = None,
+) -> Optional[str]:
+    if decision_action not in ("buy", "sell"):
+        return None
+    if ledger_delta:
+        return None
+    if explicit_skip and str(explicit_skip).strip():
+        return str(explicit_skip).strip()[:240]
+    msg = str((apply or {}).get("message") or "").strip()
+    if msg:
+        return msg[:240]
+    reasoning = ""
+    if hasattr(decision, "reasoning"):
+        reasoning = str(decision.reasoning or "")
+    elif isinstance(decision, dict):
+        reasoning = str(decision.get("reasoning") or "")
+    if reasoning.strip():
+        return reasoning.strip()[:240]
+    block_kind = gate.get("block_kind")
+    if block_kind:
+        return f"gate:{block_kind}"
+    return "no_ledger_delta"
+
+
+def validate_decision_closure(record: dict[str, Any]) -> None:
+    """M5: buy/sell without ledger_delta must carry skip_reason."""
+    action = str(record.get("decision") or "hold").lower()
+    delta = record.get("ledger_delta")
+    has_delta = bool(delta)
+    skip = record.get("skip_reason")
+    if action in ("buy", "sell") and not has_delta:
+        if not (skip and str(skip).strip()):
+            raise ValueError(
+                f"decision closure invalid: {action} requires skip_reason when ledger_delta is empty"
+            )
+
+
+def build_decision_closure(
+    decision: Any,
+    apply: Optional[dict[str, Any]] = None,
+    *,
+    skip_reason: Optional[str] = None,
+) -> dict[str, Any]:
+    """Manifest + Feishu Tier-A: decision, gate, ledger_delta, skip_reason."""
+    apply_dict = dict(apply or {})
+    action = _decision_action(decision)
+    gate = build_gate_from_decision_apply(decision, apply_dict)
+    ledger_delta = ledger_delta_from_apply(apply_dict)
+    skip = _resolve_skip_reason(
+        action,
+        ledger_delta=ledger_delta,
+        gate=gate,
+        apply=apply_dict,
+        decision=decision,
+        explicit_skip=skip_reason,
+    )
+    record = {
+        "decision": action,
+        "gate": gate,
+        "ledger_delta": ledger_delta,
+        "skip_reason": skip,
+    }
+    validate_decision_closure(record)
+    return record
+
+
+def build_decision_closure_from_trade_result(
+    trade_result: Optional[dict[str, Any]],
+    *,
+    skip_reason: Optional[str] = None,
+) -> Optional[dict[str, Any]]:
+    if not trade_result:
+        return None
+    trace = trade_result.get("decision_trace")
+    if isinstance(trace, dict) and trace.get("closure"):
+        return dict(trace["closure"])
+    decision = trade_result.get("decision")
+    if not decision:
+        return None
+    apply = trade_result.get("portfolio_apply")
+    explicit = skip_reason or trade_result.get("skip_reason")
+    return build_decision_closure(decision, apply, skip_reason=explicit)
+
+
+def render_decision_closure_tier_a_line(
+    closure: dict[str, Any],
+    *,
+    code: str = "",
+    name: str = "",
+) -> str:
+    """Single Feishu Executive line: 执行/gate + ledger or skip."""
+    action = str(closure.get("decision") or "hold")
+    gate = closure.get("gate") or {}
+    if gate.get("blocked") and gate.get("block_kind"):
+        gate_label = str(gate["block_kind"])
+    elif gate.get("guard_capped"):
+        gate_label = "guard_capped"
+    elif gate.get("status") == "open" and not gate.get("blocked"):
+        gate_label = "OK"
+    else:
+        gate_label = str(gate.get("status") or "—")
+    sym = ""
+    if name or code:
+        sym = f" · {name or code}"
+        if code and name:
+            sym = f" · {name} ({code})"
+    delta = closure.get("ledger_delta")
+    if delta:
+        parts = []
+        for row in delta:
+            side = row.get("side") or "?"
+            c = row.get("code") or code or "?"
+            shares = row.get("shares")
+            share_s = f"{shares}股" if shares is not None else "—"
+            parts.append(f"{side} {c} {share_s}")
+        ledger_part = "ledger ✅ " + ", ".join(parts)
+        skip_part = ""
+    else:
+        ledger_part = "ledger —"
+        skip = closure.get("skip_reason")
+        skip_part = f" · skip: {skip}" if skip and action in ("buy", "sell") else ""
+    return f"**执行/gate:**{sym} {action} · gate={gate_label} · {ledger_part}{skip_part}"
+
+
+def attach_decision_closure_to_manifest_payload(payload: dict[str, Any]) -> None:
+    """Promote intraday/midday decision closure onto schedule manifest payload."""
+    if not isinstance(payload, dict):
+        return
+    job = str(payload.get("job") or "")
+    if job not in ("intraday", "midday"):
+        return
+    closures: list[dict[str, Any]] = []
+    symbol_results = payload.get("symbol_results")
+    if symbol_results:
+        for row in symbol_results:
+            inner = (row.get("result") or {}).get("decision_closure")
+            if inner:
+                closures.append(
+                    {
+                        "code": row.get("code"),
+                        "name": row.get("name"),
+                        **inner,
+                    }
+                )
+    else:
+        run = payload.get("result") or {}
+        inner = run.get("decision_closure")
+        if inner:
+            closures.append(inner)
+    if not closures:
+        return
+    payload["decision_closures"] = closures
+    payload["decision_closure"] = closures[-1]
+    lines = [render_decision_closure_tier_a_line(c) for c in closures]
+    payload["decision_closure_tier_a"] = lines[-1] if len(lines) == 1 else lines
+
+
 @dataclass
 class DecisionEvent:
     event_id: str
@@ -148,6 +375,7 @@ class DecisionEvent:
     totals: dict[str, Any] = field(default_factory=dict)
     late: bool = False
     context: dict[str, Any] = field(default_factory=dict)
+    closure: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -169,6 +397,7 @@ class DecisionEvent:
             "totals": self.totals,
             "late": self.late,
             "context": self.context,
+            "closure": self.closure,
         }
 
 
@@ -268,6 +497,11 @@ def build_event_from_trade_eval(
     day = today_shanghai().isoformat()
     event_id = f"{day}:{scan_id}:{code}:{uuid.uuid4().hex[:8]}"
 
+    closure = build_decision_closure(
+        decision if isinstance(decision, dict) else decision,
+        apply_dict,
+    )
+
     return DecisionEvent(
         event_id=event_id,
         ts=_now_iso(),
@@ -292,6 +526,7 @@ def build_event_from_trade_eval(
         apply=apply_payload,
         totals=daily_trace_totals(settings, day=day),
         context=context,
+        closure=closure,
     )
 
 
@@ -306,6 +541,11 @@ def build_late_scan_event(
 ) -> DecisionEvent:
     day = today_shanghai().isoformat()
     _LATE_SCAN_TOTALS[day] = _LATE_SCAN_TOTALS.get(day, 0) + 1
+    apply_payload = {"status": "hold", "applied": False, "message": reason, "guard_capped": False}
+    closure = build_decision_closure(
+        {"action": "hold", "blocked": False, "reasoning": reason},
+        apply_payload,
+    )
     return DecisionEvent(
         event_id=f"{day}:{scan_id}:{code}:late:{uuid.uuid4().hex[:8]}",
         ts=_now_iso(),
@@ -321,9 +561,10 @@ def build_late_scan_event(
         allowed={"buy": False, "sell": False, "hold": True, "reason": "late_scan"},
         decision={"action": "hold", "verdict": None, "blocked": False, "reasoning": reason, "latency_ms": None},
         intent=None,
-        apply={"status": "hold", "applied": False, "message": reason, "guard_capped": False},
+        apply=apply_payload,
         totals=daily_trace_totals(settings, day=day),
         late=True,
+        closure=closure,
     )
 
 
