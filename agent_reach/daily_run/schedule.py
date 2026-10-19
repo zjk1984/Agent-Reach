@@ -599,6 +599,12 @@ def _run_scheduled_inner(
     duration_ms = (time.perf_counter() - t0) * 1000
     _apply_scheduled_job_harness(job, result, settings, push=push, config=config)
     _attach_manifest_harness_summary(result)
+    try:
+        from agent_reach.daily_run.decision_trace import attach_decision_closure_to_manifest_payload
+
+        attach_decision_closure_to_manifest_payload(result)
+    except Exception:
+        pass
     manifest_path = save_run_manifest(job, result, feishu=feishu, duration_ms=duration_ms)
     result["manifest_path"] = str(manifest_path)
     return result
