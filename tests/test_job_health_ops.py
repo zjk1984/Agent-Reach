@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import date
 from unittest.mock import MagicMock, patch
 
@@ -62,6 +63,62 @@ def test_assess_job_health_stale_close():
         ok, detail = jh.assess_job_health_entry("close", settings=settings, jobs=jobs)
     assert not ok
     assert "2026-10-16" in detail
+
+
+def test_assess_job_health_maps_weekend_timestamp_to_prev_trading_day():
+    """2026-10-19 precheck: close stamped Sat 10-17 CST still counts as Fri session."""
+    settings = {"trade_calendar": {"enabled": True}}
+    today = date(2026, 10, 19)
+    prev = date(2026, 10, 16)
+    jobs = {
+        "close": {
+            "consecutive_failures": 0,
+            "last_success_at": "2026-10-17T08:31:57+00:00",
+        },
+    }
+    with patch.object(jh, "today_shanghai", return_value=today), patch.object(
+        jh, "trading_day_before", return_value=prev
+    ):
+        ok, detail = jh.assess_job_health_entry("close", settings=settings, jobs=jobs)
+    assert ok, detail
+
+
+def test_assess_job_health_ignores_stale_streak_when_last_success_fresh():
+    settings = {"trade_calendar": {"enabled": True}}
+    today = date(2026, 10, 19)
+    prev = date(2026, 10, 16)
+    jobs = {
+        "morning": {
+            "consecutive_failures": 1,
+            "last_error": "audit",
+            "last_success_at": "2026-10-17T00:18:21+00:00",
+        },
+    }
+    with patch.object(jh, "today_shanghai", return_value=today), patch.object(
+        jh, "trading_day_before", return_value=prev
+    ):
+        ok, detail = jh.assess_job_health_entry("morning", settings=settings, jobs=jobs)
+    assert ok, detail
+
+
+def test_reconcile_stale_job_health_persists(tmp_path, monkeypatch):
+    settings = {"trade_calendar": {"enabled": True}}
+    today = date(2026, 10, 19)
+    prev = date(2026, 10, 16)
+    path = tmp_path / "job_health.json"
+    path.write_text(
+        '{"jobs": {"morning": {"consecutive_failures": 1, "last_error": "x", '
+        '"last_success_at": "2026-10-17T00:18:21+00:00"}}}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(jh, "health_path", lambda: path)
+    with patch.object(jh, "today_shanghai", return_value=today), patch.object(
+        jh, "trading_day_before", return_value=prev
+    ):
+        assert jh.reconcile_stale_job_health(settings=settings) is True
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["jobs"]["morning"]["consecutive_failures"] == 0
+    assert data["jobs"]["morning"]["last_error"] is None
 
 
 def test_close_has_resumable_checkpoint(tmp_path, monkeypatch):

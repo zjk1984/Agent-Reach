@@ -12,6 +12,7 @@ from agent_reach.daily_run.trade_calendar import (
     shanghai_date_of_iso,
     today_shanghai,
     trading_day_before,
+    trading_day_on_or_before,
 )
 
 SCHEDULED_OPS_JOBS = ("close", "morning", "intraday")
@@ -84,6 +85,51 @@ def job_last_success_date(job: str, jobs: dict[str, Any]) -> Optional[date]:
     return shanghai_date_of_iso(str(raw))
 
 
+def job_last_success_trading_day(
+    job: str,
+    jobs: dict[str, Any],
+    *,
+    settings: dict[str, Any],
+) -> Optional[date]:
+    last_d = job_last_success_date(job, jobs)
+    if last_d is None:
+        return None
+    return trading_day_on_or_before(last_d, settings=settings)
+
+
+def reconcile_stale_job_health(*, settings: dict[str, Any]) -> bool:
+    """Persist consecutive_failures=0 when last_success is still within the trading window."""
+    data = _load()
+    jobs = dict(data.get("jobs") or {})
+    acceptable = acceptable_success_dates(settings)
+    changed = False
+
+    for job in SCHEDULED_OPS_JOBS:
+        entry = dict(jobs.get(job) or {})
+        streak = int(entry.get("consecutive_failures") or 0)
+        if streak <= 0:
+            continue
+        last_td = job_last_success_trading_day(job, {job: entry}, settings=settings)
+        if last_td is not None and last_td in acceptable:
+            entry["consecutive_failures"] = 0
+            entry["last_error"] = None
+            jobs[job] = entry
+            changed = True
+
+    if not changed:
+        return False
+
+    data["jobs"] = jobs
+    _save(data)
+    try:
+        from agent_reach.daily_run.storage.hooks import on_l1_state
+
+        on_l1_state("job_health", "job_health", data)
+    except Exception:
+        pass
+    return True
+
+
 def assess_job_health_entry(
     job: str,
     *,
@@ -99,21 +145,28 @@ def assess_job_health_entry(
     entry = jobs_map.get(job) or {}
     streak = int(entry.get("consecutive_failures") or 0)
     last_d = job_last_success_date(job, jobs_map)
+    last_td = job_last_success_trading_day(job, jobs_map, settings=settings)
+
+    if streak > 0 and last_td is not None and last_td in acceptable:
+        streak = 0
 
     if streak > 0:
         err = (entry.get("last_error") or "unknown")[:120]
         return False, f"连续失败 {streak} 次 · {err}"
 
-    if last_d is None:
+    if last_td is None:
         return False, "无 last_success_at 记录"
 
-    if last_d not in acceptable:
+    if last_td not in acceptable:
+        wall = last_d.isoformat() if last_d else "?"
         return (
             False,
-            f"末次成功 {last_d.isoformat()}，期望 {prev_td} 或 {today}（交易日）",
+            f"末次成功 {wall}（交易日 {last_td.isoformat()}），"
+            f"期望 {prev_td} 或 {today}（交易日）",
         )
 
-    return True, f"末次成功 {last_d.isoformat()}"
+    wall = last_d.isoformat() if last_d else last_td.isoformat()
+    return True, f"末次成功 {wall}"
 
 
 def record_job_outcome(
