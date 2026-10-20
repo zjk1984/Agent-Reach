@@ -13,11 +13,13 @@ and graceful degradation for 6 market dataset classes (D1 ~ D6):
 
 from __future__ import annotations
 
+import os
 import time
 from typing import Any, Dict, List, Optional
+
 from loguru import logger
 
-from agent_reach.daily_run.quote_fetch import fetch_quotes_map, normalize_code
+from agent_reach.daily_run.quote_fetch import QuoteFetchResult, fetch_quotes_map, normalize_code
 from agent_reach.daily_run.tsp.deviation_monitor import compute_exchange_deviation_risk
 from agent_reach.daily_run.tsp.call_auction import evaluate_call_auction_divergence
 
@@ -27,6 +29,8 @@ class MarketDataRouter:
 
     def __init__(self, settings: Optional[dict[str, Any]] = None):
         self.settings = settings or {}
+        self._last_d1_quote_fetch: Optional[QuoteFetchResult] = None
+        self._last_d1_requested_codes: list[str] = []
         self._cache: Dict[str, Dict[str, Any]] = {
             "d1_quotes": {"data": {}, "ts": 0.0},
             "d2_auction": {"data": {}, "ts": 0.0},
@@ -39,6 +43,98 @@ class MarketDataRouter:
     # -------------------------------------------------------------------------
     # D1: Live Quotes (Fast L1 / Push2)
     # -------------------------------------------------------------------------
+    def _d1_resilience_cfg(self) -> tuple[int, tuple[float, ...], bool]:
+        qcfg = self.settings.get("quote_fetch") or {}
+        pytest_run = bool(os.environ.get("PYTEST_CURRENT_TEST"))
+        if "d1_retry_max_attempts" in qcfg:
+            max_attempts = int(qcfg["d1_retry_max_attempts"])
+        elif pytest_run:
+            max_attempts = 1
+        else:
+            max_attempts = 3
+        raw_delays = qcfg.get("d1_retry_delays")
+        if isinstance(raw_delays, (list, tuple)):
+            delays = tuple(float(x) for x in raw_delays)
+        elif pytest_run:
+            delays = (0.0, 0.0, 0.0)
+        else:
+            delays = (15.0, 20.0, 30.0)
+        enabled = qcfg.get("d1_empty_retry", True) is not False
+        return max(1, max_attempts), delays, enabled
+
+    def _merge_d1_fetch_into(
+        self,
+        fetch_res: QuoteFetchResult,
+        *,
+        cached: dict[str, Any],
+        result: dict[str, dict[str, Any]],
+        now: float,
+    ) -> None:
+        for c, q in fetch_res.quotes.items():
+            cached["data"][c] = q
+            result[c] = dict(q)
+        cached["ts"] = now
+
+    def _fetch_d1_with_resilience(
+        self,
+        codes: list[str],
+        *,
+        cached: dict[str, Any],
+        result: dict[str, dict[str, Any]],
+        now: float,
+    ) -> QuoteFetchResult:
+        """Fetch missing D1 quotes; retry on empty/partial with backoff (morning transient blips)."""
+        unique = list(dict.fromkeys(codes))
+        if not unique:
+            return QuoteFetchResult()
+
+        max_attempts, delays, enabled = self._d1_resilience_cfg()
+        aggregate = QuoteFetchResult()
+
+        still_missing = list(unique)
+        last_res = QuoteFetchResult()
+        for attempt in range(max_attempts):
+            if not still_missing:
+                break
+            try:
+                last_res = fetch_quotes_map(still_missing, settings=self.settings)
+            except Exception as exc:
+                logger.warning(f"[DataRouter:D1] get_live_quotes error: {exc}")
+                for code in still_missing:
+                    aggregate.errors.setdefault(code, str(exc))
+                break
+            self._merge_d1_fetch_into(last_res, cached=cached, result=result, now=now)
+            for src in last_res.sources_used:
+                if src not in aggregate.sources_used:
+                    aggregate.sources_used.append(src)
+            for code, q in last_res.quotes.items():
+                aggregate.quotes[code] = q
+                aggregate.errors.pop(code, None)
+            for code, err in last_res.errors.items():
+                if code not in aggregate.quotes:
+                    aggregate.errors[code] = err
+            still_missing = [c for c in unique if c not in result]
+            if not still_missing:
+                break
+            if not enabled or attempt >= max_attempts - 1:
+                break
+            delay = delays[min(attempt, len(delays) - 1)] if delays else 1.0
+            logger.info(
+                "[DataRouter:D1] partial quote coverage {}/{}; retry in {:.0f}s (attempt {})",
+                len(unique) - len(still_missing),
+                len(unique),
+                delay,
+                attempt + 2,
+            )
+            time.sleep(delay)
+
+        for code in still_missing:
+            aggregate.errors.setdefault(
+                code,
+                last_res.errors.get(code, "no quote from configured sources"),
+            )
+        return aggregate
+
     def get_live_quotes(
         self,
         codes: List[str],
@@ -50,32 +146,66 @@ class MarketDataRouter:
         now = time.time()
         cached = self._cache["d1_quotes"]
         norm_codes = [normalize_code(c) for c in codes if c]
-        if not norm_codes:
+        unique_codes = list(dict.fromkeys(norm_codes))
+        self._last_d1_requested_codes = list(unique_codes)
+        self._last_d1_quote_fetch = None
+        if not unique_codes:
             return {}
 
         missing: List[str] = []
         result: Dict[str, Dict[str, Any]] = {}
 
         if not force_refresh and (now - cached["ts"] < ttl_seconds):
-            for c in norm_codes:
+            for c in unique_codes:
                 if c in cached["data"]:
                     result[c] = dict(cached["data"][c])
                 else:
                     missing.append(c)
         else:
-            missing = list(norm_codes)
+            missing = list(unique_codes)
 
         if missing:
-            try:
-                fetch_res = fetch_quotes_map(missing, settings=self.settings)
-                for c, q in fetch_res.quotes.items():
-                    cached["data"][c] = q
-                    result[c] = dict(q)
-                cached["ts"] = now
-            except Exception as exc:
-                logger.warning(f"[DataRouter:D1] get_live_quotes error: {exc}")
+            self._last_d1_quote_fetch = self._fetch_d1_with_resilience(
+                missing,
+                cached=cached,
+                result=result,
+                now=now,
+            )
+
+        fetch_meta = self._last_d1_quote_fetch or QuoteFetchResult()
+        missing_after = [c for c in unique_codes if c not in result]
+        self._last_d1_quote_fetch = QuoteFetchResult(
+            quotes={c: result[c] for c in unique_codes if c in result},
+            sources_used=list(fetch_meta.sources_used),
+            errors={
+                c: fetch_meta.errors.get(c, "no quote from configured sources")
+                for c in missing_after
+            },
+        )
 
         return result
+
+    def get_last_d1_quote_fetch(self) -> Optional[QuoteFetchResult]:
+        """QuoteFetchResult from the latest get_live_quotes batch fetch (for snapshot manifest)."""
+        return self._last_d1_quote_fetch
+
+    def d1_quote_fetch_meta_for(self, codes: list[str]) -> dict[str, Any]:
+        """Coverage + errors for requested codes after the last get_live_quotes call."""
+        unique = list(dict.fromkeys(normalize_code(c) for c in codes if c))
+        fetch_res = self._last_d1_quote_fetch or QuoteFetchResult()
+        hit = sum(1 for c in unique if c in fetch_res.quotes)
+        meta: dict[str, Any] = {
+            "sources_used": list(fetch_res.sources_used),
+            "coverage_pct": round(hit / max(len(unique), 1) * 100, 1),
+            "errors": {},
+        }
+        if hit < len(unique):
+            meta["errors"] = {
+                c: fetch_res.errors.get(c, "no quote from configured sources")
+                for c in unique
+                if c not in fetch_res.quotes
+            }
+        return meta
 
     # -------------------------------------------------------------------------
     # D2: 9:25 Call Auction Imbalance & Order-Flow Slice

@@ -632,11 +632,15 @@ def build_snapshot(
     quote_map = dict(router.get_live_quotes(all_codes))
     unique_codes = list(dict.fromkeys(c for c in all_codes if c))
     quote_hit = sum(1 for c in unique_codes if c in quote_map)
-    quote_meta = {
-        "sources_used": ["market_data_router"],
-        "coverage_pct": round(quote_hit / max(len(unique_codes), 1) * 100, 1),
-        "errors": {},
-    }
+    quote_meta = router.d1_quote_fetch_meta_for(unique_codes)
+    if not quote_meta.get("sources_used"):
+        quote_meta["sources_used"] = ["market_data_router"]
+    if quote_meta.get("coverage_pct") is None:
+        quote_meta["coverage_pct"] = round(quote_hit / max(len(unique_codes), 1) * 100, 1)
+    elif quote_hit / max(len(unique_codes), 1) * 100 > float(quote_meta["coverage_pct"]):
+        quote_meta["coverage_pct"] = round(quote_hit / max(len(unique_codes), 1) * 100, 1)
+    if quote_hit >= len(unique_codes):
+        quote_meta["errors"] = {}
 
     if enrich_level == "quotes":
         cached_technicals = _backfill_missing_technicals(

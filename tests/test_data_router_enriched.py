@@ -10,6 +10,7 @@ from agent_reach.daily_run.data_router import (
     clear_market_data_router,
     get_market_data_router,
 )
+from agent_reach.daily_run.quote_fetch import QuoteFetchResult
 from agent_reach.daily_run.data_router import format_provenance_compact_line
 from agent_reach.daily_run.symbols import (
     EnrichedSymbolProfile,
@@ -111,12 +112,89 @@ def test_market_data_router_d1_quotes_cache():
     }
 
     with patch("agent_reach.daily_run.data_router.fetch_quotes_map") as mock_fetch:
-        mock_fetch.return_value.quotes = mock_quotes
+        mock_fetch.return_value = QuoteFetchResult(
+            quotes=mock_quotes,
+            sources_used=["eastmoney"],
+        )
         res1 = router.get_live_quotes(["600000"])
         res2 = router.get_live_quotes(["600000"])
         assert res1["600000"]["price"] == 10.0
         assert mock_fetch.call_count == 1
         assert res2["600000"]["price"] == 10.0
+
+
+def test_market_data_router_d1_retries_on_empty_quotes():
+    router = MarketDataRouter(
+        settings={
+            "quote_fetch": {
+                "d1_retry_max_attempts": 3,
+                "d1_retry_delays": [0.0, 0.0, 0.0],
+            }
+        }
+    )
+    quote_row = {
+        "600000": {"code": "600000", "name": "浦发银行", "price": 10.0, "change_pct": 1.0},
+    }
+    call_count = {"n": 0}
+
+    def _fetch(codes, settings=None):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return QuoteFetchResult(errors={"600000": "eastmoney: timeout"})
+        return QuoteFetchResult(quotes=quote_row, sources_used=["eastmoney"])
+
+    with patch("agent_reach.daily_run.data_router.fetch_quotes_map", side_effect=_fetch):
+        with patch("agent_reach.daily_run.data_router.time.sleep"):
+            res = router.get_live_quotes(["600000"], force_refresh=True)
+
+    assert res["600000"]["price"] == 10.0
+    assert call_count["n"] == 2
+    meta = router.d1_quote_fetch_meta_for(["600000"])
+    assert meta["coverage_pct"] == 100.0
+    assert meta["errors"] == {}
+
+
+def test_build_snapshot_persists_quote_fetch_errors_on_partial():
+    from agent_reach.daily_run.snapshot_builder import build_snapshot
+
+    portfolio = {
+        "primary_code": "688008",
+        "holdings": [
+            {"code": "688008", "name": "澜起科技", "shares": 100, "cost": 255.87},
+            {"code": "002273", "name": "水晶光电", "shares": 300, "cost": 33.81},
+        ],
+        "watchlist": [],
+    }
+    router = MarketDataRouter(
+        settings={
+            "quote_fetch": {
+                "d1_retry_max_attempts": 1,
+                "d1_retry_delays": [0.0],
+            }
+        }
+    )
+
+    def _fetch(codes, settings=None):
+        return QuoteFetchResult(
+            quotes={
+                "688008": {"code": "688008", "price": 260.0, "change_pct": 1.0, "source": "xueqiu"},
+            },
+            errors={"002273": "no quote from configured sources"},
+            sources_used=["xueqiu"],
+        )
+
+    with patch("agent_reach.daily_run.data_router.fetch_quotes_map", side_effect=_fetch):
+        with patch("agent_reach.daily_run.data_router.get_market_data_router", return_value=router):
+            with patch("agent_reach.daily_run.snapshot_builder.load_daily_cache", return_value={}):
+                with patch(
+                    "agent_reach.daily_run.snapshot_builder._attach_technicals",
+                    side_effect=lambda quote, code, **kwargs: quote,
+                ):
+                    snap = build_snapshot(portfolio, report_type="premarket", enrich=True)
+
+    qf = snap.get("quote_fetch") or {}
+    assert qf.get("coverage_pct", 100) < 100
+    assert "002273" in (qf.get("errors") or {})
 
 
 def test_get_market_data_router_singleton():
@@ -168,6 +246,9 @@ def test_build_snapshot_attaches_data_provenance():
         "d1_quotes": {"status": "healthy"},
         "d6_deviation": {"status": "healthy"},
     }
+    from tests.conftest import stub_market_router_d1_meta
+
+    stub_market_router_d1_meta(router, router.get_live_quotes.return_value)
     with patch("agent_reach.daily_run.data_router.get_market_data_router", return_value=router):
         with patch("agent_reach.daily_run.snapshot_builder.load_daily_cache", return_value={}):
             with patch(

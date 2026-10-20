@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from agent_reach.daily_run.quote_fetch import QuoteFetchResult
+from tests.conftest import stub_market_router_d1_meta
 from agent_reach.daily_run.schedule import default_entries, render_crontab_block
 from agent_reach.daily_run.snapshot_builder import (
     _apply_cached_technicals,
@@ -40,6 +41,7 @@ def _mock_market_data_router(mock_get_router, *, quotes=None, macro=None) -> Mag
         "d5_macro": {"status": "healthy"},
         "d6_deviation": {"status": "healthy"},
     }
+    stub_market_router_d1_meta(router, quotes or {})
     mock_get_router.return_value = router
     return router
 

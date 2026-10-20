@@ -239,6 +239,9 @@ class TestIntradayMacroRefresh:
             "603986": {"code": "603986", "price": 450.0, "change_pct": -1.0, "source": "xueqiu"},
         }
         router.get_provenance_status.return_value = {"d1_quotes": {"status": "healthy"}}
+        from tests.conftest import stub_market_router_d1_meta
+
+        stub_market_router_d1_meta(router, router.get_live_quotes.return_value)
         mock_get_router.return_value = router
         with patch(
             "agent_reach.daily_run.snapshot_builder._backfill_missing_technicals",
@@ -285,6 +288,9 @@ class TestIntradayMacroRefresh:
             "688008": {"code": "688008", "price": 260.0, "change_pct": 1.0, "source": "xueqiu"},
         }
         router.get_provenance_status.return_value = {"d1_quotes": {"status": "healthy"}}
+        from tests.conftest import stub_market_router_d1_meta
+
+        stub_market_router_d1_meta(router, router.get_live_quotes.return_value)
         mock_get_router.return_value = router
         with patch("agent_reach.daily_run.snapshot_builder.save_daily_cache") as mock_save:
             snap = build_snapshot(
