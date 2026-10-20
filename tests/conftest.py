@@ -153,3 +153,23 @@ def isolate_daily_run_state(monkeypatch, tmp_path):
         "agent_reach.daily_run.skill_fragments.ARCHIVE_DIR",
         tmp_path / "archives" / "skill",
     )
+
+
+def stub_market_router_d1_meta(router, quotes: dict | None = None) -> None:
+    """MagicMock routers need d1_quote_fetch_meta_for after snapshot quote manifest (L1-C)."""
+
+    def _meta(codes):
+        unique = list(dict.fromkeys(str(c).zfill(6)[-6:] for c in codes if c))
+        qmap = quotes or getattr(router.get_live_quotes, "return_value", {}) or {}
+        hit = sum(1 for c in unique if c in qmap)
+        return {
+            "sources_used": ["market_data_router"],
+            "coverage_pct": round(hit / max(len(unique), 1) * 100, 1),
+            "errors": {
+                c: "no quote from configured sources"
+                for c in unique
+                if c not in qmap
+            },
+        }
+
+    router.d1_quote_fetch_meta_for.side_effect = _meta
