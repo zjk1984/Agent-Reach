@@ -304,6 +304,75 @@ class TestWatchlistPolicy:
 
 
 class TestWatchlistAffordableLot:
+    def test_close_empty_snapshot_watchlist_not_cleared_by_affordable_lot(
+        self, portfolio, snapshot, settings, monkeypatch
+    ):
+        """Regression: per-symbol primary snap with watchlist=[] must not wipe portfolio watchlist."""
+        settings["watchlist"]["require_affordable_lot"] = True
+        settings["watchlist"]["min_size"] = 0
+        settings["watchlist"]["hot_topic_adjust_enabled"] = False
+        settings["watchlist"]["candidates"] = []
+        portfolio["watchlist"] = [
+            {"code": "603986", "name": "兆易创新"},
+            {"code": "002273", "name": "水晶光电"},
+            {"code": "000725", "name": "京东方A"},
+        ]
+        snapshot["watchlist"] = []
+        monkeypatch.setattr(
+            "agent_reach.daily_run.quote_fetch.fetch_quotes_map",
+            lambda codes, config=None, *, settings=None: __import__(
+                "agent_reach.daily_run.quote_fetch", fromlist=["QuoteFetchResult"]
+            ).QuoteFetchResult(quotes={}),
+        )
+        result = adjust_watchlist(portfolio, snapshot, settings, "close")
+        codes = {w["code"] for w in result.portfolio["watchlist"]}
+        assert codes == {"603986", "002273", "000725"}
+        assert not any(c.action == "remove" and "缺少报价" in c.reason for c in result.changes)
+
+    def test_close_enriches_watchlist_quotes_before_affordable_check(
+        self, portfolio, settings, monkeypatch
+    ):
+        settings["watchlist"]["require_affordable_lot"] = True
+        settings["watchlist"]["min_size"] = 0
+        settings["watchlist"]["hot_topic_adjust_enabled"] = False
+        settings["watchlist"]["candidates"] = []
+        portfolio["watchlist"] = [
+            {"code": "000725", "name": "京东方A"},
+            {"code": "688981", "name": "中芯国际"},
+        ]
+        snapshot = {
+            "mss_final": 48.0,
+            "watchlist": [],
+            "portfolio": {"holdings": portfolio["holdings"]},
+        }
+        monkeypatch.setattr(
+            "agent_reach.daily_run.portfolio_manager.watchlist_per_trade_budget",
+            lambda *a, **k: {
+                "per_budget": 15_000,
+                "deploy_ratio": 0.25,
+                "min_cash_ratio": 0.1,
+                "commission_rate": 0.0015,
+            },
+        )
+
+        def _fake_fetch(codes, config=None, *, settings=None):
+            from agent_reach.daily_run.quote_fetch import QuoteFetchResult
+
+            quotes = {
+                "000725": {"code": "000725", "name": "京东方A", "price": 5.75, "change_pct": 1.0},
+                "688981": {"code": "688981", "name": "中芯国际", "price": 119.0, "change_pct": -1.0},
+            }
+            return QuoteFetchResult(quotes={c: quotes[c] for c in codes if c in quotes})
+
+        monkeypatch.setattr(
+            "agent_reach.daily_run.quote_fetch.fetch_quotes_map",
+            _fake_fetch,
+        )
+        result = adjust_watchlist(portfolio, snapshot, settings, "close")
+        codes = {w["code"] for w in result.portfolio["watchlist"]}
+        assert "000725" in codes
+        assert "688981" not in codes
+
     def test_morning_removes_unaffordable_watchlist(self, portfolio, snapshot, settings, monkeypatch):
         settings["watchlist"]["require_affordable_lot"] = True
         settings["watchlist"]["min_size"] = 0
