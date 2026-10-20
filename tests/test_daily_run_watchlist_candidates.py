@@ -136,6 +136,7 @@ class TestWatchlistCandidates:
         assert sector_limit == 10
 
     def test_xueqiu_hot_stock_candidates_when_below_min(self, settings):
+        settings["watchlist"]["xueqiu_hot_candidates_enabled"] = True
         settings["watchlist"]["sector_pools"] = {}
         report = {
             "week_end": "2026-07-25",
@@ -155,7 +156,8 @@ class TestWatchlistCandidates:
         assert "688981" in codes or "300502" in codes
         assert any(c.get("source") == "xueqiu_hot" for c in update.candidates)
 
-    def test_xueqiu_hot_candidates_always_on(self, settings):
+    def test_xueqiu_search_supplements_when_hot_disabled(self, settings):
+        settings["watchlist"]["xueqiu_hot_candidates_enabled"] = False
         report = {
             **_weekly_report(),
             "macro_signals": {
