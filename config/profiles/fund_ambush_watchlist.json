@@ -1,0 +1,19 @@
+{
+  "_profile": "fund_ambush_watchlist",
+  "_phase": "W1",
+  "_intent": "观察池埋伏：降纯热点入池，保留 weekly_candidates + sector_pools 与 xueqiu search 低权重补充",
+  "_prod_merge": "Deep-merge these keys into ~/.agent-reach/daily_run_settings.json (user override). Repo default config/daily_run_settings.json already ships W1 values; prod only needs this snippet if local file predates M9 or re-enables hot sources.",
+  "watchlist": {
+    "hot_topic_adjust_enabled": false,
+    "negative_intel_remove_enabled": true,
+    "xueqiu_hot_candidates_enabled": false,
+    "xueqiu_search_candidates_enabled": true,
+    "weekly_candidates_enabled": true,
+    "weekly_candidates_min": 5,
+    "weekly_candidates_max": 10,
+    "eastmoney_screen_candidates_enabled": true
+  },
+  "plugins": {
+    "eastmoney_screen_min_change_pct": 1.0
+  }
+}
