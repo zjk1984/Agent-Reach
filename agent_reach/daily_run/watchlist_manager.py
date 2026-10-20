@@ -17,6 +17,7 @@ from agent_reach.daily_run.symbols import build_enriched_symbols, copy_portfolio
 from agent_reach.daily_run.snapshot_builder import _normalize_code
 from agent_reach.daily_run.watchlist_candidates import effective_watchlist_candidates
 from agent_reach.daily_run.watchlist_intel import watchlist_intel_enabled
+from loguru import logger
 
 WatchlistPhase = Literal["morning", "close"]
 
@@ -92,6 +93,17 @@ def effective_watchlist_min(settings: dict[str, Any], portfolio: dict[str, Any])
     return min(minimum, max_watchlist_size(settings, portfolio))
 
 
+def _ensure_snapshot_watchlist_from_portfolio(
+    snapshot: dict[str, Any],
+    portfolio: dict[str, Any],
+) -> None:
+    """When per-symbol snapshot dropped watchlist rows, restore from portfolio for adjust."""
+    pf_wl = portfolio.get("watchlist") or []
+    snap_wl = snapshot.get("watchlist") or []
+    if pf_wl and not snap_wl:
+        snapshot["watchlist"] = [dict(w) for w in pf_wl]
+
+
 def enrich_snapshot_with_watchlist_candidate_quotes(
     snapshot: dict[str, Any],
     portfolio: dict[str, Any],
@@ -99,7 +111,7 @@ def enrich_snapshot_with_watchlist_candidate_quotes(
     *,
     config=None,
 ) -> None:
-    """Batch-fetch quotes for config watchlist candidates missing from snapshot."""
+    """Batch-fetch quotes for watchlist + config candidates missing from snapshot."""
     from agent_reach.daily_run.portfolio_manager import _price_for
     from agent_reach.daily_run.quote_fetch import fetch_quotes_map
 
@@ -117,7 +129,16 @@ def enrich_snapshot_with_watchlist_candidate_quotes(
         for c in candidates
         if c.get("code")
     ]
-    need = [c for c in dict.fromkeys(candidate_codes) if c and c not in held]
+    watchlist_codes = [
+        _normalize_code(str(w.get("code", "")))
+        for w in portfolio.get("watchlist") or []
+        if w.get("code")
+    ]
+    need = [
+        c
+        for c in dict.fromkeys(candidate_codes + watchlist_codes)
+        if c and c not in held
+    ]
     if not need:
         return
 
@@ -180,7 +201,8 @@ def adjust_watchlist(
     if not is_watchlist_adjust_enabled(settings):
         return WatchlistAdjustResult(applied=False, portfolio=portfolio, message="watchlist.auto_adjust 未启用")
 
-    if phase == "morning":
+    _ensure_snapshot_watchlist_from_portfolio(snapshot, portfolio)
+    if phase in ("morning", "close"):
         enrich_snapshot_with_watchlist_candidate_quotes(snapshot, portfolio, settings)
 
     pf = copy_portfolio(portfolio)
@@ -278,6 +300,14 @@ def adjust_watchlist(
                 pf, enriched, settings, code
             )
             if not affordable:
+                if budget_reason == "缺少报价，无法评估一手成本":
+                    logger.warning(
+                        "观察池 {} ({}) 缺少报价，保留条目并跳过 affordable-lot 剔除",
+                        str(w.get("name", code)),
+                        code,
+                    )
+                    kept.append(dict(w))
+                    continue
                 changes.append(
                     WatchlistChange(
                         "remove",

@@ -816,6 +816,7 @@ def run_close_for_symbols(
 
         wl_result = None
         if is_watchlist_adjust_enabled(cfg):
+            sync_snapshot_portfolio(primary_snap, pf_work)
             wl_result = adjust_watchlist(
                 pf_work,
                 primary_snap,
