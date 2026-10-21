@@ -1,0 +1,39 @@
+{
+  "_profile": "fund_moderate_cash",
+  "_phase": "C1",
+  "_intent": "非熊市降现金储备、提高 deploy 斜率；目标 effective min_cash_ratio ≈0.25–0.30（fixed 基线 0.28 + cap/attack 放松）。保留 gate 买入与 risk block；不恢复热点观察池 churn。playbook 总仓 cap 52% 为可选上限放宽（原 37%），加快从 83% 现金向目标靠拢但仍受 MSS/摩擦/宏观 tier 约束。",
+  "_prod_merge": "Deep-merge into ~/.agent-reach/daily_run_settings.json after ambush watchlist keys (W1). Does not auto-trade; lowers cash floor + raises deploy ratios for sessions that pass gates.",
+  "thresholds": {
+    "min_cash_ratio": 0.28
+  },
+  "harness": {
+    "min_cash_ratio_mode": "fixed",
+    "reading_signals": {
+      "mode": "fixed",
+      "recovery_min_mss": 50.0,
+      "recovery_min_lookback": 50.0,
+      "recovery_min_delta": 3.0,
+      "recovery_macro_veto": 38.0,
+      "recovery_aggressive_entry": 48.0
+    }
+  },
+  "intraday": {
+    "technical_watch": {
+      "min_cash_ratio_cap": {
+        "register_min_cash_ratio": 0.3,
+        "attack_min_cash_ratio": 0.2,
+        "rebound_mss_level": 55.0
+      }
+    }
+  },
+  "deploy_signal": {
+    "weak_deploy_ratio": 0.35,
+    "medium_deploy_ratio": 0.55
+  },
+  "playbook_contract": {
+    "total_stock_weight_cap_pct": 52.0
+  },
+  "watchlist": {
+    "hot_topic_adjust_enabled": false
+  }
+}
