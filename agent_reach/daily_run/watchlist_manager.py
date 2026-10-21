@@ -655,12 +655,54 @@ def _selection_reason_for_candidate(
     sector: str,
     hot_titles: list[str],
     default_reason: str,
+    settings: Optional[dict[str, Any]] = None,
+    enriched_row: Optional[dict[str, Any]] = None,
+    snapshot: Optional[dict[str, Any]] = None,
+    base_mss: float = 50.0,
 ) -> str:
+    from agent_reach.daily_run.watchlist_potential_score import (
+        compute_watchlist_potential,
+        format_watchlist_potential_one_liner,
+        watchlist_potential_enabled,
+    )
+
+    hot_adjust = (
+        watchlist_settings(settings or {}).get("hot_topic_adjust_enabled", True) is not False
+    )
     if cand.get("reason"):
-        return str(cand["reason"])
-    if _matches_hot_topics(_candidate_keywords(cand), hot_titles):
-        return f"最新热点匹配 · sector_pool·{sector}，收盘纳入观察池"
-    return f"sector_pool·{sector} — {default_reason}"
+        legacy = str(cand["reason"])
+    elif _matches_hot_topics(_candidate_keywords(cand), hot_titles):
+        legacy = f"最新热点匹配 · sector_pool·{sector}，收盘纳入观察池"
+    else:
+        legacy = f"sector_pool·{sector} — {default_reason}"
+
+    if watchlist_potential_enabled(settings) and not hot_adjust:
+        pot = compute_watchlist_potential(
+            cand,
+            row=enriched_row or {},
+            snapshot=snapshot,
+            settings=settings,
+            base_mss=base_mss,
+            hot_titles=hot_titles,
+        )
+        line = format_watchlist_potential_one_liner(pot)
+        if cand.get("reason") and "sector_pool" in str(cand["reason"]):
+            return f"{line} · {cand['reason']}"
+        return line
+    if watchlist_potential_enabled(settings) and hot_adjust:
+        pot = compute_watchlist_potential(
+            cand,
+            row=enriched_row or {},
+            snapshot=snapshot,
+            settings=settings,
+            base_mss=base_mss,
+            hot_titles=hot_titles,
+        )
+        line = format_watchlist_potential_one_liner(pot)
+        if line not in legacy:
+            return f"{legacy} · {line}"
+        return legacy
+    return legacy
 
 
 def _watchlist_entry_from_candidate(
@@ -670,6 +712,8 @@ def _watchlist_entry_from_candidate(
     hot_titles: list[str],
     default_reason: str,
     snapshot: Optional[dict[str, Any]] = None,
+    enriched_row: Optional[dict[str, Any]] = None,
+    base_mss: float = 50.0,
 ) -> dict[str, Any]:
     code = _normalize_code(str(cand.get("code", "")))
     name = str(cand.get("name") or code)
@@ -679,19 +723,40 @@ def _watchlist_entry_from_candidate(
         sector=sector,
         hot_titles=hot_titles,
         default_reason=default_reason,
+        settings=settings,
+        enriched_row=enriched_row,
+        snapshot=snapshot,
+        base_mss=base_mss,
     )
     if snapshot and watchlist_intel_enabled(settings):
         from agent_reach.daily_run.watchlist_intel import intel_reason_suffix
 
         intel = (snapshot.get("watchlist_intel") or {}).get(code)
         reason = f"{reason}{intel_reason_suffix(intel)}"
-    return {
+    entry: dict[str, Any] = {
         "code": code,
         "name": name,
         "sector": sector,
         "reason": reason,
         "source": str(cand.get("source") or "sector_pool"),
     }
+    from agent_reach.daily_run.watchlist_potential_score import (
+        compute_watchlist_potential,
+        watchlist_potential_enabled,
+    )
+
+    if watchlist_potential_enabled(settings):
+        pot = compute_watchlist_potential(
+            cand,
+            row=enriched_row or {},
+            snapshot=snapshot,
+            settings=settings,
+            base_mss=base_mss,
+            hot_titles=hot_titles,
+        )
+        entry["potential_score"] = round(pot.score, 1)
+        entry["potential_reason"] = pot.primary_reason
+    return entry
 
 
 def _enrich_watchlist_entry(row: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
@@ -709,6 +774,10 @@ def _enrich_watchlist_entry(row: dict[str, Any], settings: dict[str, Any]) -> di
 def _rank_candidates_for_close_refresh(
     settings: dict[str, Any],
     hot_titles: list[str],
+    *,
+    enriched: Optional[dict[str, dict[str, Any]]] = None,
+    snapshot: Optional[dict[str, Any]] = None,
+    base_mss: float = 50.0,
 ) -> list[dict[str, Any]]:
     from agent_reach.daily_run.watchlist_candidates import (
         effective_watchlist_candidates,
@@ -719,10 +788,28 @@ def _rank_candidates_for_close_refresh(
     weekly = load_weekly_candidates() or {}
     sector_order = {s: i for i, s in enumerate(weekly.get("sectors") or [])}
 
-    def sort_key(cand: dict[str, Any]) -> tuple[int, int, str]:
+    from agent_reach.daily_run.watchlist_potential_score import (
+        candidate_potential_sort_key,
+        watchlist_potential_enabled,
+    )
+
+    hot_adjust = watchlist_settings(settings).get("hot_topic_adjust_enabled", True) is not False
+
+    def sort_key(cand: dict[str, Any]) -> tuple[Any, ...]:
         sector = _sector_for_candidate(cand, settings)
+        code = _normalize_code(str(cand.get("code", "")))
+        if watchlist_potential_enabled(settings) and not hot_adjust:
+            score = candidate_potential_sort_key(
+                cand,
+                enriched=enriched or {},
+                snapshot=snapshot or {},
+                settings=settings,
+                base_mss=base_mss,
+                hot_titles=hot_titles,
+            )
+            return (-score, sector_order.get(sector, 999), code)
         hot_rank = 0 if _matches_hot_topics(_candidate_keywords(cand), hot_titles) else 1
-        return (hot_rank, sector_order.get(sector, 999), _normalize_code(str(cand.get("code", ""))))
+        return (hot_rank, sector_order.get(sector, 999), code)
 
     return sorted(candidates, key=sort_key)
 
@@ -775,7 +862,13 @@ def _refresh_close_watchlist_from_hot_topics(
         )
         ranked = funnel.get("selected") or []
     else:
-        ranked = _rank_candidates_for_close_refresh(settings, hot_titles)
+        ranked = _rank_candidates_for_close_refresh(
+            settings,
+            hot_titles,
+            enriched=enriched,
+            snapshot=snapshot,
+            base_mss=base_mss,
+        )
     _add_candidates(
         pf,
         settings,
@@ -823,16 +916,35 @@ def _add_candidates(
             other_cands = [c for c in candidates if c not in hot_cands]
             candidates = hot_cands + other_cands
         else:
-            candidates = sorted(
-                candidates,
-                key=lambda c: _symbol_score(
-                    enriched.get(_normalize_code(str(c.get("code", ""))), {}),
-                    base_mss=base_mss,
-                    settings=settings,
-                    snapshot=snapshot,
-                ),
-                reverse=True,
+            from agent_reach.daily_run.watchlist_potential_score import (
+                candidate_potential_sort_key,
+                watchlist_potential_enabled,
             )
+
+            if watchlist_potential_enabled(settings):
+                candidates = sorted(
+                    candidates,
+                    key=lambda c: candidate_potential_sort_key(
+                        c,
+                        enriched=enriched,
+                        snapshot=snapshot,
+                        settings=settings,
+                        base_mss=base_mss,
+                        hot_titles=titles,
+                    ),
+                    reverse=True,
+                )
+            else:
+                candidates = sorted(
+                    candidates,
+                    key=lambda c: _symbol_score(
+                        enriched.get(_normalize_code(str(c.get("code", ""))), {}),
+                        base_mss=base_mss,
+                        settings=settings,
+                        snapshot=snapshot,
+                    ),
+                    reverse=True,
+                )
 
     for cand in candidates:
         code = _normalize_code(str(cand.get("code", "")))
@@ -884,6 +996,8 @@ def _add_candidates(
             hot_titles=titles,
             default_reason=reason,
             snapshot=snapshot,
+            enriched_row=row,
+            base_mss=base_mss,
         )
         pf.setdefault("watchlist", []).append(entry)
         changes.append(
@@ -915,16 +1029,31 @@ def _evict_low_score_watchlist_at_total_cap(
         unique_symbol_count(pf) >= max_total_symbols(settings)
         and _watchlist_only_count(pf, held_codes) > target_min
     ):
-        scored = [
-            (
-                _symbol_score(
-                    {**w, **enriched.get(_normalize_code(str(w.get("code", ""))), {})},
-                    base_mss=base_mss,
+        from agent_reach.daily_run.watchlist_potential_score import (
+            candidate_potential_sort_key,
+            watchlist_potential_enabled,
+        )
+
+        def _watchlist_evict_score(w: dict[str, Any]) -> float:
+            code = _normalize_code(str(w.get("code", "")))
+            merged = {**w, **enriched.get(code, {})}
+            if watchlist_potential_enabled(settings):
+                return candidate_potential_sort_key(
+                    merged,
+                    enriched=enriched,
+                    snapshot=snapshot or {},
                     settings=settings,
-                    snapshot=snapshot,
-                ),
-                w,
+                    base_mss=base_mss,
+                )
+            return _symbol_score(
+                merged,
+                base_mss=base_mss,
+                settings=settings,
+                snapshot=snapshot,
             )
+
+        scored = [
+            (_watchlist_evict_score(w), w)
             for w in pf.get("watchlist") or []
             if _normalize_code(str(w.get("code", ""))) not in held_codes
         ]

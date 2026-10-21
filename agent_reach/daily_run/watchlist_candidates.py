@@ -429,10 +429,36 @@ def effective_watchlist_candidates(settings: dict[str, Any]) -> list[dict[str, A
     return merged
 
 
-def render_weekly_candidates_markdown(record: dict[str, Any]) -> str:
+def render_weekly_candidates_markdown(
+    record: dict[str, Any],
+    *,
+    settings: Optional[dict[str, Any]] = None,
+    enriched: Optional[dict[str, dict[str, Any]]] = None,
+    snapshot: Optional[dict[str, Any]] = None,
+) -> str:
     if not record.get("candidates"):
         return f"**观察池候选：** {record.get('message') or '无更新'}"
     lines = [f"**观察池候选更新：** {record.get('message')}"]
+    from agent_reach.daily_run.watchlist_potential_score import (
+        compute_watchlist_potential,
+        watchlist_potential_enabled,
+    )
+
+    enriched_map = enriched or {}
     for c in record.get("candidates") or []:
-        lines.append(f"- **{c.get('name')}** ({c.get('code')}) — {c.get('reason')}")
+        code = _normalize_code(str(c.get("code") or ""))
+        reason = str(c.get("reason") or "")
+        if settings and watchlist_potential_enabled(settings):
+            pot = compute_watchlist_potential(
+                c,
+                row=enriched_map.get(code) or {},
+                snapshot=snapshot,
+                settings=settings,
+            )
+            pot_line = pot.one_liner()
+            if reason and pot_line not in reason:
+                reason = f"{pot_line} — {reason}"
+            else:
+                reason = pot_line or reason
+        lines.append(f"- **{c.get('name')}** ({c.get('code')}) — {reason}")
     return "\n".join(lines)
