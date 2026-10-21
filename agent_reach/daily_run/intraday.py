@@ -1306,6 +1306,19 @@ def render_intraday_scan_markdown(
     watchlist_md = render_watchlist_drawdown_markdown(pf, settings=settings)
     if watchlist_md:
         lines.extend(["", watchlist_md])
+    from agent_reach.daily_run.watchlist_potential_score import render_watchlist_potential_markdown
+    from agent_reach.daily_run.symbols import build_enriched_symbols
+
+    quote_map = build_enriched_symbols(enriched or scan or {}, settings)
+    potential_md = render_watchlist_potential_markdown(
+        pf,
+        quote_map,
+        snapshot=scan if isinstance(scan, dict) else None,
+        settings=settings,
+        base_mss=float(scan.get("mss_final") or 50.0) if isinstance(scan, dict) else 50.0,
+    )
+    if potential_md:
+        lines.extend(["", potential_md])
     from agent_reach.daily_run.xueqiu_hot_display import render_intraday_xueqiu_alert_markdown
 
     alert_md = render_intraday_xueqiu_alert_markdown(macro_signals)

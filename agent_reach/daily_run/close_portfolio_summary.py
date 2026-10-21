@@ -1439,14 +1439,22 @@ def render_close_portfolio_markdown(
             sector = w.get("sector")
             sector_s = f" · **{sector}**" if sector else ""
             reason = str(w.get("reason") or add_reasons.get(code, "")).strip()
+            pot_s = ""
+            if w.get("potential_score") is not None and w.get("potential_reason"):
+                pot_s = f"潜力 {int(round(float(w['potential_score'])))} · {w['potential_reason']}"
             if not reason:
                 from agent_reach.daily_run.watchlist_intel import intel_line_for_code
 
                 intel_hint = intel_line_for_code(intel_by_code, code)
                 if intel_hint and intel_hint not in reason:
                     reason = intel_hint
-            if reason:
-                lines.append(f"- **{name}** ({code}){sector_s}{chg_s} — {reason}")
+            tail = pot_s or reason
+            if pot_s and reason and pot_s not in reason:
+                tail = f"{pot_s} — {reason}"
+            elif reason:
+                tail = reason
+            if tail:
+                lines.append(f"- **{name}** ({code}){sector_s}{chg_s} — {tail}")
             else:
                 lines.append(f"- **{name}** ({code}){sector_s}{chg_s}")
     else:

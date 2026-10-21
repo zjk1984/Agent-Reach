@@ -1172,6 +1172,15 @@
       "strong_verdict_boost": 1.5,
       "consecutive_strong_boost": 0.5
     },
+    "potential_score": {
+      "enabled": true,
+      "weight_mainline": 25,
+      "weight_mss_room": 20,
+      "weight_position": 20,
+      "weight_quality": 15,
+      "penalty_hot_chase": 20,
+      "penalty_limit_up_chase": 15
+    },
     "candidates": [
       {"code": "603986", "name": "兆易创新", "keywords": ["兆易", "存储", "芯片", "DDR", "半导体"]},
       {"code": "000725", "name": "京东方A", "keywords": ["京东方", "面板", "OLED", "显示"]},
