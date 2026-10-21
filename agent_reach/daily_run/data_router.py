@@ -191,6 +191,8 @@ class MarketDataRouter:
 
     def d1_quote_fetch_meta_for(self, codes: list[str]) -> dict[str, Any]:
         """Coverage + errors for requested codes after the last get_live_quotes call."""
+        from agent_reach.daily_run.quote_coverage import enrich_quote_fetch_meta
+
         unique = list(dict.fromkeys(normalize_code(c) for c in codes if c))
         fetch_res = self._last_d1_quote_fetch or QuoteFetchResult()
         hit = sum(1 for c in unique if c in fetch_res.quotes)
@@ -205,7 +207,7 @@ class MarketDataRouter:
                 for c in unique
                 if c not in fetch_res.quotes
             }
-        return meta
+        return enrich_quote_fetch_meta(meta, fetch_res, settings=self.settings)
 
     # -------------------------------------------------------------------------
     # D2: 9:25 Call Auction Imbalance & Order-Flow Slice

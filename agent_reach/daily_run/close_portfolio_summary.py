@@ -74,6 +74,7 @@ class ClosePortfolioSummary:
     pnl_attribution: dict[str, Any] = field(default_factory=dict)
     deploy_budget_line: Optional[str] = None
     watchlist_affordability_lines: list[str] = field(default_factory=list)
+    portfolio_quote_coverage: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -124,6 +125,7 @@ class ClosePortfolioSummary:
             "pnl_attribution": self.pnl_attribution,
             "deploy_budget_line": self.deploy_budget_line,
             "watchlist_affordability_lines": self.watchlist_affordability_lines,
+            "portfolio_quote_coverage": self.portfolio_quote_coverage,
         }
 
 
@@ -1250,6 +1252,16 @@ def build_close_portfolio_summary(
             summary.to_dict(),
             snapshot=current,
             baseline=baseline,
+        )
+    from agent_reach.daily_run.quote_coverage import portfolio_quote_coverage
+
+    quote_cov = portfolio_quote_coverage(close_pf, enriched, settings=settings)
+    summary.portfolio_quote_coverage = quote_cov
+    if quote_cov.get("below_threshold") and quote_cov.get("symbol_count"):
+        summary.notes.append(
+            f"组合行情覆盖 {quote_cov['quoted_count']}/{quote_cov['symbol_count']} "
+            f"({float(quote_cov['coverage_pct']):.1f}%) 低于阈值 "
+            f"{float(quote_cov['threshold_pct']):.0f}%"
         )
     summary.reason_lines = _build_reason_lines(summary.to_dict())
     return summary

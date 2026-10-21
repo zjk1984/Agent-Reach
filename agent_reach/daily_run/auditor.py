@@ -81,13 +81,23 @@ def run_data_audit(
         warnings.append("部分标的使用成本价 fallback，行情可能过期")
         structured_review_complete = False
 
-    quote_meta = snapshot.get("quote_fetch") or {}
-    coverage_pct = quote_meta.get("coverage_pct")
+    quote_meta = dict(snapshot.get("quote_fetch") or {})
     min_cov = float(audit_cfg.get("min_quote_coverage_pct", 0.8))
+    coverage_pct = quote_meta.get("coverage_pct")
+    portfolio_cov: Optional[dict[str, Any]] = None
+    if snapshot.get("portfolio"):
+        from agent_reach.daily_run.quote_coverage import portfolio_quote_coverage_for_snapshot
+
+        portfolio_cov = portfolio_quote_coverage_for_snapshot(snapshot, settings=settings)
+        if portfolio_cov.get("symbol_count"):
+            coverage_pct = portfolio_cov.get("coverage_pct")
+            quote_meta["portfolio_coverage_pct"] = coverage_pct
+            quote_meta["portfolio_missing_codes"] = list(portfolio_cov.get("missing_codes") or [])
     if coverage_pct is not None:
         cov = float(coverage_pct) / 100.0
         if cov < min_cov:
-            msg = f"行情覆盖率 {coverage_pct}% 低于阈值 {min_cov:.0%}"
+            scope = "组合" if portfolio_cov and portfolio_cov.get("symbol_count") else "快照"
+            msg = f"{scope}行情覆盖率 {coverage_pct}% 低于阈值 {min_cov:.0%}"
             mode = audit_cfg.get("quote_coverage_mode", "block")
             if mode == "block":
                 issues.append(msg)
@@ -97,6 +107,10 @@ def run_data_audit(
         if fetch_errors:
             sample = ", ".join(f"{k}: {v}" for k, v in list(fetch_errors.items())[:3])
             warnings.append(f"部分标的报价失败：{sample}")
+    if quote_meta.get("fallback_used"):
+        fb = ", ".join(str(s) for s in (quote_meta.get("fallback_sources") or [])[:3])
+        if fb:
+            warnings.append(f"行情使用非主源 fallback：{fb}")
 
     ref_price = snapshot.get("reference_price")
     live_price = snapshot.get("price")
