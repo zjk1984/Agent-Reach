@@ -12,6 +12,8 @@ Partial JSON overlays for `~/.agent-reach/daily_run_settings.json`. Merge by key
 {
   "watchlist": {
     "hot_topic_adjust_enabled": false,
+    "close_weak_rotation_enabled": true,
+    "close_weak_rotation_max": 2,
     "negative_intel_remove_enabled": true,
     "xueqiu_hot_candidates_enabled": false,
     "xueqiu_search_candidates_enabled": true,

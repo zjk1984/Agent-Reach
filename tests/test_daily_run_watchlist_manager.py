@@ -55,6 +55,7 @@ def settings():
     s["watchlist"]["auto_adjust_enabled"] = True
     s["watchlist"]["min_size"] = 0
     s["watchlist"]["hot_topic_adjust_enabled"] = False
+    s["watchlist"]["close_weak_rotation_enabled"] = False
     s["watchlist"]["hot_topic_fetch_if_missing"] = False
     s["watchlist"]["announcement_intel_enabled"] = False
     s["watchlist"]["require_affordable_lot"] = False
@@ -555,3 +556,113 @@ class TestMorningCandidateQuoteEnrich:
         assert result.applied is True
         assert "000725" in codes
         assert any(c.action == "add" and c.code == "000725" for c in result.changes)
+
+
+class TestCloseWeakRotation:
+    @staticmethod
+    def _patch_rotation_deps(monkeypatch):
+        monkeypatch.setattr(
+            "agent_reach.daily_run.berkshire.quality_screen.passes_watchlist_gate",
+            lambda *a, **k: (True, "ok"),
+        )
+        monkeypatch.setattr(
+            "agent_reach.daily_run.portfolio_manager.watchlist_per_trade_budget",
+            lambda *a, **k: {
+                "per_budget": 15_000,
+                "deploy_ratio": 0.25,
+                "min_cash_ratio": 0.1,
+                "commission_rate": 0.0015,
+            },
+        )
+        rank = {
+            "600001": 5.0,
+            "600002": 10.0,
+            "600003": 15.0,
+            "600004": 20.0,
+            "600005": 90.0,
+            "600006": 95.0,
+        }
+
+        def _pot(cand, **kwargs):
+            code = str(cand.get("code") or "")
+            return rank.get(code, 50.0)
+
+        monkeypatch.setattr(
+            "agent_reach.daily_run.watchlist_potential_score.candidate_potential_sort_key",
+            _pot,
+        )
+
+    def test_close_rotates_lowest_potential_at_min_size(self, portfolio, settings, monkeypatch):
+        self._patch_rotation_deps(monkeypatch)
+        settings["watchlist"]["min_size"] = 4
+        settings["watchlist"]["max_size"] = 10
+        settings["watchlist"]["hot_topic_adjust_enabled"] = False
+        settings["watchlist"]["close_weak_rotation_enabled"] = True
+        settings["watchlist"]["close_weak_rotation_max"] = 2
+        settings["watchlist"]["require_affordable_lot"] = False
+        settings["watchlist"]["negative_intel_remove_enabled"] = False
+        settings["watchlist"]["candidates"] = [
+            {"code": "600005", "name": "候选A"},
+            {"code": "600006", "name": "候选B"},
+        ]
+        portfolio["watchlist"] = [
+            {"code": "600001", "name": "弱1"},
+            {"code": "600002", "name": "弱2"},
+            {"code": "600003", "name": "中"},
+            {"code": "600004", "name": "强"},
+        ]
+        snapshot = {
+            "mss_final": 48.0,
+            "watchlist": [{"code": c["code"], "name": c["name"], "price": 10.0} for c in portfolio["watchlist"]],
+            "portfolio": {"holdings": portfolio["holdings"]},
+        }
+        result = adjust_watchlist(portfolio, snapshot, settings, "close")
+        codes = {w["code"] for w in result.portfolio["watchlist"]}
+        assert codes == {"600003", "600004", "600005", "600006"}
+        assert any(c.action == "remove" and c.code == "600001" and "弱票轮换" in c.reason for c in result.changes)
+        assert any(c.action == "remove" and c.code == "600002" for c in result.changes)
+        assert any(c.action == "add" and c.code == "600005" for c in result.changes)
+        assert not any("刷新" in c.reason for c in result.changes)
+
+    def test_close_weak_rotation_disabled_skips_swap(self, portfolio, settings, monkeypatch):
+        self._patch_rotation_deps(monkeypatch)
+        settings["watchlist"]["min_size"] = 4
+        settings["watchlist"]["close_weak_rotation_enabled"] = False
+        settings["watchlist"]["candidates"] = [{"code": "600005", "name": "候选A"}]
+        portfolio["watchlist"] = [
+            {"code": "600001", "name": "弱1"},
+            {"code": "600002", "name": "弱2"},
+            {"code": "600003", "name": "中"},
+            {"code": "600004", "name": "强"},
+        ]
+        snapshot = {
+            "mss_final": 48.0,
+            "watchlist": [{"code": c["code"], "name": c["name"], "price": 10.0} for c in portfolio["watchlist"]],
+            "portfolio": {"holdings": portfolio["holdings"]},
+        }
+        result = adjust_watchlist(portfolio, snapshot, settings, "close")
+        codes = {w["code"] for w in result.portfolio["watchlist"]}
+        assert codes == {"600001", "600002", "600003", "600004"}
+        assert not any("弱票轮换" in c.reason for c in result.changes)
+
+    def test_close_rotation_preserves_sold_recycle(self, portfolio, settings, monkeypatch):
+        self._patch_rotation_deps(monkeypatch)
+        settings["watchlist"]["min_size"] = 3
+        settings["watchlist"]["close_weak_rotation_max"] = 2
+        settings["watchlist"]["close_weak_rotation_enabled"] = True
+        settings["watchlist"]["candidates"] = [{"code": "600005", "name": "候选A"}]
+        portfolio["watchlist"] = [
+            {"code": "600001", "name": "弱1"},
+            {"code": "600002", "name": "弱2", "source": "sold_recycle", "reason": "盘中卖出回收"},
+            {"code": "600003", "name": "中"},
+        ]
+        snapshot = {
+            "mss_final": 48.0,
+            "watchlist": [{"code": c["code"], "name": c["name"], "price": 10.0} for c in portfolio["watchlist"]],
+            "portfolio": {"holdings": portfolio["holdings"]},
+        }
+        result = adjust_watchlist(portfolio, snapshot, settings, "close")
+        codes = {w["code"] for w in result.portfolio["watchlist"]}
+        assert "600002" in codes
+        assert "600001" not in codes
+        assert "600005" in codes

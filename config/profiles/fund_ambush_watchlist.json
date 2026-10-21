@@ -5,6 +5,8 @@
   "_prod_merge": "Deep-merge these keys into ~/.agent-reach/daily_run_settings.json (user override). Repo default config/daily_run_settings.json already ships W1 values; prod only needs this snippet if local file predates M9 or re-enables hot sources.",
   "watchlist": {
     "hot_topic_adjust_enabled": false,
+    "close_weak_rotation_enabled": true,
+    "close_weak_rotation_max": 2,
     "negative_intel_remove_enabled": true,
     "xueqiu_hot_candidates_enabled": false,
     "xueqiu_search_candidates_enabled": true,
