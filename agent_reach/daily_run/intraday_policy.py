@@ -263,7 +263,13 @@ def intraday_audit_block_reason(
     *,
     trade_side: str = "all",
 ) -> Optional[str]:
-    """Audit fail blocks buys by default; sells/trims may still proceed (trim-only path)."""
+    """Audit fail blocks buys by default; sells/trims may still proceed (trim-only path).
+
+    With ``intraday_block_on_audit_fail: false`` (prod default), scans only warn.
+    This gate runs on **apply/trade** paths (``evaluate_trade`` buy branch), not on
+    ``audit_only`` scan cards — so a low ``quote_fetch.coverage_pct`` on a single-symbol
+    anchor snapshot does not block trades when merged portfolio rows still have live quotes.
+    """
     if str(trade_side or "all").lower() == "sell":
         return None
     policy = intraday_audit_policy(settings)

@@ -766,6 +766,13 @@ def run_close_for_symbols(
         )
 
         use_six_cards = close_card_layout_enabled(cfg)
+        wl_result = None
+        from agent_reach.daily_run.watchlist_manager import watchlist_adjust_manifest_summary
+
+        wl_adjust_summary = watchlist_adjust_manifest_summary(
+            None,
+            enabled=is_watchlist_adjust_enabled(cfg),
+        )
         merged: list[ReportSection] = []
         sections_retitle_done = False
         if not use_six_cards:
@@ -815,7 +822,8 @@ def run_close_for_symbols(
             sync_snapshot_portfolio(primary_snap, pf_work)
 
         wl_result = None
-        if is_watchlist_adjust_enabled(cfg):
+        wl_enabled = is_watchlist_adjust_enabled(cfg)
+        if wl_enabled:
             sync_snapshot_portfolio(primary_snap, pf_work)
             wl_result = adjust_watchlist(
                 pf_work,
@@ -829,6 +837,7 @@ def run_close_for_symbols(
                 pf_work = wl_result.portfolio
                 save_portfolio(pf_work)
                 sync_snapshot_portfolio(primary_snap, pf_work)
+        wl_adjust_summary = watchlist_adjust_manifest_summary(wl_result, enabled=wl_enabled)
 
         from agent_reach.daily_run.berkshire.pipeline import run_close_berkshire
 
@@ -1038,7 +1047,7 @@ def run_close_for_symbols(
 
         clear_checkpoint("close")
 
-    return {
+    close_payload: dict[str, Any] = {
         "job": "close",
         "symbol_push_mode": symbol_push_mode(cfg),
         "symbols": targets,
@@ -1046,3 +1055,8 @@ def run_close_for_symbols(
         "errors": errors,
         "feishu": feishu_result or (symbol_results[-1]["feishu"] if symbol_results else None),
     }
+    if merge_push:
+        close_payload["watchlist_adjust_summary"] = wl_adjust_summary
+        if wl_result is not None:
+            close_payload["watchlist_adjust"] = wl_result.to_dict()
+    return close_payload

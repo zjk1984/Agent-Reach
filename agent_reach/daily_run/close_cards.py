@@ -404,6 +404,12 @@ def render_close_summary_markdown(ctx: CloseCardContext) -> str:
     if bench:
         lines.append(bench)
 
+    from agent_reach.daily_run.quote_coverage import format_portfolio_quote_coverage_warning
+
+    cov_line = format_portfolio_quote_coverage_warning(pf.get("portfolio_quote_coverage") or {})
+    if cov_line:
+        lines.extend(["", cov_line])
+
     if ctx.symbol_rows:
         lines.extend(["", "| 标的 | 代码 | 涨跌幅 | 角色 |", "|------|------|--------|------|"])
         for row in ctx.symbol_rows:

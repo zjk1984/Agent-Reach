@@ -1422,6 +1422,26 @@ def run_close(
         summary_in_main_push=push_harness_summary,
     )
 
+    from agent_reach.daily_run.watchlist_manager import (
+        WatchlistAdjustResult,
+        WatchlistChange,
+        is_watchlist_adjust_enabled,
+        watchlist_adjust_manifest_summary,
+    )
+
+    wl_result_for_manifest = None
+    if watchlist_adjust is not None:
+        wl_result_for_manifest = WatchlistAdjustResult(
+            applied=bool(watchlist_adjust.get("applied")),
+            portfolio={},
+            changes=[WatchlistChange(**c) for c in (watchlist_adjust.get("changes") or [])],
+            message=str(watchlist_adjust.get("message") or ""),
+        )
+    wl_manifest = watchlist_adjust_manifest_summary(
+        wl_result_for_manifest,
+        enabled=is_watchlist_adjust_enabled(cfg),
+    )
+
     result: dict[str, Any] = {
         "verify": verify_dict,
         "snapshot": enriched,
@@ -1436,6 +1456,8 @@ def run_close(
         "market_review": market_review_obj,
         "portfolio_markdown": portfolio_md,
         "portfolio_summary": portfolio_summary_obj.to_dict() if portfolio_summary_obj else None,
+        "watchlist_adjust": watchlist_adjust,
+        "watchlist_adjust_summary": wl_manifest,
         "watchlist_adjust_markdown": wl_md,
         "code_review_markdown": cr_md,
         "code_walk_narrative": code_walk_narrative,
@@ -1516,7 +1538,8 @@ def prepare_close_run(
 
     wl_result = None
     portfolio_dirty = False
-    if is_watchlist_adjust_enabled(cfg):
+    wl_enabled = is_watchlist_adjust_enabled(cfg)
+    if wl_enabled:
         wl_result = adjust_watchlist(
             pf_work,
             snap,
@@ -1547,12 +1570,16 @@ def prepare_close_run(
         sync_snapshot_portfolio(snap, pf_work)
         steps.append("portfolio_save")
 
+    from agent_reach.daily_run.watchlist_manager import watchlist_adjust_manifest_summary
+
+    wl_summary = watchlist_adjust_manifest_summary(wl_result, enabled=wl_enabled)
     return {
         "snapshot": snap,
         "portfolio": pf_work,
         "verify": verify_out,
         "pre_verify": verify_out,
         "watchlist_adjust": wl_result.to_dict() if wl_result else None,
+        "watchlist_adjust_summary": wl_summary,
         "code_review": code_review_result.to_dict(),
         "steps": steps,
     }

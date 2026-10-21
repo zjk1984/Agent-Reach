@@ -23,6 +23,13 @@ WatchlistPhase = Literal["morning", "close"]
 
 ALLOWED_WATCHLIST_PHASES = frozenset({"morning", "close"})
 
+# Removals below watchlist min_size require an explicit reason (macro shrink, cap eviction, etc.).
+_WATCHLIST_EXPLICIT_BELOW_MIN_FRAGMENTS = (
+    "宏观回避",
+    "合计上限",
+    "超出上限，按评分保留",
+)
+
 
 @dataclass
 class WatchlistChange:
@@ -115,9 +122,6 @@ def enrich_snapshot_with_watchlist_candidate_quotes(
     from agent_reach.daily_run.portfolio_manager import _price_for
     from agent_reach.daily_run.quote_fetch import fetch_quotes_map
 
-    if not watchlist_require_affordable_lot(settings):
-        return
-
     held = {
         _normalize_code(str(h.get("code", "")))
         for h in portfolio.get("holdings") or []
@@ -177,6 +181,55 @@ def enrich_snapshot_with_watchlist_candidate_quotes(
                 row[key] = quote[key]
         wl_by_code[code] = row
     snapshot["watchlist"] = list(wl_by_code.values())
+
+
+def watchlist_removal_allowed_below_min(reason: str) -> bool:
+    text = str(reason or "")
+    return any(fragment in text for fragment in _WATCHLIST_EXPLICIT_BELOW_MIN_FRAGMENTS)
+
+
+def _can_remove_watchlist_entry(
+    pf: dict[str, Any],
+    held_codes: set[str],
+    settings: dict[str, Any],
+    reason: str,
+) -> bool:
+    target_min = effective_watchlist_min(settings, pf)
+    if target_min <= 0 or watchlist_removal_allowed_below_min(reason):
+        return True
+    return _watchlist_only_count(pf, held_codes) > target_min
+
+
+def watchlist_adjust_manifest_summary(
+    result: Optional[WatchlistAdjustResult],
+    *,
+    enabled: bool = True,
+) -> dict[str, Any]:
+    if not enabled:
+        return {
+            "status": "disabled",
+            "applied": False,
+            "change_count": 0,
+            "message": "watchlist.auto_adjust 未启用",
+            "changes": [],
+        }
+    if result is None:
+        return {
+            "status": "skipped",
+            "applied": False,
+            "change_count": 0,
+            "message": "未执行观察池调整",
+            "changes": [],
+        }
+    applied = bool(result.applied)
+    status = "applied" if applied else "unchanged"
+    return {
+        "status": status,
+        "applied": applied,
+        "change_count": len(result.changes),
+        "message": str(result.message or ""),
+        "changes": [c.to_dict() for c in result.changes],
+    }
 
 
 def adjust_watchlist(
@@ -270,6 +323,9 @@ def adjust_watchlist(
             settings, code, pf, overview=pnl_overview
         )
         if win_rate_reason:
+            if not _can_remove_watchlist_entry(pf, held_codes, settings, win_rate_reason):
+                kept.append(dict(w))
+                continue
             changes.append(
                 WatchlistChange("remove", code, str(w.get("name", code)), win_rate_reason)
             )
@@ -279,6 +335,9 @@ def adjust_watchlist(
 
             neg_reason = watchlist_remove_negative_intel_reason(code, snapshot, settings=settings)
             if neg_reason:
+                if not _can_remove_watchlist_entry(pf, held_codes, settings, neg_reason):
+                    kept.append(dict(w))
+                    continue
                 changes.append(
                     WatchlistChange("remove", code, str(w.get("name", code)), neg_reason)
                 )
@@ -286,13 +345,21 @@ def adjust_watchlist(
         chg = row.get("change_pct")
         score = _symbol_score(row, base_mss=base_mss, settings=settings, snapshot=snapshot)
         if chg is not None and float(chg) <= -8:
+            drop_reason = f"跌幅 {float(chg):.1f}% 过大"
+            if not _can_remove_watchlist_entry(pf, held_codes, settings, drop_reason):
+                kept.append(dict(w))
+                continue
             changes.append(
-                WatchlistChange("remove", code, str(w.get("name", code)), f"跌幅 {float(chg):.1f}% 过大")
+                WatchlistChange("remove", code, str(w.get("name", code)), drop_reason)
             )
             continue
         if score < macro_veto:
+            drop_reason = f"评分 {score:.0f} 低于否决线"
+            if not _can_remove_watchlist_entry(pf, held_codes, settings, drop_reason):
+                kept.append(dict(w))
+                continue
             changes.append(
-                WatchlistChange("remove", code, str(w.get("name", code)), f"评分 {score:.0f} 低于否决线")
+                WatchlistChange("remove", code, str(w.get("name", code)), drop_reason)
             )
             continue
         if watchlist_require_affordable_lot(settings) and w.get("source") != "sold_recycle":
@@ -308,12 +375,16 @@ def adjust_watchlist(
                     )
                     kept.append(dict(w))
                     continue
+                drop_reason = budget_reason or "单笔预算不足一手，移出观察池"
+                if not _can_remove_watchlist_entry(pf, held_codes, settings, drop_reason):
+                    kept.append(dict(w))
+                    continue
                 changes.append(
                     WatchlistChange(
                         "remove",
                         code,
                         str(w.get("name", code)),
-                        budget_reason or "单笔预算不足一手，移出观察池",
+                        drop_reason,
                     )
                 )
                 continue
@@ -677,12 +748,16 @@ def _refresh_close_watchlist_from_hot_topics(
         if w.get("source") == "sold_recycle":
             preserved.append(_enrich_watchlist_entry(w, settings))
             continue
+        refresh_reason = "收盘按最新热点刷新，移出观察池"
+        if not _can_remove_watchlist_entry(pf, held_codes, settings, refresh_reason):
+            preserved.append(_enrich_watchlist_entry(w, settings))
+            continue
         changes.append(
             WatchlistChange(
                 "remove",
                 code,
                 str(w.get("name", code)),
-                "收盘按最新热点刷新，移出观察池",
+                refresh_reason,
                 sector=str(w.get("sector") or ""),
             )
         )

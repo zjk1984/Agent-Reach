@@ -970,6 +970,8 @@ def _run_job_body(
             run_result["prepare_steps"] = prepared.get("steps") or []
             if wl_result_dict is not None:
                 run_result["watchlist_adjust"] = wl_result_dict
+            if prepared.get("watchlist_adjust_summary") is not None:
+                run_result["watchlist_adjust_summary"] = prepared["watchlist_adjust_summary"]
 
             result = {"job": job, "snapshot_path": str(path), "result": run_result}
             feishu = run_result.get("feishu")
