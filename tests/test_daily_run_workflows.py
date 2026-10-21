@@ -439,6 +439,7 @@ class TestPrepareCloseRun:
         mock_enrich.assert_called_once()
         mock_adjust.assert_called_once()
         assert mock_adjust.call_args.kwargs.get("verify") is not None
+        assert prepared.get("watchlist_adjust_summary", {}).get("status") == "unchanged"
         mock_save_pf.assert_not_called()
 
     @patch("agent_reach.daily_run.market_review.get_or_collect_market_review", return_value=None)
