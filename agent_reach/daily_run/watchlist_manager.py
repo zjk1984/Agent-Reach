@@ -28,6 +28,7 @@ _WATCHLIST_EXPLICIT_BELOW_MIN_FRAGMENTS = (
     "宏观回避",
     "合计上限",
     "超出上限，按评分保留",
+    "收盘弱票轮换",
 )
 
 
@@ -82,6 +83,14 @@ def watchlist_min_size(settings: dict[str, Any]) -> int:
 
 def watchlist_max_size(settings: dict[str, Any]) -> int:
     return int(watchlist_settings(settings).get("max_size", 10))
+
+
+def close_weak_rotation_enabled(settings: dict[str, Any]) -> bool:
+    return watchlist_settings(settings).get("close_weak_rotation_enabled", False) is not False
+
+
+def close_weak_rotation_max(settings: dict[str, Any]) -> int:
+    return max(0, int(watchlist_settings(settings).get("close_weak_rotation_max", 2)))
 
 
 def max_watchlist_size(settings: dict[str, Any], portfolio: Optional[dict[str, Any]] = None) -> int:
@@ -477,6 +486,18 @@ def adjust_watchlist(
     elif phase in ("close", "morning"):
         # Refill after trim paths so min_size is not left below target (non risk-off)
         _fill_watchlist_to_min(
+            pf,
+            snapshot,
+            settings,
+            enriched,
+            changes,
+            held_codes=held_codes,
+            base_mss=base_mss,
+            pnl_overview=pnl_overview,
+        )
+
+    if phase == "close" and close_weak_rotation_enabled(settings):
+        _rotate_close_weak_watchlist(
             pf,
             snapshot,
             settings,
@@ -1008,6 +1029,153 @@ def _add_candidates(
                 entry["reason"],
                 sector=entry["sector"],
             )
+        )
+
+
+def _watchlist_entry_potential_score(
+    w: dict[str, Any],
+    *,
+    enriched: dict[str, dict[str, Any]],
+    settings: dict[str, Any],
+    base_mss: float,
+    snapshot: Optional[dict[str, Any]] = None,
+) -> float:
+    from agent_reach.daily_run.watchlist_potential_score import (
+        candidate_potential_sort_key,
+        watchlist_potential_enabled,
+    )
+
+    code = _normalize_code(str(w.get("code", "")))
+    merged = {**w, **enriched.get(code, {})}
+    if watchlist_potential_enabled(settings):
+        return candidate_potential_sort_key(
+            merged,
+            enriched=enriched,
+            snapshot=snapshot or {},
+            settings=settings,
+            base_mss=base_mss,
+        )
+    return _symbol_score(
+        merged,
+        base_mss=base_mss,
+        settings=settings,
+        snapshot=snapshot,
+    )
+
+
+def _rotate_close_weak_watchlist(
+    pf: dict[str, Any],
+    snapshot: dict[str, Any],
+    settings: dict[str, Any],
+    enriched: dict[str, dict[str, Any]],
+    changes: list[WatchlistChange],
+    *,
+    held_codes: set[str],
+    base_mss: float,
+    pnl_overview: Optional[dict[str, Any]] = None,
+) -> None:
+    """Swap out lowest-potential non-held names for ranked candidates (ambush close hygiene)."""
+    max_swap = close_weak_rotation_max(settings)
+    if max_swap <= 0:
+        return
+    target_min = effective_watchlist_min(settings, pf)
+    non_held = [
+        w
+        for w in pf.get("watchlist") or []
+        if _normalize_code(str(w.get("code", ""))) not in held_codes
+        and w.get("source") != "sold_recycle"
+    ]
+    if not non_held:
+        return
+
+    scored = [
+        (
+            _watchlist_entry_potential_score(
+                w,
+                enriched=enriched,
+                settings=settings,
+                base_mss=base_mss,
+                snapshot=snapshot,
+            ),
+            w,
+        )
+        for w in non_held
+    ]
+    scored.sort(key=lambda x: x[0])
+    to_remove: list[dict[str, Any]] = []
+    for _score, w in scored:
+        if len(to_remove) >= max_swap:
+            break
+        to_remove.append(w)
+
+    if not to_remove:
+        return
+
+    for w in to_remove:
+        code = _normalize_code(str(w.get("code", "")))
+        pf["watchlist"] = [
+            row
+            for row in pf.get("watchlist") or []
+            if _normalize_code(str(row.get("code", ""))) != code
+        ]
+        changes.append(
+            WatchlistChange(
+                "remove",
+                code,
+                str(w.get("name", code)),
+                "收盘弱票轮换，潜力分偏低移出观察池",
+                sector=str(w.get("sector") or ""),
+            )
+        )
+
+    if target_min > 0 and _watchlist_only_count(pf, held_codes) < target_min:
+        # Should not happen when swapping 1:1 at min_size; guard before refill.
+        _fill_watchlist_to_min(
+            pf,
+            snapshot,
+            settings,
+            enriched,
+            changes,
+            held_codes=held_codes,
+            base_mss=base_mss,
+            pnl_overview=pnl_overview,
+        )
+        return
+
+    hot_titles = _hot_titles_for_adjust(snapshot, pf, settings)
+    ranked = _rank_candidates_for_close_refresh(
+        settings,
+        hot_titles,
+        enriched=enriched,
+        snapshot=snapshot,
+        base_mss=base_mss,
+    )
+    before_add = _watchlist_only_count(pf, held_codes)
+    _add_candidates(
+        pf,
+        settings,
+        held_codes,
+        changes,
+        reason="收盘弱票轮换补位",
+        prefer_hot=False,
+        snapshot=snapshot,
+        enriched=enriched,
+        base_mss=base_mss,
+        hot_titles=hot_titles,
+        candidate_order=ranked,
+        pnl_overview=pnl_overview,
+    )
+    added = _watchlist_only_count(pf, held_codes) - before_add
+    if added < len(to_remove) and target_min > 0:
+        _fill_watchlist_to_min(
+            pf,
+            snapshot,
+            settings,
+            enriched,
+            changes,
+            held_codes=held_codes,
+            base_mss=base_mss,
+            pnl_overview=pnl_overview,
         )
 
 
