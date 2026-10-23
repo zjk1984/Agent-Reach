@@ -538,7 +538,7 @@ def enrich_holding(
                     if enriched.get(k) is not None:
                         out[k] = enriched[k]
         else:
-            out["price"] = out["cost"]
+            # Cost is not a market quote; leave price unset so P&L/display skip cost_fallback.
             out["quote_source"] = "cost_fallback"
     return out
 

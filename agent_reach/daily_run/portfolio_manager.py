@@ -470,9 +470,9 @@ def _holding_unrealized_pnl(
     row = {**holding, **enriched.get(code, {})}
     shares = int(row.get("shares") or 0)
     cost = float(row.get("cost") or 0)
-    price = _price_for(row, enriched) or cost
+    price = _price_for(row, enriched)
     cost_basis = shares * cost
-    if cost_basis <= 0:
+    if cost_basis <= 0 or price is None:
         return 0.0, None
     unrealized = round(shares * price - cost_basis, 2)
     pct = round(unrealized / cost_basis * 100, 2)
@@ -1825,7 +1825,14 @@ def _holdings_market_value(
     for h in holdings:
         code = _normalize_code(str(h.get("code", "")))
         row = {**h, **enriched.get(code, {})}
-        price = _price_for(row, enriched) or h.get("cost") or 0
+        price = _price_for(row, enriched)
+        if price is None:
+            # Deploy-budget NAV only — never use for daily P&L / ledger marks.
+            cost = h.get("cost")
+            if cost is not None:
+                price = float(cost)
+        if price is None:
+            continue
         total_mv += int(h.get("shares") or 0) * float(price)
     return round(total_mv, 2)
 
@@ -1995,7 +2002,9 @@ def _recalc_totals(pf: dict[str, Any], enriched: dict[str, dict[str, Any]]) -> N
         # per-holding P&L (e.g. weekly_report._holding_pnl_rows), instead of a
         # snapshot price captured earlier in the same run.
         row = {**h, **enriched.get(code, {})}
-        price = _price_for(row, enriched) or h.get("cost") or 0
+        price = _price_for(row, enriched)
+        if price is None:
+            continue
         mv += int(h.get("shares") or 0) * float(price)
     total = round(cash + mv, 2)
     pf["total"] = total
@@ -2007,15 +2016,9 @@ def _enriched_symbols(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
 
 
 def _price_for(row: dict[str, Any], enriched: dict[str, dict[str, Any]]) -> Optional[float]:
-    code = _normalize_code(str(row.get("code", "")))
-    for src in (row, enriched.get(code, {})):
-        p = src.get("price")
-        if p is not None:
-            return float(p)
-        p = src.get("cost")
-        if p is not None:
-            return float(p)
-    return None
+    from agent_reach.daily_run.quote_coverage import mark_price_from_row
+
+    return mark_price_from_row(row, enriched)
 
 
 def _symbol_score(row: dict[str, Any], decision: Any, settings: dict[str, Any]) -> float:

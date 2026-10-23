@@ -398,6 +398,50 @@ class TestClosePortfolioSummary:
         assert "今日 -1.07%" in md
         assert "当日盈亏 -90元" in md or "当日盈亏 -89元" in md
 
+    def test_cost_stamped_as_price_does_not_inflate_day_pnl(self):
+        """Regression 2026-10-22: cost_fallback price (= avg cost) must not mark close or day P&L."""
+        morning = {
+            "portfolio": {
+                "cash": 40176.27,
+                "holdings": [
+                    {
+                        "code": "002583",
+                        "name": "海能达",
+                        "shares": 1000,
+                        "cost": 12.62,
+                        "price": 8.02,
+                    }
+                ],
+            },
+        }
+        close = {
+            "portfolio": {
+                "cash": 40176.27,
+                "holdings": [
+                    {
+                        "code": "002583",
+                        "name": "海能达",
+                        "shares": 1000,
+                        "cost": 12.62,
+                        "price": 12.62,
+                        "quote_source": "cost_fallback",
+                        "change_pct": -1.07,
+                    }
+                ],
+            },
+        }
+        with patch(
+            "agent_reach.daily_run.quote_fetch.fetch_quotes_map",
+            return_value=QuoteFetchResult(quotes={}),
+        ):
+            summary = build_close_portfolio_summary(close, morning)
+        row = next(h for h in summary.holdings if h["code"] == "002583")
+        assert row.get("price") != 12.62
+        assert row["day_pnl"] == pytest.approx(-86.0, abs=2.0)
+        assert row["week_end_price"] == pytest.approx(8.02 * (1 - 0.0107), abs=0.02)
+        inflated = (12.62 - 8.02) * 1000
+        assert row["day_pnl"] != pytest.approx(inflated, abs=50)
+
     def test_render_includes_stocks_trades_watchlist(self):
         summary = _build_summary(
             _close_snapshot(),

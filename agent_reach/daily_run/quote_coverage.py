@@ -23,6 +23,25 @@ def _merged_portfolio_rows(portfolio: dict[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
+def mark_price_from_row(
+    row: dict[str, Any],
+    enriched: Optional[dict[str, dict[str, Any]]] = None,
+) -> Optional[float]:
+    """Mark/close price for P&L and display — never treat cost or cost_fallback as a quote."""
+    enriched = enriched or {}
+    if not symbol_has_live_quote(row, enriched):
+        return None
+    code = normalize_code(str(row.get("code") or ""))
+    merged = {**row, **enriched.get(code, {})}
+    price = merged.get("price")
+    if price is None:
+        return None
+    try:
+        return float(price)
+    except (TypeError, ValueError):
+        return None
+
+
 def symbol_has_live_quote(row: dict[str, Any], enriched: dict[str, dict[str, Any]]) -> bool:
     code = normalize_code(str(row.get("code") or ""))
     merged = {**row, **enriched.get(code, {})}
