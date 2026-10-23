@@ -687,19 +687,30 @@ def _quoted_prices_from_holdings(
     codes: Optional[list[str]] = None,
 ) -> dict[str, float]:
     """Mark prices from snapshot rows — never fall back to cost (cost ≠ morning mark)."""
+    from agent_reach.daily_run.quote_coverage import mark_price_from_row
+
     targets = {_normalize_code(c) for c in codes if c} if codes else None
     prices: dict[str, float] = {}
     for h in (snap.get("portfolio") or {}).get("holdings") or []:
         code = _normalize_code(str(h.get("code", "")))
         if not code or (targets is not None and code not in targets):
             continue
-        if h.get("price") is not None:
-            prices[code] = float(h["price"])
+        px = mark_price_from_row(h)
+        if px is not None:
+            prices[code] = px
     primary = snap.get("code")
     if primary and snap.get("price") is not None:
         code = _normalize_code(str(primary))
         if targets is None or code in targets:
-            prices.setdefault(code, float(snap["price"]))
+            row = {
+                "code": code,
+                "price": snap["price"],
+                "change_pct": snap.get("change_pct"),
+                "quote_source": snap.get("quote_source"),
+            }
+            px = mark_price_from_row(row)
+            if px is not None:
+                prices.setdefault(code, px)
     return prices
 
 
@@ -738,10 +749,13 @@ def _close_prices_for_pnl(
     """Close mark prices: prefer live refreshed quotes, then snapshot holding price."""
     codes = list(dict.fromkeys(_normalize_code(c) for c in holding_codes if c))
     prices: dict[str, float] = {}
+    from agent_reach.daily_run.quote_coverage import mark_price_from_row
+
     for code in codes:
         row = enriched.get(code) or {}
-        if row.get("price") is not None:
-            prices[code] = float(row["price"])
+        px = mark_price_from_row(row, enriched)
+        if px is not None:
+            prices[code] = px
     for code, px in _quoted_prices_from_holdings(current, codes).items():
         prices.setdefault(code, px)
     return prices
@@ -785,9 +799,11 @@ def _stock_mv_from_holdings(
         if not code:
             continue
         shares = int(h.get("shares") or 0)
+        from agent_reach.daily_run.quote_coverage import mark_price_from_row
+
         px = prices.get(code)
         if px is None:
-            px = h.get("price") or h.get("cost")
+            px = mark_price_from_row(h)
         if px is not None:
             total += shares * float(px)
     return round(total, 2)

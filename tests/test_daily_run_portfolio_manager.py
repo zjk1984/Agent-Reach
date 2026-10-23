@@ -1102,7 +1102,7 @@ class TestRecalcTotalsPricePrecedence:
 
         assert pf["total"] == 15000.0  # 10000 cash + 1000 * 5.0 (own price)
 
-    def test_falls_back_to_cost_when_no_price_anywhere(self):
+    def test_skips_holdings_without_mark_price(self):
         from agent_reach.daily_run.portfolio_manager import _recalc_totals
 
         pf = {
@@ -1111,7 +1111,7 @@ class TestRecalcTotalsPricePrecedence:
         }
         _recalc_totals(pf, {})
 
-        assert pf["total"] == 14000.0  # 10000 cash + 1000 * 4.0 (cost fallback)
+        assert pf["total"] == 10000.0  # cost is not a mark price
 
 
 class TestBuyBudgetContext:

@@ -157,8 +157,9 @@ class TestSnapshotBuilder:
         snap = build_snapshot(portfolio, enrich=False)
         assert snap["code"] == "688008"
         assert snap.get("enrich_level") == "lite"
-        # lite mode still refreshes quotes (may differ from static cost)
-        assert snap.get("price") is not None
+        # Without live quotes, cost must not be stamped as mark price
+        assert snap.get("price") is None
+        assert snap.get("has_cost_fallback") is True
 
     def test_fallback_technicals_patch_uses_portfolio_ma20(self):
         patch = _fallback_technicals_patch(

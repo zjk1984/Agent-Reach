@@ -744,19 +744,40 @@ def _holding_pnl_rows(
         shares = int(h.get("shares") or 0)
         cost = float(h.get("cost") or 0)
         row = enriched.get(code, {})
-        price = row.get("price") or h.get("price") or cost
-        price = float(price)
+        from agent_reach.daily_run.quote_coverage import mark_price_from_row
+
+        mark = mark_price_from_row(h, enriched)
         week_end = end_prices.get(code)
-        week_end_price = float(week_end) if week_end else price
-        mv = round(shares * week_end_price, 2)
-        cost_basis = round(shares * cost, 2)
-        unrealized = round(mv - cost_basis, 2)
-        unrealized_pct = round(unrealized / cost_basis * 100, 2) if cost_basis else None
+        if week_end is not None:
+            week_end_price: Optional[float] = float(week_end)
+        elif mark is not None:
+            week_end_price = mark
+        else:
+            week_end_price = None
+        price = mark if mark is not None else week_end_price
         week_start = week_start_prices.get(code)
         week_start_price = float(week_start) if week_start else None
+        if (
+            week_end_price is None
+            and week_start_price
+            and week_start_price > 0
+            and row.get("change_pct") is not None
+        ):
+            week_end_price = round(
+                week_start_price * (1 + float(row["change_pct"]) / 100.0),
+                4,
+            )
+            if price is None:
+                price = week_end_price
+        mv = round(shares * week_end_price, 2) if week_end_price is not None else None
+        cost_basis = round(shares * cost, 2)
+        unrealized = round(mv - cost_basis, 2) if mv is not None else None
+        unrealized_pct = (
+            round(unrealized / cost_basis * 100, 2) if cost_basis and unrealized is not None else None
+        )
         week_chg = None
         week_chg_pct = None
-        if week_start_price and week_start_price > 0:
+        if week_start_price and week_start_price > 0 and week_end_price is not None:
             week_chg = round((week_end_price - week_start_price) * shares, 2)
             week_chg_pct = round((week_end_price - week_start_price) / week_start_price * 100, 2)
         rows.append(
