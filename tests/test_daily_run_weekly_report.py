@@ -224,7 +224,8 @@ class TestWeeklyReport:
             portfolio=portfolio,
         )
         assert report.week_start == date(2026, 7, 6)
-        assert report.end_total == 75000
+        # 688008 @260 is quoted; 002273 has no live mark in snapshot-only run (cost not MTM).
+        assert report.end_total == 66000.0
         assert len(report.holdings) == 2
         assert len(report.watchlist) == 1
         assert report.watchlist_intel["603986"]["name"] == "兆易创新"
@@ -825,6 +826,88 @@ class TestWeeklyReport:
         assert "相对基准" in md or "本周" in md
         assert holding.get("unrealized_pnl") == -16500.0
         assert "成本浮盈" in md
+
+    def test_holding_pnl_rows_rejects_cost_stamped_week_end(self):
+        """Regression 2026-10-24: manifest week-end map must not treat avg cost as close (002583)."""
+        from agent_reach.daily_run.weekly_report import _holding_pnl_rows
+
+        portfolio = {
+            "holdings": [
+                {
+                    "code": "002583",
+                    "name": "海能达",
+                    "shares": 1000,
+                    "cost": 12.618,
+                    "price": 12.618,
+                    "quote_source": "cost_fallback",
+                }
+            ]
+        }
+        enriched = {
+            "002583": {
+                "price": 8.02,
+                "quote_source": "xueqiu",
+                "change_pct": 0.5,
+            }
+        }
+        rows = _holding_pnl_rows(
+            portfolio,
+            enriched,
+            week_start_prices={"002583": 7.37},
+            week_end_prices={"002583": 12.618},
+        )
+        row = rows[0]
+        assert row["week_end_price"] == pytest.approx(8.02)
+        assert row["week_chg_pct"] == pytest.approx(8.82, abs=0.15)
+        assert row["price"] == pytest.approx(8.02)
+
+    def test_prices_from_manifest_skips_cost_fallback(self):
+        from agent_reach.daily_run.weekly_report import _prices_from_manifest_record
+
+        portfolio = {
+            "holdings": [
+                {
+                    "code": "002583",
+                    "name": "海能达",
+                    "shares": 1000,
+                    "cost": 12.618,
+                    "price": 12.618,
+                    "quote_source": "cost_fallback",
+                }
+            ]
+        }
+        record = {
+            "job": "close",
+            "payload": {
+                "symbol_results": [
+                    {
+                        "code": "002583",
+                        "result": {
+                            "snapshot": {
+                                "code": "002583",
+                                "price": 12.618,
+                                "quote_source": "cost_fallback",
+                                "portfolio": portfolio,
+                            }
+                        },
+                    },
+                    {
+                        "code": "002583",
+                        "result": {
+                            "snapshot": {
+                                "code": "002583",
+                                "price": 8.02,
+                                "quote_source": "xueqiu",
+                                "change_pct": 1.0,
+                                "portfolio": portfolio,
+                            }
+                        },
+                    },
+                ]
+            },
+        }
+        prices = _prices_from_manifest_record(record)
+        assert prices.get("002583") == pytest.approx(8.02)
 
 
 class TestScheduleWeekly:

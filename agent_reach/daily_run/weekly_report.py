@@ -271,13 +271,19 @@ def _stock_mv_from_enriched(
     portfolio: dict[str, Any],
     enriched: dict[str, dict[str, Any]],
 ) -> float:
+    from agent_reach.daily_run.quote_coverage import mark_price_from_row
+
     mv = 0.0
     for h in portfolio.get("holdings") or []:
         code = _normalize_code(str(h.get("code", "")))
         row = enriched.get(code) or {}
-        price = row.get("price")
+        price = mark_price_from_row({**h, **row}, enriched)
         if price is None:
-            price = h.get("price") or h.get("cost") or 0
+            raw = row.get("price") if row.get("price") is not None else h.get("price")
+            if _manifest_mark_price_ok(h, row, raw):
+                price = float(raw)
+        if price is None:
+            continue
         mv += int(h.get("shares") or 0) * float(price)
     return round(mv, 2)
 
@@ -391,23 +397,147 @@ def _load_prior_close_total(before: date, *, max_days: int = 10) -> Optional[flo
 
 
 def _prices_from_snapshot(snap: dict[str, Any]) -> dict[str, float]:
+    from agent_reach.daily_run.quote_coverage import mark_price_from_row
+
     enriched = build_enriched_symbols(snap)
+    pf = dict(snap.get("portfolio") or {})
     prices: dict[str, float] = {}
-    for code, row in enriched.items():
-        for key in ("price", "cost"):
-            val = row.get(key)
-            if val is not None:
-                prices[code] = float(val)
-                break
+    for h in pf.get("holdings") or []:
+        code = _normalize_code(str(h.get("code") or ""))
+        if not code:
+            continue
+        row = enriched.get(code) or {}
+        px = mark_price_from_row({**h, **row}, enriched)
+        if px is None:
+            raw = row.get("price") if row.get("price") is not None else h.get("price")
+            if _manifest_mark_price_ok(h, row, raw):
+                px = float(raw)
+        if px is not None:
+            prices[code] = px
     return prices
 
 
 def _prices_from_manifest_record(record: dict[str, Any]) -> dict[str, float]:
-    _, enriched = _merged_enriched_from_manifest(record)
+    snap, enriched = _merged_enriched_from_manifest(record)
+    if not snap:
+        return {}
+    pf = dict(snap.get("portfolio") or {})
+    prices: dict[str, float] = {}
+    for h in pf.get("holdings") or []:
+        code = _normalize_code(str(h.get("code") or ""))
+        if not code:
+            continue
+        row = enriched.get(code) or {}
+        px = row.get("price")
+        if px is None:
+            continue
+        if _manifest_mark_price_ok(h, row, px):
+            prices[code] = float(px)
+    return prices
+
+
+def _manifest_mark_price_ok(
+    holding: dict[str, Any],
+    enriched_row: dict[str, Any],
+    price_val: Any,
+) -> bool:
+    """Manifest/historical quote: reject only explicit cost_fallback at avg cost."""
+    if price_val is None:
+        return False
+    try:
+        price = float(price_val)
+    except (TypeError, ValueError):
+        return False
+    cost = holding.get("cost")
+    if cost is not None:
+        try:
+            cost_f = float(cost)
+        except (TypeError, ValueError):
+            cost_f = None
+    else:
+        cost_f = None
+    qs = str(
+        enriched_row.get("quote_source")
+        or holding.get("quote_source")
+        or enriched_row.get("source")
+        or holding.get("source")
+        or ""
+    ).strip()
+    if qs == "cost_fallback" and cost_f is not None and cost_f == price:
+        return False
+    return True
+
+
+def _validated_manifest_mark_price(
+    holding: dict[str, Any],
+    enriched: dict[str, dict[str, Any]],
+    price_val: Any,
+) -> Optional[float]:
+    if price_val is None:
+        return None
+    code = _normalize_code(str(holding.get("code") or ""))
+    row_enriched = enriched.get(code) or {}
+    if not _manifest_mark_price_ok(holding, row_enriched, price_val):
+        return None
+    return float(price_val)
+
+
+def compute_weekly_nav_pnl_from_manifests(
+    manifests: list[dict[str, Any]],
+    week_start: date,
+    week_end: date,
+) -> dict[str, Any]:
+    """Canonical weekly PnL from close/morning manifest NAV (same as weekly report cards)."""
+    ws, we = week_start.isoformat(), week_end.isoformat()
+    morning_totals: list[tuple[str, float]] = []
+    close_totals: list[tuple[str, float]] = []
+    for record in manifests:
+        day = str(record.get("_run_date") or "")
+        if not day or day < ws or day > we:
+            continue
+        job = record.get("job")
+        total = _portfolio_total_from_manifest(record)
+        if total is None:
+            continue
+        if job == "morning":
+            morning_totals.append((day, total))
+        elif job == "close":
+            close_totals.append((day, total))
+
+    start_total: Optional[float] = None
+    end_total: Optional[float] = None
+    notes: list[str] = []
+
+    if morning_totals:
+        morning_totals.sort(key=lambda x: x[0])
+        start_total = morning_totals[0][1]
+    elif close_totals:
+        close_totals.sort(key=lambda x: x[0])
+        start_total = close_totals[0][1]
+        notes.append("本周无早盘 manifest，周初净值取本周首个收盘 manifest")
+    else:
+        prior_close = _load_prior_close_total(week_start)
+        if prior_close is not None:
+            start_total = prior_close
+            notes.append("本周 manifest 缺少周初净值，取上周最近收盘")
+
+    if close_totals:
+        close_totals.sort(key=lambda x: x[0])
+        end_total = close_totals[-1][1]
+
+    weekly_pnl: Optional[float] = None
+    weekly_pnl_pct: Optional[float] = None
+    if start_total is not None and end_total is not None:
+        weekly_pnl = round(end_total - start_total, 2)
+        if start_total:
+            weekly_pnl_pct = round(weekly_pnl / start_total * 100, 2)
+
     return {
-        code: float(row["price"])
-        for code, row in enriched.items()
-        if row.get("price") is not None
+        "start_total": start_total,
+        "end_total": end_total,
+        "weekly_pnl": weekly_pnl,
+        "weekly_pnl_pct": weekly_pnl_pct,
+        "notes": notes,
     }
 
 
@@ -747,16 +877,11 @@ def _holding_pnl_rows(
         from agent_reach.daily_run.quote_coverage import mark_price_from_row
 
         mark = mark_price_from_row(h, enriched)
-        week_end = end_prices.get(code)
-        if week_end is not None:
-            week_end_price: Optional[float] = float(week_end)
-        elif mark is not None:
-            week_end_price = mark
-        else:
-            week_end_price = None
-        price = mark if mark is not None else week_end_price
-        week_start = week_start_prices.get(code)
-        week_start_price = float(week_start) if week_start else None
+        week_end_price: Optional[float] = mark
+        if week_end_price is None:
+            week_end_price = _validated_manifest_mark_price(h, enriched, end_prices.get(code))
+        week_start_price = _validated_manifest_mark_price(h, enriched, week_start_prices.get(code))
+        price = week_end_price if week_end_price is not None else mark
         if (
             week_end_price is None
             and week_start_price
@@ -1048,11 +1173,29 @@ def generate_weekly_report(
     end_total: Optional[float] = None
     notes: list[str] = list(pf_notes)
 
+    nav = compute_weekly_nav_pnl_from_manifests(manifests, week_start, week_end)
+    start_total = nav.get("start_total")
+    end_total = nav.get("end_total")
+    weekly_pnl = nav.get("weekly_pnl")
+    weekly_pnl_pct = nav.get("weekly_pnl_pct")
+    notes.extend(nav.get("notes") or [])
+
+    mss_summary = build_mss_trajectory(manifests, week_start, week_end)
+
+    if end_total is None:
+        end_total = _recalc_total_from_enriched(pf, enriched) or None
+
+    if start_total is None:
+        notes.append("缺少周初净值基线，无法计算周度组合盈亏")
+
     morning_totals: list[tuple[str, float]] = []
     close_totals: list[tuple[str, float]] = []
+    ws, we = week_start.isoformat(), week_end.isoformat()
     for record in manifests:
+        day = str(record.get("_run_date") or "")
+        if not day or day < ws or day > we:
+            continue
         job = record.get("job")
-        day = record.get("_run_date", "")
         total = _portfolio_total_from_manifest(record)
         if total is None:
             continue
@@ -1060,31 +1203,6 @@ def generate_weekly_report(
             morning_totals.append((day, total))
         elif job == "close":
             close_totals.append((day, total))
-
-    mss_summary = build_mss_trajectory(manifests, week_start, week_end)
-
-    if morning_totals:
-        morning_totals.sort(key=lambda x: x[0])
-        start_total = morning_totals[0][1]
-    elif close_totals:
-        close_totals.sort(key=lambda x: x[0])
-        start_total = close_totals[0][1]
-        notes.append("本周无早盘 manifest，周初净值取本周首个收盘 manifest")
-    else:
-        prior_close = _load_prior_close_total(week_start)
-        if prior_close is not None:
-            start_total = prior_close
-            notes.append("本周 manifest 缺少周初净值，取上周最近收盘")
-
-    if close_totals:
-        close_totals.sort(key=lambda x: x[0])
-        end_total = close_totals[-1][1]
-
-    if end_total is None:
-        end_total = _recalc_total_from_enriched(pf, enriched) or None
-
-    if start_total is None:
-        notes.append("缺少周初净值基线，无法计算周度组合盈亏")
 
     daily_totals: list[dict[str, Any]] = []
     for day, total in sorted(morning_totals, key=lambda x: x[0]):
@@ -1097,9 +1215,7 @@ def generate_weekly_report(
     ratio_raw = pf.get("cash_ratio")
     cash_ratio = float(ratio_raw) if ratio_raw is not None else None
 
-    weekly_pnl: Optional[float] = None
-    weekly_pnl_pct: Optional[float] = None
-    if start_total is not None and end_total is not None:
+    if weekly_pnl is None and start_total is not None and end_total is not None:
         weekly_pnl = round(end_total - start_total, 2)
         if start_total:
             weekly_pnl_pct = round(weekly_pnl / start_total * 100, 2)
@@ -1180,6 +1296,9 @@ def generate_weekly_report(
         notes.append("本周无收盘 manifest，持股周末收盘价取当前报价")
 
     holdings = _holding_pnl_rows(pf, enriched, week_start_prices, week_end_prices)
+    from agent_reach.daily_run.weekly_card_metrics import normalize_holdings_mark_prices
+
+    holdings = normalize_holdings_mark_prices(holdings, enriched)
     pnl_attribution = build_weekly_pnl_attribution(
         weekly_pnl=weekly_pnl,
         cash_pnl=cash_pnl,
@@ -1409,7 +1528,7 @@ def generate_weekly_report(
         start_stock_mv=start_stock_mv,
         end_stock_mv=end_stock_mv,
     )
-    sector_snapshot = build_holdings_sector_snapshot(holdings, settings=settings)
+    sector_snapshot = build_holdings_sector_snapshot(holdings, settings=settings, enriched=enriched)
 
     from agent_reach.daily_run.weekly_content_scope import (
         build_weekly_macro_brief,

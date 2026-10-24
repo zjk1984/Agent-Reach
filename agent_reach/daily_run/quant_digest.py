@@ -11,6 +11,7 @@ from agent_reach.daily_run.trade_calendar import is_trading_day
 from agent_reach.daily_run.weekly_report import (
     _compute_realized_pnl,
     _load_trade_ledger_range,
+    compute_weekly_nav_pnl_from_manifests,
     trading_week_range,
 )
 
@@ -299,6 +300,17 @@ def build_quant_digest_payload(
     d = as_of or date.today()
     week_start, week_end = trading_week_range(d)
     pnl = summarize_pnl_rows(pnl_rows, week_start=week_start, week_end=week_end)
+    nav = compute_weekly_nav_pnl_from_manifests(manifests, week_start, week_end)
+    if nav.get("weekly_pnl") is not None:
+        pnl["weekly_pnl"] = nav["weekly_pnl"]
+        pnl["weekly_pnl_pct"] = nav.get("weekly_pnl_pct")
+        pnl["weekly_pnl_source"] = "nav_manifest"
+        if nav.get("start_total") is not None:
+            pnl["start_total"] = nav["start_total"]
+        if nav.get("end_total") is not None:
+            pnl["end_total"] = nav["end_total"]
+    else:
+        pnl["weekly_pnl_source"] = "daily_pnl_sum"
     trade_summary = summarize_trades(trades)
     health_rows = summarize_job_health_snapshot(job_health)
 

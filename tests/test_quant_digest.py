@@ -3,6 +3,8 @@
 
 from datetime import date
 
+import pytest
+
 from agent_reach.daily_run.daily_pnl_history import DailyPnlRecord
 from agent_reach.daily_run.quant_digest import (
     build_quant_digest_payload,
@@ -29,6 +31,40 @@ class TestLastNTradingDays:
 
 
 class TestSummarizePnlRows:
+    def test_nav_manifest_overrides_daily_sum(self):
+        from agent_reach.daily_run.quant_digest import build_quant_digest_payload
+
+        rows = [
+            DailyPnlRecord(date="2026-10-20", daily_pnl=500.0, end_total=100500.0),
+            DailyPnlRecord(date="2026-10-21", daily_pnl=500.0, end_total=101000.0),
+            DailyPnlRecord(date="2026-10-22", daily_pnl=500.0, end_total=101500.0),
+            DailyPnlRecord(date="2026-10-23", daily_pnl=438.0, end_total=101938.0),
+        ]
+        manifests = [
+            {
+                "job": "morning",
+                "_run_date": "2026-10-20",
+                "payload": {"result": {"portfolio_summary": {"end_total": 100000.0}}},
+            },
+            {
+                "job": "close",
+                "_run_date": "2026-10-23",
+                "payload": {"result": {"portfolio_summary": {"end_total": 103194.0}}},
+            },
+        ]
+        payload = build_quant_digest_payload(
+            as_of=date(2026, 10, 24),
+            pnl_rows=rows,
+            trades=[],
+            job_health={"jobs": {}},
+            manifests=manifests,
+            refinements=[],
+            playbook_entries={},
+        )
+        assert payload.pnl["weekly_pnl_source"] == "nav_manifest"
+        assert payload.pnl["weekly_pnl"] == pytest.approx(3194.0)
+        assert sum(float(r.daily_pnl) for r in rows) == pytest.approx(1938.0)
+
     def test_weekly_sum_and_daily_table(self):
         rows = [
             DailyPnlRecord(date="2026-07-06", daily_pnl=100.0, daily_pnl_pct=0.1, end_total=10100.0),
