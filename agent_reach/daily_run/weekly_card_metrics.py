@@ -330,13 +330,38 @@ def build_weekly_risk_metrics(
     }
 
 
+def normalize_holdings_mark_prices(
+    holdings: list[dict[str, Any]],
+    enriched: Optional[dict[str, dict[str, Any]]] = None,
+) -> list[dict[str, Any]]:
+    """Reconcile week close / week_chg from validated marks (not cost-as-price snapshots)."""
+    from agent_reach.daily_run.quote_coverage import holding_close_mark_price
+
+    out: list[dict[str, Any]] = []
+    for raw in holdings:
+        row = dict(raw)
+        close_px = holding_close_mark_price(row, enriched)
+        if close_px is not None:
+            row["week_end_price"] = close_px
+            row["price"] = close_px
+        start_px = _optional_float(row.get("week_start_price"))
+        if start_px and start_px > 0 and close_px is not None:
+            shares = int(row.get("shares") or 0)
+            row["week_chg_pct"] = round((close_px - start_px) / start_px * 100, 2)
+            row["week_chg"] = round((close_px - start_px) * shares, 2)
+        out.append(row)
+    return out
+
+
 def build_holdings_sector_snapshot(
     holdings: list[dict[str, Any]],
     *,
     settings: Optional[dict[str, Any]] = None,
+    enriched: Optional[dict[str, dict[str, Any]]] = None,
 ) -> dict[str, Any]:
     """Sector rows for holdings only, with live fetch + cutoff label."""
     _ = settings
+    holdings = normalize_holdings_mark_prices(holdings, enriched)
     now = datetime.now(_SH_TZ)
     as_of_label = now.strftime("截至 %Y-%m-%d %H:%M")
     sectors: dict[str, dict[str, Any]] = {}

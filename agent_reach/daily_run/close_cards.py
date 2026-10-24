@@ -128,11 +128,9 @@ def collect_holdings_ledger_rows(
         code = _normalize_code(str(raw.get("code") or ""))
         if not code:
             continue
-        from agent_reach.daily_run.quote_coverage import mark_price_from_row
+        from agent_reach.daily_run.quote_coverage import holding_close_mark_price
 
-        close_price = _optional_float(
-            raw.get("week_end_price") or raw.get("close_price") or mark_price_from_row(raw)
-        )
+        close_price = holding_close_mark_price(raw)
         market_value = _optional_float(raw.get("market_value"))
         if market_value is None and close_price is not None:
             market_value = round(shares * close_price, 2)

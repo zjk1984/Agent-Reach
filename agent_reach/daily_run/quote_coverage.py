@@ -23,6 +23,25 @@ def _merged_portfolio_rows(portfolio: dict[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
+def holding_close_mark_price(
+    row: dict[str, Any],
+    enriched: Optional[dict[str, dict[str, Any]]] = None,
+) -> Optional[float]:
+    """Validated close for holdings tables (week_end / close / live mark — never raw cost)."""
+    enriched = enriched or {}
+    code = normalize_code(str(row.get("code") or ""))
+    merged_base = {**row, **enriched.get(code, {})}
+    for key in ("week_end_price", "close_price", "price"):
+        raw = merged_base.get(key)
+        if raw is None:
+            continue
+        probe = {**merged_base, "price": raw}
+        mark = mark_price_from_row(probe, enriched)
+        if mark is not None:
+            return mark
+    return mark_price_from_row(row, enriched)
+
+
 def mark_price_from_row(
     row: dict[str, Any],
     enriched: Optional[dict[str, dict[str, Any]]] = None,
@@ -45,11 +64,13 @@ def mark_price_from_row(
 def symbol_has_live_quote(row: dict[str, Any], enriched: dict[str, dict[str, Any]]) -> bool:
     code = normalize_code(str(row.get("code") or ""))
     merged = {**row, **enriched.get(code, {})}
-    if merged.get("quote_source") == "cost_fallback":
-        return False
     price = merged.get("price")
     if price is None:
         return False
+    if merged.get("quote_source") == "cost_fallback":
+        cost = merged.get("cost")
+        if cost is not None and float(cost) == float(price):
+            return False
     source = str(merged.get("quote_source") or merged.get("source") or "").strip()
     if source and source not in {"cost_fallback"}:
         return True
