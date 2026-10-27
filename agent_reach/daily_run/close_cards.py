@@ -114,6 +114,7 @@ def collect_holdings_ledger_rows(
     portfolio_summary: dict[str, Any],
     *,
     settings: Optional[dict[str, Any]] = None,
+    enriched: Optional[dict[str, dict[str, Any]]] = None,
 ) -> list[dict[str, Any]]:
     """Actual holdings only (shares > 0), sorted by market value descending."""
     from agent_reach.daily_run.portfolio_manager import effective_days_held
@@ -130,7 +131,9 @@ def collect_holdings_ledger_rows(
             continue
         from agent_reach.daily_run.quote_coverage import holding_close_mark_price
 
-        close_price = holding_close_mark_price(raw)
+        close_price = holding_close_mark_price(raw, enriched)
+        if close_price is None and raw.get("close_price") is not None:
+            close_price = holding_close_mark_price({**raw, "price": raw["close_price"]}, enriched)
         market_value = _optional_float(raw.get("market_value"))
         if market_value is None and close_price is not None:
             market_value = round(shares * close_price, 2)
@@ -432,9 +435,10 @@ def render_holdings_ledger_markdown_from_summary(
     pnl_col: str = "当日盈亏",
     total_label: str = "收盘净值",
     watchlist_hint: str = "见「持仓详情」卡，非本台账",
+    enriched: Optional[dict[str, dict[str, Any]]] = None,
 ) -> str:
     pf = portfolio_summary or {}
-    ledger_rows = collect_holdings_ledger_rows(pf)
+    ledger_rows = collect_holdings_ledger_rows(pf, enriched=enriched)
     lines: list[str] = []
     if as_of:
         lines.append(f"- **{as_of}**")

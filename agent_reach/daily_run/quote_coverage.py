@@ -26,17 +26,25 @@ def _merged_portfolio_rows(portfolio: dict[str, Any]) -> list[dict[str, Any]]:
 def holding_close_mark_price(
     row: dict[str, Any],
     enriched: Optional[dict[str, dict[str, Any]]] = None,
+    *,
+    prefer_keys: Optional[tuple[str, ...]] = None,
 ) -> Optional[float]:
     """Validated close for holdings tables (week_end / close / live mark — never raw cost)."""
     enriched = enriched or {}
     code = normalize_code(str(row.get("code") or ""))
     merged_base = {**row, **enriched.get(code, {})}
-    for key in ("week_end_price", "close_price", "price"):
+    keys = prefer_keys or ("week_end_price", "close_price", "price")
+    _HISTORICAL_PRICE_KEYS = frozenset({"week_end_price", "close_price", "week_start_price"})
+    for key in keys:
         raw = merged_base.get(key)
         if raw is None:
             continue
         probe = {**merged_base, "price": raw}
-        mark = mark_price_from_row(probe, enriched)
+        if key in _HISTORICAL_PRICE_KEYS:
+            probe.pop("quote_source", None)
+            probe.pop("source", None)
+            probe.pop("change_pct", None)
+        mark = mark_price_from_row(probe, {})
         if mark is not None:
             return mark
     return mark_price_from_row(row, enriched)
@@ -71,14 +79,19 @@ def symbol_has_live_quote(row: dict[str, Any], enriched: dict[str, dict[str, Any
         cost = merged.get("cost")
         if cost is not None and float(cost) == float(price):
             return False
+    cost = merged.get("cost")
+    if cost is not None and float(cost) == float(price):
+        source = str(merged.get("quote_source") or merged.get("source") or "").strip()
+        if not source or source in {"cost_fallback"}:
+            return False
     source = str(merged.get("quote_source") or merged.get("source") or "").strip()
     if source and source not in {"cost_fallback"}:
         return True
     if merged.get("change_pct") is not None:
+        cost = merged.get("cost")
+        if cost is not None and float(cost) == float(price):
+            return False
         return True
-    cost = merged.get("cost")
-    if cost is not None and float(cost) == float(price):
-        return False
     return True
 
 

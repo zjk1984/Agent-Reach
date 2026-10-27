@@ -909,6 +909,81 @@ class TestWeeklyReport:
         prices = _prices_from_manifest_record(record)
         assert prices.get("002583") == pytest.approx(8.02)
 
+    def test_weekly_ledger_close_differs_from_cost_regression_2026_10_24(self):
+        """Feishu weekly 持仓台账 must not show 收盘=成本 when manifest has real close."""
+        from agent_reach.daily_run.weekly_report import _render_holdings_ledger_lines, WeeklyReport
+
+        report = WeeklyReport(
+            week_start=date(2026, 10, 20),
+            week_end=date(2026, 10, 24),
+            start_total=100000.0,
+            end_total=100000.0,
+            weekly_pnl=0.0,
+            weekly_pnl_pct=0.0,
+            end_stock_mv=7930.0,
+            end_cash=92070.0,
+            cash_ratio=0.92,
+            holdings_as_of="截至 2026-10-24 周五收盘",
+            holdings=[
+                {
+                    "code": "002583",
+                    "name": "海能达",
+                    "shares": 1000,
+                    "cost": 12.618,
+                    "week_start_price": 7.93,
+                    "week_end_price": 8.08,
+                    "close_price": 8.08,
+                    "price": 8.08,
+                    "market_value": 8080.0,
+                    "week_chg_pct": 1.89,
+                    "week_chg": 150.0,
+                    "unrealized_pnl": -4538.0,
+                    "days_held": 120,
+                }
+            ],
+            watchlist=[],
+            realized_pnl=0,
+        )
+        text = "\n".join(_render_holdings_ledger_lines(report))
+        assert "¥12.62" in text or "¥12.618" in text
+        assert "¥8.08" in text
+        assert "¥12.62 | ¥12.62" not in text
+        assert "¥12.618 | ¥12.618" not in text
+
+    def test_holding_week_chg_not_inflated_when_manifest_stamps_cost(self):
+        """Regression 2026-10-24: 海能达 +69.8% when cost used as week-end close."""
+        from agent_reach.daily_run.weekly_report import _holding_pnl_rows
+
+        portfolio = {
+            "holdings": [
+                {
+                    "code": "002583",
+                    "name": "海能达",
+                    "shares": 1000,
+                    "cost": 12.618,
+                    "price": 12.618,
+                    "quote_source": "cost_fallback",
+                }
+            ]
+        }
+        enriched = {
+            "002583": {
+                "price": 8.08,
+                "quote_source": "xueqiu",
+                "change_pct": 0.2,
+            }
+        }
+        rows = _holding_pnl_rows(
+            portfolio,
+            enriched,
+            week_start_prices={"002583": 7.93},
+            week_end_prices={"002583": 12.618},
+        )
+        row = rows[0]
+        assert row["week_end_price"] == pytest.approx(8.08)
+        assert row["week_chg_pct"] == pytest.approx(1.89, abs=0.15)
+        assert row["week_chg_pct"] < 10.0
+
 
 class TestScheduleWeekly:
     @patch("agent_reach.daily_run.workflows.run_weekly")
