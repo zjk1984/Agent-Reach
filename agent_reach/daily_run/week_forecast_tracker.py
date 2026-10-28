@@ -8,7 +8,11 @@ from datetime import date
 from typing import Any, Optional
 
 from agent_reach.daily_run.snapshot_builder import _normalize_code
-from agent_reach.daily_run.symbols import build_enriched_symbols
+from agent_reach.daily_run.symbols import (
+    build_enriched_symbols,
+    refresh_enriched_quotes,
+    resolve_daily_change_pct,
+)
 from agent_reach.daily_run.trade_calendar import today_shanghai
 from agent_reach.daily_run.week_forecast import (
     load_active_forecast,
@@ -114,10 +118,13 @@ def evaluate_day_forecast(
     trading_date: date,
     *,
     mss_actual: Optional[float] = None,
+    settings: Optional[dict[str, Any]] = None,
+    enriched: Optional[dict[str, dict[str, Any]]] = None,
 ) -> ForecastDayReview:
     """Compare today's forecast vs snapshot actuals."""
     ds = trading_date.isoformat()
-    enriched = build_enriched_symbols(snapshot)
+    if enriched is None:
+        enriched = build_enriched_symbols(snapshot, settings=settings)
     evals: list[SymbolEval] = []
 
     for code, sym in (forecast.get("symbols") or {}).items():
@@ -125,8 +132,7 @@ def evaluate_day_forecast(
         if not day_pred:
             continue
         row = enriched.get(_normalize_code(code), {})
-        actual = row.get("change_pct")
-        actual_f = float(actual) if actual is not None else None
+        actual_f = resolve_daily_change_pct(row)
         hit = False
         error = None
         kronos_block = (forecast.get("kronos_paths") or {}).get(code) or sym.get("kronos") or {}
@@ -292,7 +298,28 @@ def review_active_forecast(
             verify_mss = snapshot.get("mss_final")
             mss_actual = verify_mss
 
-    review = evaluate_day_forecast(forecast, snapshot, d, mss_actual=mss_actual)
+    enriched = build_enriched_symbols(snapshot, settings=cfg)
+    forecast_codes = [
+        _normalize_code(str(code)) for code in (forecast.get("symbols") or {}) if code
+    ]
+    holding_codes = [
+        _normalize_code(str(h.get("code") or ""))
+        for h in (snapshot.get("portfolio") or {}).get("holdings") or []
+        if _normalize_code(str(h.get("code") or ""))
+    ]
+    refresh_enriched_quotes(
+        enriched,
+        list(dict.fromkeys(forecast_codes + holding_codes)),
+        settings=cfg,
+    )
+    review = evaluate_day_forecast(
+        forecast,
+        snapshot,
+        d,
+        mss_actual=mss_actual,
+        settings=cfg,
+        enriched=enriched,
+    )
     review.kronos_review = _kronos_review_summary(forecast, review)
     cal = optimize_calibration(review, review.calibration_before, cfg)
     save_calibration(cal)
