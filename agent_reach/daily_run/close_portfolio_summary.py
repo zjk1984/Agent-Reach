@@ -666,20 +666,9 @@ def _refresh_enriched_quotes(
     settings: Optional[dict[str, Any]] = None,
 ) -> None:
     """Refresh live quotes for close holdings (primary snapshot may omit secondary symbols)."""
-    from agent_reach.daily_run.quote_fetch import fetch_quotes_map
+    from agent_reach.daily_run.symbols import refresh_enriched_quotes
 
-    need = list(dict.fromkeys(_normalize_code(c) for c in holding_codes if c))
-    if not need:
-        return
-    result = fetch_quotes_map(need, settings=settings)
-    for code, quote in result.quotes.items():
-        row = enriched.setdefault(code, {})
-        if quote.get("price") is not None:
-            row["price"] = quote["price"]
-        if quote.get("change_pct") is not None:
-            row["change_pct"] = quote["change_pct"]
-        if quote.get("name"):
-            row["name"] = quote["name"]
+    refresh_enriched_quotes(enriched, holding_codes, settings=settings)
 
 
 def _quoted_prices_from_holdings(

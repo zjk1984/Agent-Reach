@@ -174,6 +174,112 @@ def copy_portfolio(portfolio: dict[str, Any]) -> dict[str, Any]:
     return pf
 
 
+_PREV_CLOSE_KEYS = ("prev_close", "pre_close", "reference_price", "last_close")
+_CLOSE_PRICE_KEYS = ("price", "close", "close_price", "week_end_price")
+
+
+def _optional_float_field(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed != parsed:  # NaN
+        return None
+    return parsed
+
+
+def _normalize_quoted_change_pct(value: Any) -> Optional[float]:
+    """Normalize stored change to percent points (Wind 涨跌幅 semantics)."""
+    pct = _optional_float_field(value)
+    if pct is None:
+        return None
+    return round(pct, 2)
+
+
+def _daily_change_from_prev_close(row: dict[str, Any]) -> Optional[float]:
+    prev: Optional[float] = None
+    for key in _PREV_CLOSE_KEYS:
+        candidate = _optional_float_field(row.get(key))
+        if candidate is not None and candidate > 0:
+            prev = candidate
+            break
+    close_px: Optional[float] = None
+    for key in _CLOSE_PRICE_KEYS:
+        candidate = _optional_float_field(row.get(key))
+        if candidate is not None and candidate > 0:
+            close_px = candidate
+            break
+    if prev is None or close_px is None or prev <= 0:
+        return None
+    return round((close_px - prev) / prev * 100.0, 2)
+
+
+def needs_live_quote_for_daily_change(row: dict[str, Any], *, mismatch_tol: float = 0.35) -> bool:
+    """True when row needs a fresh D1 quote to trust session daily %."""
+    from_prev = _daily_change_from_prev_close(row)
+    quoted = _normalize_quoted_change_pct(row.get("change_pct"))
+    if from_prev is not None and quoted is not None:
+        return abs(from_prev - quoted) > mismatch_tol
+    return from_prev is None and quoted is None
+
+
+def resolve_daily_change_pct(
+    row: dict[str, Any],
+    *,
+    mismatch_tol: float = 0.35,
+) -> Optional[float]:
+    """Session daily % vs prior close (Wind-style), percent points.
+
+    When quote ``change_pct`` disagrees with price/prev_close math (stale scan,
+    cost confusion, or ratio stored as fraction), prefer the prev-close recompute.
+    """
+    from_prev = _daily_change_from_prev_close(row)
+    quoted = _normalize_quoted_change_pct(row.get("change_pct"))
+    if from_prev is not None and quoted is not None:
+        if abs(from_prev - quoted) > mismatch_tol:
+            return from_prev
+        return quoted
+    if from_prev is not None:
+        return from_prev
+    return quoted
+
+
+def refresh_enriched_quotes(
+    enriched: dict[str, dict[str, Any]],
+    codes: list[str],
+    *,
+    settings: Optional[dict[str, Any]] = None,
+) -> None:
+    """Refresh live D1 quotes for close / forecast validation (secondary symbols)."""
+    from agent_reach.daily_run.quote_fetch import fetch_quotes_map
+
+    need = list(dict.fromkeys(_normalize_code(c) for c in codes if c))
+    if not need:
+        return
+    result = fetch_quotes_map(need, settings=settings)
+    for code, quote in result.quotes.items():
+        row = enriched.setdefault(code, {})
+        if quote.get("price") is not None:
+            row["price"] = quote["price"]
+        if quote.get("change_pct") is not None:
+            row["change_pct"] = quote["change_pct"]
+        ref = quote.get("reference_price")
+        if ref is not None:
+            row["reference_price"] = ref
+            row["prev_close"] = ref
+        if quote.get("open") is not None:
+            row["open"] = quote["open"]
+        if quote.get("name"):
+            row["name"] = quote["name"]
+        if quote.get("source"):
+            row["quote_source"] = quote["source"]
+        resolved = resolve_daily_change_pct(row)
+        if resolved is not None:
+            row["change_pct"] = resolved
+
+
 def build_enriched_symbols(
     snapshot: dict[str, Any],
     settings: dict[str, Any] | None = None,
@@ -207,7 +313,8 @@ def build_enriched_symbols(
                     "volume", "turnover", "position_20d", "consecutive_limit_ups",
                     "consecutive_boards", "auction_ratio_pct", "open_pct",
                     "is_weak_to_strong", "is_panic_dumping", "distance_to_limit_pct",
-                    "cumulative_3d_pct", "threshold_3d_pct", "risk_level"
+                    "cumulative_3d_pct", "threshold_3d_pct", "risk_level",
+                    "prev_close", "pre_close", "reference_price",
                 )
                 if k in snapshot and snapshot[k] is not None
             },
@@ -259,6 +366,11 @@ def build_enriched_symbols(
 
         out = enrich_symbol_map_sectors(out, cfg)
         out = annotate_enriched_bar_quality(out, settings=cfg)
+
+    for s_code, row in out.items():
+        resolved = resolve_daily_change_pct(row)
+        if resolved is not None:
+            row["change_pct"] = resolved
     return out
 
 

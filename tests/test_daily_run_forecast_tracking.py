@@ -182,7 +182,13 @@ def test_build_structured_week_review_from_forecast():
     assert review.get("rows") or review.get("metrics")
 
 
-def test_build_kronos_divergence_day_checks():
+def test_build_kronos_divergence_day_checks(monkeypatch):
+    from agent_reach.daily_run.quote_fetch import QuoteFetchResult
+
+    monkeypatch.setattr(
+        "agent_reach.daily_run.quote_fetch.fetch_quotes_map",
+        lambda codes, **_: QuoteFetchResult(),
+    )
     forecast = {
         "trading_days": ["2026-09-15"],
         "symbols": {

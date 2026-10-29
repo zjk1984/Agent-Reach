@@ -215,15 +215,26 @@ def build_kronos_divergence_day_checks(
     if ds not in (forecast.get("trading_days") or []):
         return []
 
-    from agent_reach.daily_run.symbols import build_enriched_symbols
+    from agent_reach.daily_run.symbols import (
+        build_enriched_symbols,
+        refresh_enriched_quotes,
+        resolve_daily_change_pct,
+    )
 
     enriched = build_enriched_symbols(snapshot)
+    div_codes = [
+        _normalize_code(str(code))
+        for code, sym in (forecast.get("symbols") or {}).items()
+        if ds in (sym.get("kronos_divergence_days") or [])
+    ]
+    if div_codes:
+        refresh_enriched_quotes(enriched, div_codes, settings=None)
     checks: list[dict[str, Any]] = []
     for code, sym in (forecast.get("symbols") or {}).items():
         if ds not in (sym.get("kronos_divergence_days") or []):
             continue
         row = enriched.get(_normalize_code(str(code))) or {}
-        actual = _optional_float(row.get("change_pct"))
+        actual = resolve_daily_change_pct(row)
         if actual is None:
             continue
         day_pred = (sym.get("days") or {}).get(ds) or {}
