@@ -549,8 +549,18 @@ def render_outlook_backtrack_markdown(backtrack: dict[str, Any]) -> list[str]:
     return lines
 
 
-def render_close_loop_trade_log_note(close_days: int, ledger_fallback: bool) -> str:
-    parts = [f"来源：周一–周五收盘卡片实际成交汇总（{close_days} 个交易日）"]
-    if ledger_fallback:
-        parts.append("ledger 补充未落盘成交")
+def render_close_loop_trade_log_note(
+    close_days: int,
+    ledger_fallback: bool,
+    *,
+    trade_log_days: Optional[int] = None,
+) -> str:
+    effective_days = max(close_days, trade_log_days or 0)
+    if close_days <= 0 and trade_log_days:
+        parts = [f"来源：trade ledger 实际成交（{trade_log_days} 个交易日）"]
+        parts.append("收盘 manifest 未落盘成交明细")
+    else:
+        parts = [f"来源：周一–周五收盘卡片实际成交汇总（{effective_days} 个交易日）"]
+        if ledger_fallback:
+            parts.append("ledger 补充未落盘成交")
     return "_" + "；".join(parts) + "_"

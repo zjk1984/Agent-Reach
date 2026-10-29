@@ -341,10 +341,18 @@ def normalize_holdings_mark_prices(
     for raw in holdings:
         row = dict(raw)
         close_px = holding_close_mark_price(row, enriched)
+        start_px = _optional_float(row.get("week_start_price"))
         if close_px is not None:
             row["week_end_price"] = close_px
+            row["close_price"] = close_px
             row["price"] = close_px
-        start_px = _optional_float(row.get("week_start_price"))
+            shares = int(row.get("shares") or 0)
+            if shares > 0:
+                row["market_value"] = round(shares * close_px, 2)
+            cost = _optional_float(row.get("cost"))
+            if cost is not None and shares > 0:
+                cost_basis = round(shares * cost, 2)
+                row["unrealized_pnl"] = round(row["market_value"] - cost_basis, 2)
         if start_px and start_px > 0 and close_px is not None:
             shares = int(row.get("shares") or 0)
             row["week_chg_pct"] = round((close_px - start_px) / start_px * 100, 2)

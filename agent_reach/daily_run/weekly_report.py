@@ -246,11 +246,28 @@ def _merged_enriched_from_manifest(
         if not base:
             return None, {}
         enriched = build_enriched_symbols(base)
+        pf = dict(base.get("portfolio") or {})
+        holdings_by_code = {
+            _normalize_code(str(h.get("code") or "")): h
+            for h in pf.get("holdings") or []
+            if _normalize_code(str(h.get("code") or ""))
+        }
         for sr in symbol_results:
             snap = (sr.get("result") or {}).get("snapshot") or {}
             code = _normalize_code(str(snap.get("code") or sr.get("code") or ""))
-            if code and snap.get("price") is not None:
-                enriched.setdefault(code, {})["price"] = float(snap["price"])
+            if not code or snap.get("price") is None:
+                continue
+            holding = holdings_by_code.get(code) or {}
+            sp = float(snap["price"])
+            qs = str(snap.get("quote_source") or snap.get("source") or "").strip()
+            cost = holding.get("cost")
+            if qs == "cost_fallback" and cost is not None and float(cost) == sp:
+                continue
+            bucket = enriched.setdefault(code, {})
+            bucket["price"] = sp
+            for field in ("change_pct", "quote_source", "source", "name"):
+                if snap.get(field) is not None:
+                    bucket[field] = snap[field]
         return base, enriched
     snap = _snapshot_from_manifest(record)
     if snap:
@@ -421,18 +438,24 @@ def _prices_from_manifest_record(record: dict[str, Any]) -> dict[str, float]:
     snap, enriched = _merged_enriched_from_manifest(record)
     if not snap:
         return {}
+    from agent_reach.daily_run.close_portfolio_summary import _quoted_prices_from_holdings
+    from agent_reach.daily_run.quote_coverage import mark_price_from_row
+
     pf = dict(snap.get("portfolio") or {})
-    prices: dict[str, float] = {}
+    codes = [
+        _normalize_code(str(h.get("code") or ""))
+        for h in pf.get("holdings") or []
+        if _normalize_code(str(h.get("code") or ""))
+    ]
+    prices = _quoted_prices_from_holdings(snap, codes)
     for h in pf.get("holdings") or []:
         code = _normalize_code(str(h.get("code") or ""))
-        if not code:
+        if not code or code in prices:
             continue
         row = enriched.get(code) or {}
-        px = row.get("price")
-        if px is None:
-            continue
-        if _manifest_mark_price_ok(h, row, px):
-            prices[code] = float(px)
+        px = mark_price_from_row({**h, **row}, enriched)
+        if px is not None:
+            prices[code] = px
     return prices
 
 
@@ -441,31 +464,25 @@ def _manifest_mark_price_ok(
     enriched_row: dict[str, Any],
     price_val: Any,
 ) -> bool:
-    """Manifest/historical quote: reject only explicit cost_fallback at avg cost."""
+    """Manifest/historical quote — same validation as daily close mark_price_from_row."""
     if price_val is None:
         return False
-    try:
-        price = float(price_val)
-    except (TypeError, ValueError):
-        return False
+    from agent_reach.daily_run.quote_coverage import mark_price_from_row
+
+    probe = {**holding, **enriched_row, "price": price_val}
+    probe.pop("quote_source", None)
+    probe.pop("source", None)
+    probe.pop("change_pct", None)
+    if mark_price_from_row(probe, {}) is not None:
+        return True
     cost = holding.get("cost")
-    if cost is not None:
-        try:
-            cost_f = float(cost)
-        except (TypeError, ValueError):
-            cost_f = None
-    else:
-        cost_f = None
-    qs = str(
-        enriched_row.get("quote_source")
-        or holding.get("quote_source")
-        or enriched_row.get("source")
-        or holding.get("source")
-        or ""
-    ).strip()
-    if qs == "cost_fallback" and cost_f is not None and cost_f == price:
-        return False
-    return True
+    try:
+        if cost is not None and float(price_val) == float(cost):
+            qs = str(holding.get("quote_source") or holding.get("source") or "").strip()
+            return qs != "cost_fallback"
+    except (TypeError, ValueError):
+        pass
+    return False
 
 
 def _validated_manifest_mark_price(
@@ -868,32 +885,36 @@ def _holding_pnl_rows(
     from agent_reach.daily_run.portfolio_manager import effective_days_held
 
     rows: list[dict[str, Any]] = []
+    from agent_reach.daily_run.quote_coverage import holding_close_mark_price, mark_price_from_row
+
     for h in portfolio.get("holdings") or []:
         code = _normalize_code(str(h.get("code", "")))
         name = h.get("name") or code
         shares = int(h.get("shares") or 0)
         cost = float(h.get("cost") or 0)
         row = enriched.get(code, {})
-        from agent_reach.daily_run.quote_coverage import mark_price_from_row
+        merged = {**h, **row}
 
-        mark = mark_price_from_row(h, enriched)
-        week_end_price: Optional[float] = mark
+        end_probe = dict(merged)
+        if end_prices.get(code) is not None:
+            end_probe["week_end_price"] = end_prices[code]
+        week_end_price = holding_close_mark_price(end_probe, enriched)
         if week_end_price is None:
             week_end_price = _validated_manifest_mark_price(h, enriched, end_prices.get(code))
+
         week_start_price = _validated_manifest_mark_price(h, enriched, week_start_prices.get(code))
+
+        mark = mark_price_from_row(merged, enriched)
         price = week_end_price if week_end_price is not None else mark
-        if (
-            week_end_price is None
-            and week_start_price
-            and week_start_price > 0
-            and row.get("change_pct") is not None
-        ):
-            week_end_price = round(
-                week_start_price * (1 + float(row["change_pct"]) / 100.0),
-                4,
-            )
-            if price is None:
-                price = week_end_price
+        if week_end_price is None and week_start_price and week_start_price > 0 and row.get("change_pct") is not None:
+            candidate = round(week_start_price * (1 + float(row["change_pct"]) / 100.0), 4)
+            chg_probe = {**merged, "price": candidate}
+            chg_probe.pop("quote_source", None)
+            chg_probe.pop("source", None)
+            if mark_price_from_row(chg_probe, {}) is not None:
+                week_end_price = candidate
+                if price is None:
+                    price = week_end_price
         mv = round(shares * week_end_price, 2) if week_end_price is not None else None
         cost_basis = round(shares * cost, 2)
         unrealized = round(mv - cost_basis, 2) if mv is not None else None
@@ -1244,8 +1265,12 @@ def generate_weekly_report(
             sync_snapshot_portfolio(snap_for_symbols, pf)
             enriched = build_enriched_symbols(snap_for_symbols)
             for code, row in enriched_end.items():
+                dest = enriched.setdefault(code, {})
+                for field in ("price", "change_pct", "quote_source", "source", "name"):
+                    if row.get(field) is not None:
+                        dest[field] = row[field]
                 if row.get("price") is not None:
-                    enriched.setdefault(code, {})["price"] = float(row["price"])
+                    dest["price"] = float(row["price"])
             cash_raw = pf.get("cash")
             cash = float(cash_raw) if cash_raw is not None else cash
             ratio_raw = pf.get("cash_ratio")
@@ -1513,12 +1538,15 @@ def generate_weekly_report(
     )
     ledger_trades = list(trade_log)
     trade_log = merge_weekly_trade_sources(close_trades, ledger_trades)
+    close_card_days = len({str(t.get("date") or "")[:10] for t in close_trades if t.get("date")})
+    trade_log_days = len({str(t.get("date") or "")[:10] for t in trade_log if t.get("date")})
     close_loop_meta = {
-        "close_card_days": len({str(t.get("date") or "")[:10] for t in close_trades}),
+        "close_card_days": close_card_days,
         "holdings_source": holdings_source,
         "trade_source_note": render_close_loop_trade_log_note(
-            len({str(t.get("date") or "")[:10] for t in close_trades}),
+            close_card_days,
             ledger_fallback=len(trade_log) > len(close_trades),
+            trade_log_days=trade_log_days,
         ),
     }
     trade_reconciliation = reconcile_week_trades(

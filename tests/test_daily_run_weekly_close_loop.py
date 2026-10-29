@@ -13,6 +13,7 @@ from agent_reach.daily_run.weekly_close_loop import (
     build_close_loop_position_change,
     load_outlook_plan_for_backtrack,
     merge_weekly_trade_sources,
+    render_close_loop_trade_log_note,
     render_outlook_backtrack_markdown,
     resolve_friday_close_portfolio,
     save_weekly_outlook_plan,
@@ -358,3 +359,25 @@ class TestGenerateWeeklyReportCloseLoop:
         labels = [s.label for s in render_weekly_sections(report)]
         if report.outlook_backtrack.get("rows"):
             assert "计划回溯" in labels
+
+
+class TestWeeklyTradeLogNote:
+    def test_trade_log_note_uses_ledger_days_when_close_cards_empty(self):
+        note = render_close_loop_trade_log_note(0, ledger_fallback=True, trade_log_days=2)
+        assert "ledger 实际成交（2 个交易日）" in note
+        assert "0 个交易日" not in note
+
+    def test_merge_weekly_trade_sources_keeps_ledger_trades(self):
+        ledger = [
+            {
+                "date": "2026-10-22",
+                "code": "600498",
+                "side_raw": "buy",
+                "shares": 600,
+                "price": 28.5,
+                "side": "买",
+            }
+        ]
+        merged = merge_weekly_trade_sources([], ledger)
+        assert len(merged) == 1
+        assert merged[0]["date"] == "2026-10-22"
