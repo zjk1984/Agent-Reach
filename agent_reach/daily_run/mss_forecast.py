@@ -148,3 +148,110 @@ def refresh_intraday_mss_range(
     mss_range, _meta = forecast_mss_range(snapshot, settings)
     snapshot["mss_intraday_range"] = mss_range
     return mss_range
+
+
+def mss_forecast_overrun_cfg(settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    """AR-23: lift intraday verdict ceiling when lookback MSS beats week forecast upper band."""
+    intraday = dict((settings or {}).get("intraday") or {})
+    raw = dict(intraday.get("mss_forecast_overrun") or {})
+    return {
+        "enabled": raw.get("enabled", True) is not False,
+        "overrun_pts": float(raw.get("overrun_pts", 8)),
+        "consecutive_slots": max(1, int(raw.get("consecutive_slots", 2))),
+    }
+
+
+def active_day_mss_forecast_upper(
+    settings: Optional[dict[str, Any]] = None,
+    *,
+    as_of: Optional[Any] = None,
+) -> Optional[float]:
+    """Upper bound of MSS range from the active week forecast for the trading day."""
+    from agent_reach.daily_run.trade_calendar import today_shanghai
+    from agent_reach.daily_run.week_forecast import load_active_forecast
+
+    d = as_of or today_shanghai()
+    if hasattr(d, "isoformat"):
+        ds = d.isoformat()
+    else:
+        ds = str(d)[:10]
+    forecast = load_active_forecast(d if hasattr(d, "isoformat") else None)
+    if not forecast:
+        return None
+    row = (forecast.get("mss_daily") or {}).get(ds) or {}
+    rng = row.get("range")
+    if not isinstance(rng, (list, tuple)) or len(rng) < 2:
+        return None
+    try:
+        return float(rng[1])
+    except (TypeError, ValueError):
+        return None
+
+
+def lookback_overruns_forecast_upper(
+    lookback_mss: float,
+    *,
+    upper: Optional[float],
+    overrun_pts: float,
+) -> bool:
+    if upper is None:
+        return False
+    return float(lookback_mss) + 1e-9 >= float(upper) + float(overrun_pts)
+
+
+def consecutive_forecast_overrun_slots(
+    scans: list[dict[str, Any]],
+    settings: dict[str, Any],
+) -> int:
+    """Trailing count of scan slots (same session) with lookback MSS ≥ forecast upper + overrun."""
+    cfg = mss_forecast_overrun_cfg(settings)
+    if not cfg["enabled"] or not scans:
+        return 0
+    upper = active_day_mss_forecast_upper(settings)
+    if upper is None:
+        return 0
+
+    from agent_reach.daily_run.lookback import compute_lookback_mss
+
+    streak = 0
+    for end in range(len(scans), 0, -1):
+        prefix = scans[:end]
+        lb, _detail = compute_lookback_mss(prefix, settings)
+        if lookback_overruns_forecast_upper(
+            lb,
+            upper=upper,
+            overrun_pts=cfg["overrun_pts"],
+        ):
+            streak += 1
+        else:
+            break
+    return streak
+
+
+def forecast_overrun_ceiling_lifted(
+    scans: list[dict[str, Any]],
+    settings: dict[str, Any],
+) -> bool:
+    cfg = mss_forecast_overrun_cfg(settings)
+    if not cfg["enabled"]:
+        return False
+    streak = consecutive_forecast_overrun_slots(scans, settings)
+    return streak >= cfg["consecutive_slots"]
+
+
+def macro_intraday_gating_active(settings: dict[str, Any]) -> bool:
+    """True when macro/intraday overlays keep the verdict ceiling at 「观察」 by default."""
+    runtime = dict(settings.get("harness_runtime") or {})
+    trade_signals = dict(runtime.get("trade_signals") or {})
+    if trade_signals.get("defensive_trim") or trade_signals.get("mss_forecast_miss"):
+        return True
+    for key in ("pm_session", "am_open", "week_open"):
+        block = runtime.get(key) or {}
+        if not block.get("active"):
+            continue
+        regime = str(block.get("regime") or "").strip().lower()
+        if regime == "defensive":
+            return True
+    seed = runtime.get("session_seed") or {}
+    merged = str(seed.get("merged_regime") or "").strip().lower()
+    return merged == "defensive"

@@ -351,3 +351,99 @@ def _optional_float(value: Any) -> Optional[float]:
     if value is None or value == "":
         return None
     return float(value)
+
+
+def apply_intraday_macro_verdict_ceiling(
+    evaluation: dict[str, Any],
+    *,
+    scans: list[dict[str, Any]],
+    lookback_mss: float,
+    settings: dict[str, Any],
+) -> dict[str, Any]:
+    """
+    Cap or lift displayed verdict for macro/intraday gating (AR-23).
+
+    Does not bypass buy gate, deploy caps, min_cash, sector_mss_mismatch, etc.
+    """
+    from agent_reach.daily_run.mss_forecast import (
+        active_day_mss_forecast_upper,
+        forecast_overrun_ceiling_lifted,
+        macro_intraday_gating_active,
+        mss_forecast_overrun_cfg,
+    )
+
+    cfg = mss_forecast_overrun_cfg(settings)
+    if not cfg["enabled"]:
+        return {}
+
+    gating = macro_intraday_gating_active(settings)
+    lifted = forecast_overrun_ceiling_lifted(scans, settings)
+    if not gating and not lifted:
+        return {}
+
+    labels = settings.get("verdict_labels", {})
+    buy_label = labels.get("buy", "可做")
+    watch_label = labels.get("watch", "观察")
+
+    verdict = evaluation.get("verdict")
+    report = evaluation.get("report") or {}
+    if not isinstance(verdict, VerdictResult):
+        return {}
+
+    label_key = verdict.label_key
+    downgrade = list(verdict.downgrade_reasons)
+    meta: dict[str, Any] = {
+        "gating_active": gating,
+        "ceiling_lifted": lifted,
+        "lookback_mss": round(float(lookback_mss), 2),
+    }
+    upper = active_day_mss_forecast_upper(settings)
+    if upper is not None:
+        meta["forecast_upper"] = round(float(upper), 1)
+
+    from agent_reach.daily_run.harness_policy import macro_veto_default
+
+    macro_veto = macro_veto_default(settings)
+
+    if gating and not lifted and label_key == "buy":
+        label_key = "watch"
+        downgrade.append("宏观/盘中门禁：verdict 上限「观察」（未达 forecast 上沿超限连击）")
+        meta["ceiling"] = watch_label
+    elif lifted and label_key == "watch":
+        if float(lookback_mss) >= macro_veto:
+            label_key = "buy"
+            note = (
+                f"AR-23：Lookback MSS {lookback_mss:.1f} 连续≥预测上沿"
+                f"{f' {upper:.1f}' if upper is not None else ''}+{cfg['overrun_pts']:.0f}，"
+                "verdict 上限升至「可做」（买入门禁仍生效）"
+            )
+            downgrade.append(note)
+            meta["ceiling"] = buy_label
+        else:
+            meta["ceiling"] = watch_label
+    else:
+        meta["ceiling"] = buy_label if label_key == "buy" else watch_label
+
+    if label_key == verdict.label_key and verdict.verdict == (
+        buy_label if label_key == "buy" else watch_label
+    ):
+        return meta
+
+    verdict_map = {"buy": buy_label, "watch": watch_label, "avoid": labels.get("avoid", "回避")}
+    new_verdict = VerdictResult(
+        verdict=verdict_map[label_key],
+        confidence=verdict.confidence,
+        mss_final=verdict.mss_final,
+        entry_price=verdict.entry_price,
+        stop_loss_price=verdict.stop_loss_price,
+        invalidation=verdict.invalidation,
+        reasoning=verdict.reasoning,
+        downgrade_reasons=downgrade,
+        blocked=verdict.blocked,
+        label_key=label_key,
+    )
+    evaluation["verdict"] = new_verdict
+    report["verdict"] = new_verdict.verdict
+    report["downgrade_reasons"] = downgrade
+    evaluation["report"] = report
+    return meta
