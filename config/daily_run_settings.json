@@ -204,6 +204,11 @@
       "macro_veto_bump": 3.0,
       "max_macro_veto": 45.0
     },
+    "mss_forecast_overrun": {
+      "enabled": true,
+      "overrun_pts": 8,
+      "consecutive_slots": 2
+    },
     "profit_lock": {
       "enabled": true,
       "min_intraday_gain_pct": 4.0,

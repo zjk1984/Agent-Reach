@@ -270,6 +270,7 @@ class IntradayState:
     trades: list[dict[str, Any]] = field(default_factory=list)
     hold_debounce_strikes: dict[str, int] = field(default_factory=dict)
     session_highs: dict[str, float] = field(default_factory=dict)
+    forecast_overrun_streak: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -281,6 +282,8 @@ class IntradayState:
             payload["hold_debounce_strikes"] = dict(self.hold_debounce_strikes)
         if self.session_highs:
             payload["session_highs"] = {str(k): float(v) for k, v in self.session_highs.items()}
+        if self.forecast_overrun_streak:
+            payload["forecast_overrun_streak"] = int(self.forecast_overrun_streak)
         return payload
 
     @classmethod
@@ -307,7 +310,31 @@ class IntradayState:
             trades=list(data.get("trades") or []),
             hold_debounce_strikes=strikes,
             session_highs=highs,
+            forecast_overrun_streak=int(data.get("forecast_overrun_streak") or 0),
         )
+
+
+def _apply_intraday_verdict_ceiling(
+    evaluation: dict[str, Any],
+    *,
+    scans: list[dict[str, Any]],
+    settings: dict[str, Any],
+) -> int:
+    """Macro/intraday verdict ceiling (AR-23); returns updated overrun streak."""
+    from agent_reach.daily_run.lookback import compute_lookback_mss
+    from agent_reach.daily_run.mss_forecast import consecutive_forecast_overrun_slots
+    from agent_reach.daily_run.pm_session_overlay import apply_intraday_session_overlays
+    from agent_reach.daily_run.verdict import apply_intraday_macro_verdict_ceiling
+
+    cfg = apply_intraday_session_overlays(settings, scans)
+    lookback_mss, _detail = compute_lookback_mss(scans, cfg)
+    apply_intraday_macro_verdict_ceiling(
+        evaluation,
+        scans=scans,
+        lookback_mss=lookback_mss,
+        settings=cfg,
+    )
+    return consecutive_forecast_overrun_slots(scans, cfg)
 
 
 def touch_session_highs(
@@ -494,6 +521,14 @@ def record_scan(
         "price": enriched.get("price"),
         "audit_passed": evaluation["audit"].passed,
     }
+    st.forecast_overrun_streak = _apply_intraday_verdict_ceiling(
+        evaluation,
+        scans=[*st.scans, entry],
+        settings=cfg,
+    )
+    report = evaluation["report"]
+    entry["verdict"] = report.get("verdict")
+    entry["confidence"] = report.get("confidence")
     try:
         from agent_reach.daily_run.symbols import build_scan_enriched_payload
 
@@ -626,6 +661,14 @@ def record_scan_from_evaluation(
             entry["trend_excluded"] = True
             entry["quote_stale"] = True
             entry["lookback_weight_scale"] = float(mcfg.get("lookback_weight_scale", 0.25))
+    st.forecast_overrun_streak = _apply_intraday_verdict_ceiling(
+        evaluation,
+        scans=[*st.scans, entry],
+        settings=cfg,
+    )
+    report = evaluation["report"]
+    entry["verdict"] = report.get("verdict")
+    entry["confidence"] = report.get("confidence")
     touch_session_highs(st, enriched, code=str(entry.get("code") or sym or ""))
     st.scans.append(entry)
     save_state(st, resolved_path)
