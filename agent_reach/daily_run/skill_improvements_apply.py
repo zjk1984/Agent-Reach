@@ -32,7 +32,10 @@ from agent_reach.daily_run.skill_writeback import (
     _find_section_end,
     _repo_root,
     build_weekly_experience_block,
+    canonical_repo_skill_path,
     patch_skill_file,
+    repo_skill_writeback_enabled,
+    resolve_skill_patch_targets,
     resolve_skill_writeback_paths,
     sync_cursor_agent_skills_to_local,
     week_section_header,
@@ -290,7 +293,7 @@ def patch_playbook_section(path: Path, block: str) -> bool:
 
 
 def canonical_skill_path() -> Path:
-    return _repo_root() / "agent_reach" / "skill" / "daily_run_skill.md"
+    return canonical_repo_skill_path()
 
 
 def patch_experience_in_text(
@@ -313,6 +316,44 @@ def patch_experience_in_text(
     return new_text, new_text != text
 
 
+def _skill_template_text(targets: list[Path]) -> tuple[str, Path]:
+    """Read skill markdown template (repo checkout preferred, else first installed copy)."""
+    canonical = canonical_skill_path()
+    if canonical.exists():
+        return canonical.read_text(encoding="utf-8"), canonical
+    for path in targets:
+        if path.exists():
+            return path.read_text(encoding="utf-8"), path
+    return "", canonical
+
+
+def _write_patched_skill_targets(
+    targets: list[Path],
+    *,
+    skill_text: str,
+    experience_block: str,
+    playbook_block: str,
+    week_start: str,
+    week_end: str,
+) -> tuple[bool, bool, list[str]]:
+    exp_changed = False
+    pb_changed = False
+    written: list[str] = []
+    for path in targets:
+        base = skill_text
+        if path.exists():
+            base = path.read_text(encoding="utf-8")
+        text, exp = patch_experience_in_text(base, experience_block, week_start, week_end)
+        text, pb = patch_playbook_in_text(text, playbook_block)
+        if exp or pb:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+            written.append(str(path))
+        exp_changed = exp_changed or exp
+        pb_changed = pb_changed or pb
+    return exp_changed, pb_changed, written
+
+
 def patch_canonical_skill_sections(
     report: dict[str, Any],
     applied_config: list[str],
@@ -321,11 +362,15 @@ def patch_canonical_skill_sections(
 ) -> dict[str, Any]:
     week_start = str(report.get("week_start") or "")
     week_end = str(report.get("week_end") or "")
-    path = canonical_skill_path()
-    if not path.exists():
-        return {"canonical": str(path), "experience": False, "playbook": False}
+    targets = resolve_skill_patch_targets(settings)
+    canonical = canonical_skill_path()
+    if not targets and not canonical.exists():
+        return {"canonical": str(canonical), "experience": False, "playbook": False}
 
-    skill_text = path.read_text(encoding="utf-8")
+    skill_text, template_path = _skill_template_text(targets)
+    if not skill_text and not canonical.exists():
+        return {"canonical": str(canonical), "experience": False, "playbook": False}
+
     normalized = _normalize_report_for_writeback(report, skill_text)
     experience_block = build_weekly_experience_block(normalized)
     playbook_block = build_next_week_playbook_block(normalized, applied_config)
@@ -349,9 +394,13 @@ def patch_canonical_skill_sections(
             refinement_id=refinement_id,
             settings=settings,
         )
-        stub_changed = patch_canonical_stubs(path, week_start=week_start, week_end=week_end)
+        stub_targets = targets or ([canonical] if canonical.exists() else [])
+        stub_changed = False
+        for path in stub_targets:
+            stub_changed = patch_canonical_stubs(path, week_start=week_start, week_end=week_end) or stub_changed
         return {
-            "canonical": str(path),
+            "canonical": str(canonical),
+            "template": str(template_path),
             "experience": True,
             "playbook": True,
             "external": True,
@@ -359,37 +408,67 @@ def patch_canonical_skill_sections(
             "normalized_report": normalized,
             "fragments_dir": str(FRAGMENTS_DIR),
             "fragments_manifest": manifest,
+            "patched_paths": [str(p) for p in stub_targets if p.exists()],
         }
 
-    text, exp_changed = patch_experience_in_text(
-        skill_text, experience_block, week_start, week_end
+    if not targets:
+        return {
+            "canonical": str(canonical),
+            "experience": False,
+            "playbook": False,
+            "external": False,
+            "normalized_report": normalized,
+            "reason": "no_skill_patch_targets",
+        }
+
+    exp_changed, pb_changed, written = _write_patched_skill_targets(
+        targets,
+        skill_text=skill_text,
+        experience_block=experience_block,
+        playbook_block=playbook_block,
+        week_start=week_start,
+        week_end=week_end,
     )
-    text, pb_changed = patch_playbook_in_text(text, playbook_block)
-    if exp_changed or pb_changed:
-        path.write_text(text, encoding="utf-8")
 
     return {
-        "canonical": str(path),
+        "canonical": str(canonical),
+        "template": str(template_path),
         "experience": exp_changed,
         "playbook": pb_changed,
         "external": False,
         "normalized_report": normalized,
+        "patched_paths": written,
+        "repo_writeback": repo_skill_writeback_enabled(settings),
     }
 
 
 def sync_canonical_skill_to_local(settings: Optional[dict[str, Any]] = None) -> list[str]:
-    """Copy patched canonical daily_run_skill.md to installed local skill paths."""
+    """Sync skill markdown to installed paths (repo → local, or local → local)."""
     source = canonical_skill_path()
-    if not source.exists():
+    synced: list[str] = []
+    targets = resolve_skill_writeback_paths(settings)
+    local_targets = [p for p in targets if not (source.exists() and p.resolve() == source.resolve())]
+
+    if repo_skill_writeback_enabled(settings) and source.exists():
+        for path in local_targets:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, path)
+            synced.append(str(path))
+    elif local_targets:
+        primary = next((p for p in local_targets if p.exists()), None)
+        if primary:
+            for path in local_targets:
+                if path.resolve() == primary.resolve():
+                    if str(path) not in synced:
+                        synced.append(str(path))
+                    continue
+                path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(primary, path)
+                synced.append(str(path))
+
+    if not source.exists() and not synced:
         synced_cursor = sync_cursor_agent_skills_to_local()
         return synced_cursor
-    synced: list[str] = []
-    for path in resolve_skill_writeback_paths(settings):
-        if path.resolve() == source.resolve():
-            continue
-        path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, path)
-        synced.append(str(path))
     synced.extend(sync_cursor_agent_skills_to_local())
     return synced
 
@@ -490,16 +569,25 @@ def audit_weekly_skill(
     skip_sync: bool = False,
 ) -> dict[str, Any]:
     """Final Saturday step: validate skill structure, optimize, re-sync locally."""
-    path = canonical_skill_path()
-    if not path.exists():
-        return {"ok": False, "reason": "canonical skill missing", "path": str(path)}
+    canonical = canonical_skill_path()
+    targets = resolve_skill_patch_targets(settings)
+    read_path = next((p for p in targets if p.exists()), None)
+    if read_path is None and canonical.exists():
+        read_path = canonical
+    if read_path is None or not read_path.exists():
+        return {"ok": False, "reason": "skill markdown missing", "path": str(canonical)}
 
-    raw = path.read_text(encoding="utf-8")
+    raw = read_path.read_text(encoding="utf-8")
     missing = [sec for sec in REQUIRED_SKILL_SECTIONS if sec not in raw]
     optimized, fixes = optimize_skill_markdown(raw, settings=settings)
     synced: list[str] = []
     if fixes or optimized != raw:
-        path.write_text(optimized, encoding="utf-8")
+        write_targets = targets if targets else ([canonical] if repo_skill_writeback_enabled(settings) else [])
+        if not write_targets and canonical.exists() and repo_skill_writeback_enabled(settings):
+            write_targets = [canonical]
+        for path in write_targets:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(optimized, encoding="utf-8")
     if (
         not skip_sync
         and (settings is None or (settings.get("weekly_report") or {}).get("skill_sync_local", True) is not False)
@@ -508,7 +596,7 @@ def audit_weekly_skill(
 
     result: dict[str, Any] = {
         "ok": not missing,
-        "path": str(path),
+        "path": str(read_path),
         "missing_sections": missing,
         "fixes": fixes,
         "lines_before": len(raw.splitlines()),
@@ -627,11 +715,15 @@ def annotate_weekly_harness_audit(
     if not refinement_id:
         return {"skipped": True, "reason": "no refinement_id"}
 
-    path = canonical_skill_path()
-    if not path.exists():
-        return {"skipped": True, "reason": "canonical skill missing"}
+    targets = resolve_skill_patch_targets(settings)
+    canonical = canonical_skill_path()
+    read_path = next((p for p in targets if p.exists()), None)
+    if read_path is None and canonical.exists():
+        read_path = canonical
+    if read_path is None or not read_path.exists():
+        return {"skipped": True, "reason": "skill markdown missing"}
 
-    text = path.read_text(encoding="utf-8")
+    text = read_path.read_text(encoding="utf-8")
     new_text = annotate_experience_refinement_id(
         text,
         week_start=week_start,
@@ -640,7 +732,18 @@ def annotate_weekly_harness_audit(
     )
     changed = new_text != text
     if changed:
-        path.write_text(new_text, encoding="utf-8")
+        write_targets = targets if targets else ([canonical] if repo_skill_writeback_enabled(settings) else [])
+        for path in write_targets:
+            base = path.read_text(encoding="utf-8") if path.exists() else text
+            annotated = annotate_experience_refinement_id(
+                base,
+                week_start=week_start,
+                week_end=week_end,
+                refinement_id=refinement_id,
+            )
+            if annotated != base:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(annotated, encoding="utf-8")
 
     from agent_reach.daily_run.skill_fragments import annotate_experience_fragment, external_enabled
 

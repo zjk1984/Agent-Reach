@@ -22,22 +22,66 @@ def week_section_header(week_start: str, week_end: str) -> str:
     return f"### 📅 {week_start} ~ {week_end} 周复盘（{WEEKLY_TAG}）"
 
 
+def canonical_repo_skill_path() -> Path:
+    return _repo_root() / "agent_reach" / "skill" / "daily_run_skill.md"
+
+
+def _installed_skill_candidates() -> list[Path]:
+    return [
+        Path.home() / ".agents" / "skills" / "daily-run" / "SKILL.md",
+        Path.home() / ".agents" / "skills" / "daily-run-skill" / "SKILL.md",
+        Path.home() / ".openclaw" / "skills" / "daily-run" / "SKILL.md",
+    ]
+
+
+def repo_skill_writeback_enabled(settings: Optional[dict[str, Any]] = None) -> bool:
+    """Whether automated writeback may mutate the repo-tracked daily_run_skill.md."""
+    cfg = (settings or {}).get("weekly_report") or {}
+    if cfg.get("skill_writeback_include_repo") is True:
+        return True
+    explicit = cfg.get("skill_writeback_paths") or []
+    if not explicit:
+        return False
+    canonical = canonical_repo_skill_path()
+    for raw in explicit:
+        candidate = Path(raw).expanduser()
+        try:
+            if candidate.resolve() == canonical.resolve():
+                return True
+        except OSError:
+            if candidate == canonical:
+                return True
+    return False
+
+
 def resolve_skill_writeback_paths(settings: Optional[dict[str, Any]] = None) -> list[Path]:
-    """Skill markdown files to update after Saturday weekly."""
+    """Skill markdown paths to sync after Saturday weekly (local installs + optional repo)."""
     cfg = (settings or {}).get("weekly_report") or {}
     explicit = cfg.get("skill_writeback_paths") or []
     if explicit:
         return [Path(p).expanduser() for p in explicit]
 
-    paths: list[Path] = [_repo_root() / "agent_reach" / "skill" / "daily_run_skill.md"]
-    for candidate in (
-        Path.home() / ".agents" / "skills" / "daily-run" / "SKILL.md",
-        Path.home() / ".agents" / "skills" / "daily-run-skill" / "SKILL.md",
-        Path.home() / ".openclaw" / "skills" / "daily-run" / "SKILL.md",
-    ):
+    paths: list[Path] = []
+    if repo_skill_writeback_enabled(settings):
+        paths.append(canonical_repo_skill_path())
+    for candidate in _installed_skill_candidates():
         if candidate.exists() and candidate not in paths:
             paths.append(candidate)
     return paths
+
+
+def resolve_skill_patch_targets(settings: Optional[dict[str, Any]] = None) -> list[Path]:
+    """Markdown files that receive automated weekly patches (excludes repo checkout by default)."""
+    cfg = (settings or {}).get("weekly_report") or {}
+    explicit = cfg.get("skill_writeback_paths") or []
+    if explicit:
+        return [Path(p).expanduser() for p in explicit]
+
+    if repo_skill_writeback_enabled(settings):
+        canonical = canonical_repo_skill_path()
+        return [canonical] if canonical.exists() else []
+
+    return [p for p in _installed_skill_candidates() if p.exists()]
 
 
 def resolve_cursor_agent_skill_sources() -> list[Path]:

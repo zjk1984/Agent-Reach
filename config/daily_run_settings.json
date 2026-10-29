@@ -664,6 +664,7 @@
     "max_sector_queries": 3,
     "skill_learning": true,
     "skill_writeback": true,
+    "skill_writeback_include_repo": false,
     "skill_auto_apply_settings": true,
     "skill_sync_local": true,
     "skill_sync_runtime": true,

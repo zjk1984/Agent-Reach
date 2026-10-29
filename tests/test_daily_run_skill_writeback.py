@@ -7,8 +7,12 @@ from unittest.mock import patch
 from agent_reach.daily_run.skill_improvements_apply import write_weekly_skill_experience
 from agent_reach.daily_run.skill_writeback import (
     build_weekly_experience_block,
+    canonical_repo_skill_path,
     patch_skill_file,
+    repo_skill_writeback_enabled,
     resolve_cursor_agent_skill_sources,
+    resolve_skill_patch_targets,
+    resolve_skill_writeback_paths,
     sync_cursor_agent_skills_to_local,
     week_section_header,
 )
@@ -132,6 +136,87 @@ class TestSkillWriteback:
                     dest_files = {p.name for p in dest_subdir.iterdir()}
                     assert src_files == dest_files
 
+    def test_resolve_skill_writeback_paths_excludes_repo_by_default(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        local_skill = tmp_path / ".openclaw" / "skills" / "daily-run" / "SKILL.md"
+        local_skill.parent.mkdir(parents=True)
+        local_skill.write_text("# local\n", encoding="utf-8")
+
+        paths = resolve_skill_writeback_paths({})
+        canonical = canonical_repo_skill_path()
+        assert canonical not in paths
+        assert local_skill in paths
+        assert repo_skill_writeback_enabled({}) is False
+
+    def test_resolve_skill_writeback_paths_include_repo_flag(self):
+        settings = {"weekly_report": {"skill_writeback_include_repo": True}}
+        paths = resolve_skill_writeback_paths(settings)
+        assert canonical_repo_skill_path() in paths
+        assert repo_skill_writeback_enabled(settings) is True
+
+    def test_resolve_skill_patch_targets_only_local_without_repo(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        local_skill = tmp_path / ".agents" / "skills" / "daily-run" / "SKILL.md"
+        local_skill.parent.mkdir(parents=True)
+        local_skill.write_text("# local\n", encoding="utf-8")
+
+        targets = resolve_skill_patch_targets({})
+        assert targets == [local_skill]
+        assert canonical_repo_skill_path() not in targets
+
+    def test_patch_canonical_skill_sections_skips_repo_checkout(self, tmp_path, monkeypatch):
+        from agent_reach.daily_run.skill_improvements_apply import patch_canonical_skill_sections
+
+        monkeypatch.setenv("HOME", str(tmp_path))
+        repo_root = tmp_path / "repo"
+        canonical = repo_root / "agent_reach" / "skill" / "daily_run_skill.md"
+        canonical.parent.mkdir(parents=True)
+        canonical.write_text(
+            "\n".join(
+                [
+                    "## ⚡ Agent 执行入口",
+                    "## 📋 下周执行清单（周六自动更新 · x）",
+                    "## 🛡️ Phase-1 质量工程化",
+                    "## 📊 决策模型",
+                    "## 🧠 股票大师实战经验沉淀库",
+                    "## 🛠️ 运维与排障指南",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        before = canonical.read_text(encoding="utf-8")
+        local_skill = tmp_path / ".openclaw" / "skills" / "daily-run" / "SKILL.md"
+        local_skill.parent.mkdir(parents=True)
+        local_skill.write_text(before, encoding="utf-8")
+
+        monkeypatch.setattr(
+            "agent_reach.daily_run.skill_improvements_apply.canonical_skill_path",
+            lambda: canonical,
+        )
+        monkeypatch.setattr(
+            "agent_reach.daily_run.skill_writeback._repo_root",
+            lambda: repo_root,
+        )
+
+        result = patch_canonical_skill_sections(
+            {
+                "week_start": "2026-07-20",
+                "week_end": "2026-07-24",
+                "weekly_pnl": 0,
+                "weekly_pnl_pct": 0,
+                "holdings": [],
+                "hot_sectors": [],
+                "trades": [],
+                "mss_summary": [],
+            },
+            [],
+            settings={"weekly_report": {"skill_external": {"enabled": False}}},
+        )
+        assert result["experience"] is True
+        assert canonical.read_text(encoding="utf-8") == before
+        assert week_section_header("2026-07-20", "2026-07-24") in local_skill.read_text(encoding="utf-8")
+
     @patch("agent_reach.daily_run.skill_improvements_apply.sync_cursor_agent_skills_to_local", return_value=["/tmp/cursor/SKILL.md"])
     def test_sync_canonical_includes_cursor_skills(self, mock_cursor_sync, tmp_path, monkeypatch):
         from agent_reach.daily_run.skill_improvements_apply import sync_canonical_skill_to_local
@@ -150,6 +235,8 @@ class TestSkillWriteback:
             "agent_reach.daily_run.skill_improvements_apply.resolve_skill_writeback_paths",
             lambda settings=None: [dest],
         )
-        synced = sync_canonical_skill_to_local()
+        synced = sync_canonical_skill_to_local(
+            {"weekly_report": {"skill_writeback_include_repo": True}},
+        )
         assert str(dest) in synced
         mock_cursor_sync.assert_called_once()
