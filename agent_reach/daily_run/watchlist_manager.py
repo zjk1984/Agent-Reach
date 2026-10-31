@@ -56,13 +56,17 @@ class WatchlistAdjustResult:
     portfolio: dict[str, Any]
     changes: list[WatchlistChange] = field(default_factory=list)
     message: str = ""
+    unchanged_reasons: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "applied": self.applied,
             "message": self.message,
             "changes": [c.to_dict() for c in self.changes],
         }
+        if self.unchanged_reasons:
+            out["unchanged_reasons"] = list(self.unchanged_reasons)
+        return out
 
 
 def watchlist_settings(settings: dict[str, Any]) -> dict[str, Any]:
@@ -90,7 +94,7 @@ def close_weak_rotation_enabled(settings: dict[str, Any]) -> bool:
 
 
 def close_weak_rotation_max(settings: dict[str, Any]) -> int:
-    return max(0, int(watchlist_settings(settings).get("close_weak_rotation_max", 2)))
+    return max(0, int(watchlist_settings(settings).get("close_weak_rotation_max", 1)))
 
 
 def max_watchlist_size(settings: dict[str, Any], portfolio: Optional[dict[str, Any]] = None) -> int:
@@ -523,7 +527,24 @@ def adjust_watchlist(
             )
 
     if not changes:
-        return WatchlistAdjustResult(applied=False, portfolio=pf, message="观察池无变更")
+        unchanged = _watchlist_unchanged_reasons(
+            pf,
+            snapshot,
+            settings,
+            phase,
+            enriched,
+            held_codes,
+            base_mss,
+            macro_veto,
+            wl_cfg,
+        )
+        detail = "；".join(unchanged) if unchanged else "无剔除、补位或重排条件触发"
+        return WatchlistAdjustResult(
+            applied=False,
+            portfolio=pf,
+            message=f"观察池无变更 — {detail}",
+            unchanged_reasons=unchanged,
+        )
 
     return WatchlistAdjustResult(
         applied=True,
@@ -533,17 +554,179 @@ def adjust_watchlist(
     )
 
 
-def render_watchlist_adjust_markdown(result: WatchlistAdjustResult) -> str:
-    if not result.applied:
-        return f"**观察池：** 未调整 — {result.message}"
-    lines = [f"**观察池调整（{result.message}）：**"]
-    for c in result.changes:
-        if c.action == "reorder":
-            lines.append(f"- 重排观察池 — {c.reason}")
+def _close_weak_rotation_has_viable_swap(
+    pf: dict[str, Any],
+    snapshot: dict[str, Any],
+    settings: dict[str, Any],
+    enriched: dict[str, dict[str, Any]],
+    held_codes: set[str],
+    base_mss: float,
+) -> bool:
+    """True if ranked close candidates beat weakest non-held watchlist name and pass affordable lot."""
+    non_held = [
+        w
+        for w in pf.get("watchlist") or []
+        if _normalize_code(str(w.get("code", ""))) not in held_codes
+        and w.get("source") != "sold_recycle"
+    ]
+    if not non_held:
+        return False
+    weakest = min(
+        _watchlist_entry_potential_score(
+            w,
+            enriched=enriched,
+            settings=settings,
+            base_mss=base_mss,
+            snapshot=snapshot,
+        )
+        for w in non_held
+    )
+    in_pool = {_normalize_code(str(w.get("code", ""))) for w in pf.get("watchlist") or []}
+    hot_titles = _hot_titles_for_adjust(snapshot, pf, settings)
+    ranked = _rank_candidates_for_close_refresh(
+        settings,
+        hot_titles,
+        enriched=enriched,
+        snapshot=snapshot,
+        base_mss=base_mss,
+    )
+    target_min = effective_watchlist_min(settings, pf)
+    for cand in ranked:
+        code = _normalize_code(str(cand.get("code", "")))
+        if not code or code in held_codes or code in in_pool:
+            continue
+        affordable, _ = watchlist_candidate_affordable(pf, enriched, settings, code)
+        if not affordable:
+            continue
+        row = enriched.get(code, {})
+        cand_score = _watchlist_entry_potential_score(
+            {**cand, **row},
+            enriched=enriched,
+            settings=settings,
+            base_mss=base_mss,
+            snapshot=snapshot,
+        )
+        if cand_score <= weakest:
+            continue
+        if target_min > 0 and _watchlist_only_count(pf, held_codes) <= target_min:
+            if not watchlist_removal_allowed_below_min("收盘弱票轮换，潜力分偏低移出观察池"):
+                continue
+        return True
+    return False
+
+
+def _watchlist_unchanged_reasons(
+    pf: dict[str, Any],
+    snapshot: dict[str, Any],
+    settings: dict[str, Any],
+    phase: WatchlistPhase,
+    enriched: dict[str, dict[str, Any]],
+    held_codes: set[str],
+    base_mss: float,
+    macro_veto: float,
+    wl_cfg: dict[str, Any],
+) -> list[str]:
+    reasons: list[str] = []
+    non_held = _watchlist_only_count(pf, held_codes)
+    target_min = effective_watchlist_min(settings, pf)
+    max_wl = max_watchlist_size(settings, pf)
+    total_cap = max_total_symbols(settings)
+    unique = unique_symbol_count(pf)
+
+    if non_held == 0:
+        return ["观察池无非持仓标的"]
+
+    all_pass_veto = True
+    for w in pf.get("watchlist") or []:
+        code = _normalize_code(str(w.get("code", "")))
+        if code in held_codes:
+            continue
+        row = {**w, **enriched.get(code, {})}
+        score = _symbol_score(row, base_mss=base_mss, settings=settings, snapshot=snapshot)
+        if score < macro_veto:
+            all_pass_veto = False
+            break
+    if all_pass_veto:
+        reasons.append("成员均高于否决线，无质量剔除")
+
+    if total_cap > 0 and unique >= total_cap:
+        reasons.append(f"合计标的已达上限 {total_cap}")
+
+    if non_held >= max_wl:
+        reasons.append(f"观察池已达上限 {max_wl}")
+
+    if target_min > 0 and non_held <= target_min:
+        reasons.append(f"已达观察池下限 {target_min}，换出受 min_size 保护")
+
+    if phase == "close":
+        if not wl_cfg.get("close_reorder_by_performance", True):
+            reasons.append("已关闭收盘涨跌幅重排（close_reorder_by_performance=false）")
+        else:
+            reordered = _sort_watchlist_by_performance(pf.get("watchlist") or [], enriched)
+            current = [w.get("code") for w in pf.get("watchlist") or []]
+            if [w.get("code") for w in reordered] == current:
+                reasons.append("顺序已与涨跌幅一致，无需重排")
+
+        if close_weak_rotation_enabled(settings) and not _close_weak_rotation_has_viable_swap(
+            pf,
+            snapshot,
+            settings,
+            enriched,
+            held_codes,
+            base_mss,
+        ):
+            reasons.append("无更强且可负担一手的收盘候选，弱票轮换未触发")
+
+    return reasons
+
+
+def _watchlist_change_lines(changes: list[WatchlistChange], action: str) -> list[str]:
+    lines: list[str] = []
+    for c in changes:
+        if c.action != action:
+            continue
+        if action == "reorder":
+            lines.append(f"- {c.reason}")
             continue
         verb = "纳入" if c.action == "add" else "移出"
         sector_s = f" · {c.sector}" if c.sector else ""
         lines.append(f"- {verb} **{c.name}** ({c.code}){sector_s} — {c.reason}")
+    return lines
+
+
+def render_watchlist_adjust_markdown(result: WatchlistAdjustResult) -> str:
+    if not result.applied:
+        lines = ["**观察池：** 未调整（成员无变化）"]
+        reasons = list(result.unchanged_reasons or [])
+        if not reasons and result.message.startswith("观察池无变更 — "):
+            reasons = [result.message.split("观察池无变更 — ", 1)[1]]
+        for reason in reasons:
+            lines.append(f"- {reason}")
+        if len(lines) == 1:
+            lines.append(f"- {result.message or '观察池无变更'}")
+        return "\n".join(lines)
+
+    adds = [c for c in result.changes if c.action == "add"]
+    removes = [c for c in result.changes if c.action == "remove"]
+    reorders = [c for c in result.changes if c.action == "reorder"]
+    membership = len(adds) + len(removes)
+    lines = [f"**观察池调整** — {result.message}"]
+    if membership:
+        lines.append(
+            f"- 成员：纳入 {len(adds)} · 移出 {len(removes)}"
+            + (f" · 重排 {len(reorders)}" if reorders else "")
+        )
+    elif reorders:
+        lines.append("- 成员无变化，仅重排")
+    if adds:
+        lines.append("**纳入：**")
+        lines.extend(_watchlist_change_lines(adds, "add"))
+    if removes:
+        lines.append("**移出：**")
+        lines.extend(_watchlist_change_lines(removes, "remove"))
+    if reorders:
+        lines.append("**重排：**")
+        lines.extend(_watchlist_change_lines(reorders, "reorder"))
     return "\n".join(lines)
 
 

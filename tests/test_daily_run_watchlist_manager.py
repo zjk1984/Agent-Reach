@@ -196,6 +196,56 @@ class TestWatchlistPolicy:
         assert "观察池" in md
         assert "688008" in md or "澜起" in md
 
+    def test_render_watchlist_adjust_markdown_groups_and_unchanged_reasons(
+        self, portfolio, snapshot, settings
+    ):
+        from agent_reach.daily_run.watchlist_manager import (
+            WatchlistAdjustResult,
+            WatchlistChange,
+            close_weak_rotation_max,
+            render_watchlist_adjust_markdown,
+        )
+
+        applied = WatchlistAdjustResult(
+            applied=True,
+            portfolio=portfolio,
+            changes=[
+                WatchlistChange("add", "600005", "候选A", "补位"),
+                WatchlistChange("remove", "600001", "弱1", "弱票轮换"),
+                WatchlistChange("reorder", "600003", "中", "收盘按涨跌幅重排"),
+            ],
+            message="观察池调整 3 项（close）",
+        )
+        md = render_watchlist_adjust_markdown(applied)
+        assert "**纳入：**" in md
+        assert "**移出：**" in md
+        assert "**重排：**" in md
+        assert "600005" in md
+
+        settings["watchlist"]["min_size"] = 5
+        settings["watchlist"]["max_size"] = 10
+        settings["watchlist"]["close_reorder_by_performance"] = False
+        settings["watchlist"]["close_weak_rotation_enabled"] = False
+        settings["watchlist"]["candidates"] = []
+        portfolio["watchlist"] = [
+            {"code": "603986", "name": "兆易创新"},
+            {"code": "002273", "name": "水晶光电"},
+            {"code": "600001", "name": "A"},
+            {"code": "600002", "name": "B"},
+            {"code": "600003", "name": "C"},
+        ]
+        snapshot["watchlist"] = [
+            {**w, "price": 10.0, "change_pct": 1.0, "mss_final": 55}
+            for w in portfolio["watchlist"]
+        ]
+        unchanged = adjust_watchlist(portfolio, snapshot, settings, "close")
+        assert unchanged.applied is False
+        assert unchanged.unchanged_reasons
+        md0 = render_watchlist_adjust_markdown(unchanged)
+        assert "未调整" in md0
+        assert any(r in md0 for r in unchanged.unchanged_reasons)
+        assert close_weak_rotation_max({}) == 1
+
     def test_close_reorders_by_change_pct(self, portfolio, snapshot, settings):
         settings["watchlist"]["close_reorder_by_performance"] = True
         settings["watchlist"]["min_size"] = 0
@@ -591,6 +641,35 @@ class TestCloseWeakRotation:
             "agent_reach.daily_run.watchlist_potential_score.candidate_potential_sort_key",
             _pot,
         )
+
+    def test_close_weak_rotation_max_default_one_swap(self, portfolio, settings, monkeypatch):
+        self._patch_rotation_deps(monkeypatch)
+        settings["watchlist"]["min_size"] = 4
+        settings["watchlist"]["max_size"] = 10
+        settings["watchlist"]["hot_topic_adjust_enabled"] = False
+        settings["watchlist"]["close_weak_rotation_enabled"] = True
+        settings["watchlist"].pop("close_weak_rotation_max", None)
+        settings["watchlist"]["require_affordable_lot"] = False
+        settings["watchlist"]["negative_intel_remove_enabled"] = False
+        settings["watchlist"]["candidates"] = [
+            {"code": "600005", "name": "候选A"},
+            {"code": "600006", "name": "候选B"},
+        ]
+        portfolio["watchlist"] = [
+            {"code": "600001", "name": "弱1"},
+            {"code": "600002", "name": "弱2"},
+            {"code": "600003", "name": "中"},
+            {"code": "600004", "name": "强"},
+        ]
+        snapshot = {
+            "mss_final": 48.0,
+            "watchlist": [{"code": c["code"], "name": c["name"], "price": 10.0} for c in portfolio["watchlist"]],
+            "portfolio": {"holdings": portfolio["holdings"]},
+        }
+        result = adjust_watchlist(portfolio, snapshot, settings, "close")
+        removed = [c.code for c in result.changes if c.action == "remove" and "弱票轮换" in c.reason]
+        assert len(removed) == 1
+        assert removed[0] == "600001"
 
     def test_close_rotates_lowest_potential_at_min_size(self, portfolio, settings, monkeypatch):
         self._patch_rotation_deps(monkeypatch)

@@ -12,6 +12,7 @@ Partial JSON overlays for `~/.agent-reach/daily_run_settings.json`. Merge by key
 {
   "watchlist": {
     "hot_topic_adjust_enabled": false,
+    "close_reorder_by_performance": false,
     "close_weak_rotation_enabled": true,
     "close_weak_rotation_max": 2,
     "negative_intel_remove_enabled": true,
@@ -20,14 +21,15 @@ Partial JSON overlays for `~/.agent-reach/daily_run_settings.json`. Merge by key
     "weekly_candidates_enabled": true
   },
   "plugins": {
-    "eastmoney_screen_min_change_pct": 1.0
+    "eastmoney_screen_min_change_pct": 0.5
   }
 }
 ```
 
+- **close_reorder_by_performance:** `false` — 收盘不因涨跌幅重排观察池，减少「仅重排」类变更通知噪音（成员不变时 card 仍可通过 A 段说明原因）。
 - **hot_topic_adjust_enabled:** `false` — close 不再因 60s/热词 **加** 观察池；负面公告/新闻剔除仍由 `negative_intel_remove_enabled` 负责。
 - **xueqiu_hot_candidates_enabled:** `false` — 关闭雪球热榜入池；**xueqiu_search** 保留作低权重补充。
-- **eastmoney_screen_min_change_pct:** `1.0`（原 3% 偏追高）— 东财 screen 候选更偏温和变动。
+- **eastmoney_screen_min_change_pct:** `0.5`（W1 用 1.0；进一步降低 screen 最低涨幅门槛，埋伏 profile 更偏温和变动；repo 默认仍为 1.0）。
 - **weekly_candidates + sector_pools:** 周六 weekly 与静态 sector 池仍是观察池主来源（manifest 权重说明见策略 doc §3 W1）。
 
 **Do not merge via this profile:** `data_audit.*`, `intraday.technical_watch.min_cash_ratio_cap.attack_min_cash_ratio` — 执行链 gate 不在 W1 范围。
