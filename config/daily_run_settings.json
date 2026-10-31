@@ -1156,6 +1156,8 @@
     "max_size": 10,
     "funnel_target": 5,
     "close_reorder_by_performance": true,
+    "close_weak_rotation_enabled": false,
+    "close_weak_rotation_max": 1,
     "hot_topic_adjust_enabled": false,
     "hot_topic_remove_change_pct": -2.0,
     "hot_topic_fetch_if_missing": true,

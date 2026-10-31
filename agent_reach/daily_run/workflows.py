@@ -941,6 +941,7 @@ def run_close(
                     WatchlistChange(**c) for c in (watchlist_adjust.get("changes") or [])
                 ],
                 message=str(watchlist_adjust.get("message") or ""),
+                unchanged_reasons=list(watchlist_adjust.get("unchanged_reasons") or []),
             )
         )
         if wl_md:
@@ -1436,6 +1437,7 @@ def run_close(
             portfolio={},
             changes=[WatchlistChange(**c) for c in (watchlist_adjust.get("changes") or [])],
             message=str(watchlist_adjust.get("message") or ""),
+            unchanged_reasons=list(watchlist_adjust.get("unchanged_reasons") or []),
         )
     wl_manifest = watchlist_adjust_manifest_summary(
         wl_result_for_manifest,
