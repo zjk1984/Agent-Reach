@@ -212,6 +212,15 @@ def summarize_close_card_predictions(
             base["structured_review"] = structured_review
             if week_fc:
                 record_week_verification_to_tracking(structured_review, week_fc, settings=settings)
+                from agent_reach.daily_run.forecast_validation_harness import (
+                    persist_forecast_validation_closure,
+                )
+
+                base["forecast_validation"] = persist_forecast_validation_closure(
+                    structured_review,
+                    week_fc,
+                    settings=settings,
+                )
         base["monthly_optimization"] = build_monthly_accuracy_summary(as_of=week_end, settings=settings)
     except Exception:
         pass

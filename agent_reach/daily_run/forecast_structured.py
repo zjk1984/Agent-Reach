@@ -799,6 +799,14 @@ def attach_structured_forecast(
             from agent_reach.daily_run.forecast_tracking import record_week_verification_to_tracking
 
             record_week_verification_to_tracking(verification, prior, settings=settings)
+            try:
+                from agent_reach.daily_run.forecast_validation_harness import (
+                    persist_forecast_validation_closure,
+                )
+
+                persist_forecast_validation_closure(verification, prior, settings=settings)
+            except Exception:
+                pass
         except Exception:
             pass
         if persist_prior:
