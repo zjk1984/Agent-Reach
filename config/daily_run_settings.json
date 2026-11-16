@@ -394,6 +394,16 @@
     "llm_usd_per_mtok": 0.14
   },
 
+  "signal_arbitration": {
+    "mss_tsp": {
+      "enabled": true,
+      "cap_verdict_on_retreat": true,
+      "cap_verdict_on_regime_phases": ["retreat", "freezing"],
+      "log_to_manifest": true,
+      "log_to_decision_trace": true
+    }
+  },
+
   "playbook_contract": {
     "enabled": true,
     "require_morning_handoff": true,

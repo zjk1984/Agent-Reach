@@ -334,6 +334,25 @@ def _apply_intraday_verdict_ceiling(
         lookback_mss=lookback_mss,
         settings=cfg,
     )
+    try:
+        from agent_reach.daily_run.mss_tsp_arbitration import arbitrate_mss_tsp
+
+        live_breadth = None
+        try:
+            from agent_reach.daily_run.tsp.intraday_sentinel import get_live_market_breadth_and_phase
+
+            live_breadth = get_live_market_breadth_and_phase(cfg)
+        except Exception:
+            pass
+        arbitrate_mss_tsp(
+            evaluation,
+            settings=cfg,
+            job="intraday",
+            live_breadth=live_breadth,
+            snapshot=evaluation.get("report"),
+        )
+    except Exception:
+        pass
     return consecutive_forecast_overrun_slots(scans, cfg)
 
 
