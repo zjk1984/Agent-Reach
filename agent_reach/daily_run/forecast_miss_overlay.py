@@ -20,6 +20,35 @@ def forecast_miss_cfg(settings: Optional[dict[str, Any]] = None) -> dict[str, An
     }
 
 
+def macro_downside_band_cfg(settings: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    """CSI300 / macro weekly band — extra downside padding after repeated range misses."""
+    raw = dict((settings or {}).get("week_forecast") or {})
+    miss = forecast_miss_cfg(settings)
+    return {
+        "enabled": raw.get("macro_downside_band", True) is not False,
+        "base_extra_pct": float(raw.get("macro_downside_extra_pct", 0.6)),
+        "streak_step_pct": float(raw.get("macro_downside_streak_step_pct", 0.15)),
+        "max_extra_pct": float(raw.get("macro_downside_max_extra_pct", 1.0)),
+        "min_miss_streak": int(raw.get("macro_downside_min_streak", miss["min_miss_streak"])),
+    }
+
+
+def macro_downside_band_extra(
+    settings: Optional[dict[str, Any]] = None,
+    *,
+    as_of: Optional[date] = None,
+) -> float:
+    """Lower-bound-only widen (pp) for week macro MSS/Kronos band."""
+    cfg = macro_downside_band_cfg(settings)
+    if not cfg["enabled"]:
+        return 0.0
+    extra = cfg["base_extra_pct"]
+    streak = forecast_mss_miss_streak(as_of=as_of)
+    if streak >= cfg["min_miss_streak"]:
+        extra += cfg["streak_step_pct"] * streak
+    return round(min(cfg["max_extra_pct"], extra), 2)
+
+
 def forecast_mss_miss_streak(*, as_of: Optional[date] = None) -> int:
     """Trailing consecutive MSS range misses in the active week forecast."""
     from agent_reach.daily_run.week_forecast import load_active_forecast
@@ -98,6 +127,7 @@ def apply_forecast_miss_overlay(
         "hit_rate_spread_bonus": hit_rate_bonus,
         "base_spread": int(effective),
         "base_before": int(base),
+        "macro_downside_extra_pct": macro_downside_band_extra(out),
         "optimize_hint": "python3 -m agent_reach.cli daily-run optimize (forecast_calibrate)",
     }
     overlay = dict(runtime.get("forecast_overlay") or {})

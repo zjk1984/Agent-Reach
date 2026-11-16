@@ -432,6 +432,7 @@ def enrich_market_prediction(
             "change_pct_low": lo,
             "change_pct_high": hi,
             "change_pct_mid": round((lo + hi) / 2, 2),
+            "macro_downside_extra_pct": pred.get("macro_downside_extra_pct"),
             "interval_width_pct": width,
             "confidence_pct": conf,
             "confidence_tier": confidence_tier(conf),
