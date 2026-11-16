@@ -311,6 +311,30 @@ def build_quant_digest_payload(
             pnl["end_total"] = nav["end_total"]
     else:
         pnl["weekly_pnl_source"] = "daily_pnl_sum"
+    try:
+        from agent_reach.daily_run.weekly_card_metrics import (
+            build_weekly_return_metrics,
+            enrich_weekly_metrics_benchmark_alpha,
+        )
+
+        wm = build_weekly_return_metrics(
+            week_start=week_start,
+            week_end=week_end,
+            start_total=pnl.get("start_total"),
+            end_total=pnl.get("end_total"),
+            weekly_pnl=pnl.get("weekly_pnl"),
+            weekly_pnl_pct=pnl.get("weekly_pnl_pct"),
+            settings=settings,
+        )
+        wm = enrich_weekly_metrics_benchmark_alpha(
+            wm,
+            week_start=week_start,
+            week_end=week_end,
+            settings=settings,
+        )
+        pnl["benchmark_alpha"] = wm.get("benchmark_alpha")
+    except Exception:
+        pass
     trade_summary = summarize_trades(trades)
     health_rows = summarize_job_health_snapshot(job_health)
 
@@ -457,6 +481,26 @@ def quant_digest_feishu_card(payload: QuantDigestPayload | dict[str, Any]) -> tu
         ),
         f"**成交** {trades.get('trade_count', 0)} 笔 · 已实现 {_fmt_pnl(trades.get('realized_pnl'))}",
     ]
+    alpha = pnl.get("benchmark_alpha") or {}
+    if alpha:
+        fund = alpha.get("fund_return_pct")
+        bench = alpha.get("benchmark_return_pct")
+        excess = alpha.get("excess_return_pct")
+        streak = alpha.get("underperform_week_streak")
+        alpha_bits: list[str] = []
+        if fund is not None:
+            alpha_bits.append(f"组合 {float(fund):+.2f}%")
+        if bench is not None:
+            alpha_bits.append(f"沪深300 {float(bench):+.2f}%")
+        if excess is not None:
+            alpha_bits.append(f"超额 {float(excess):+.2f}%")
+        if alpha_bits:
+            body_lines.append("**vs 基准** " + " · ".join(alpha_bits))
+        if streak is not None and int(streak) > 0:
+            body_lines.append(f"**连续跑输基准** {int(streak)} 周")
+        verdict = alpha.get("verdict")
+        if verdict:
+            body_lines.append(verdict.replace("**", ""))
     bad_jobs = [
         j
         for j in (data.get("job_health") or {}).get("jobs") or []
