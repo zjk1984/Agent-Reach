@@ -24,6 +24,14 @@
       "auto_tighten_deploy_on_streak": true
     }
   },
+  "ops": {
+    "precheck_auto_sync": {
+      "enabled": true,
+      "git_pull": true,
+      "pip_editable": true,
+      "profile_path": "config/profiles/fund_ambush_watchlist.json"
+    }
+  },
   "intraday": {
     "upper_band_trim": {
       "enabled": true,

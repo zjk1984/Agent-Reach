@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Trading-day ops precheck — run before the open (cron @ 06:50 Asia/Shanghai weekdays).
 #
-# Checks: git main vs origin/main, pip editable install, job_health close/morning,
+# Checks: optional ops.precheck_auto_sync (ff-only pull + pip editable + profile merge),
+# git main vs origin/main, pip editable install, job_health close/morning,
 # doctor quick smoke, disk space, optional Cursor worker note.
 #
 # Documented in AGENTS.md (Ops / fund-owner autopilot Phase A).
