@@ -2411,6 +2411,122 @@ def _decide_trade(
             expected_return_pct=exp_ret,
         )
 
+    from agent_reach.daily_run.upper_band_trim import (
+        estimate_upper_band_trim_sell_shares,
+        evaluate_upper_band_trim_sell,
+    )
+
+    allow_upper, upper_block, upper_ratio = evaluate_upper_band_trim_sell(
+        settings,
+        report=report,
+        snapshot=snapshot,
+        lookback_mss=lookback_mss,
+        prior_trades=prior_trades,
+    )
+    if allow_upper and _decision_symbol_has_holding(snapshot, report.get("code")):
+        prot_sell = protection_block_reason(
+            snapshot=snapshot,
+            report=report,
+            side="sell",
+            settings=settings,
+            prior_trades=prior_trades,
+            session_scans=session_scans,
+            now=sh_now,
+        )
+        if prot_sell:
+            record_protection_hits(
+                [prot_sell], settings=settings, code=str(report.get("code") or "")
+            )
+            return TradeDecision(
+                action="hold",
+                trade_id=trade_id,
+                lookback_mss=lookback_mss,
+                lookback_detail=[],
+                trend=trend,
+                reasoning=f"{prot_sell.reason}{overlay_note}",
+                blocked=True,
+                block_kind="protection_sell",
+                friction_blocked=False,
+                expected_return_pct=exp_ret,
+            )
+        if _decision_symbol_sellable(snapshot, settings, report.get("code")):
+            from agent_reach.daily_run.playbook_contract_guard import playbook_contract_sell_block
+
+            symbol_code = str(report.get("code") or "")
+            est_shares = estimate_upper_band_trim_sell_shares(
+                snapshot.get("portfolio") or {},
+                symbol_code,
+                settings,
+                sell_ratio_override=upper_ratio,
+            )
+            floor_block = playbook_contract_sell_block(
+                settings=settings,
+                portfolio=snapshot.get("portfolio") or {},
+                snapshot=snapshot,
+                code=symbol_code,
+                sell_shares=est_shares,
+                sell_kind="upper_band_trim",
+                price=_optional_float(report.get("price")),
+            )
+            if floor_block:
+                return TradeDecision(
+                    action="hold",
+                    trade_id=trade_id,
+                    lookback_mss=lookback_mss,
+                    lookback_detail=[],
+                    trend=trend,
+                    reasoning=f"{floor_block.reason}{overlay_note}",
+                    blocked=True,
+                    block_kind=floor_block.block_kind,
+                    friction_blocked=False,
+                    expected_return_pct=exp_ret,
+                )
+            return TradeDecision(
+                action="sell",
+                trade_id=trade_id,
+                lookback_mss=lookback_mss,
+                lookback_detail=[],
+                trend=trend,
+                reasoning=f"{upper_block}{overlay_note}",
+                blocked=False,
+                friction_blocked=False,
+                expected_return_pct=exp_ret,
+                sell_kind="upper_band_trim",
+                sell_ratio_override=upper_ratio,
+            )
+        deep_loss_reason = _deep_loss_sell_block_reason(
+            snapshot,
+            settings,
+            report.get("code"),
+            sell_kind="upper_band_trim",
+        )
+        if deep_loss_reason:
+            return TradeDecision(
+                action="hold",
+                trade_id=trade_id,
+                lookback_mss=lookback_mss,
+                lookback_detail=[],
+                trend=trend,
+                reasoning=f"预测上沿止盈信号触发，但{deep_loss_reason}{overlay_note}",
+                blocked=True,
+                block_kind="sell_deep_loss",
+                friction_blocked=False,
+                expected_return_pct=exp_ret,
+            )
+    elif upper_block:
+        return TradeDecision(
+            action="hold",
+            trade_id=trade_id,
+            lookback_mss=lookback_mss,
+            lookback_detail=[],
+            trend=trend,
+            reasoning=f"{upper_block}{overlay_note}",
+            blocked=True,
+            block_kind="sell_upper_band_trim",
+            friction_blocked=False,
+            expected_return_pct=exp_ret,
+        )
+
     if _decision_symbol_has_holding(snapshot, report.get("code")):
         runtime = settings.get("harness_runtime") or {}
         trade_signals = runtime.get("trade_signals") or {}

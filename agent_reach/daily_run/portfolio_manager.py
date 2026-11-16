@@ -864,6 +864,8 @@ def _sell_oco_group_id(sell_kind: Optional[str], sell_analysis: dict[str, Any]) 
         return "profit_lock_bracket"
     if sell_kind == "defensive_trim":
         return "defensive_trim_bracket"
+    if sell_kind == "upper_band_trim":
+        return "upper_band_trim_bracket"
     if ratio < 0.999 and sell_analysis.get("is_deep_loss"):
         return "deep_loss_partial_oco"
     if ratio < 0.999:
@@ -923,6 +925,23 @@ def _preview_sell_shares(
             settings,
             is_deep_loss=bool(sell_analysis.get("is_deep_loss")),
             sell_ratio_override=capped,
+        )
+        sell_analysis = {**sell_analysis, "sell_shares": sell_shares}
+    elif sell_kind == "upper_band_trim" and sell_ratio_override is not None:
+        from agent_reach.daily_run.upper_band_trim import upper_band_trim_effective_sell_ratio
+
+        effective_ratio = upper_band_trim_effective_sell_ratio(
+            settings,
+            target,
+            base_ratio=float(sell_analysis.get("sell_ratio") or 1.0),
+            sell_ratio_override=sell_ratio_override,
+        )
+        sell_shares = resolve_deep_loss_sell_shares(
+            min(int(target.get("shares") or 0), sellable),
+            code,
+            settings,
+            is_deep_loss=bool(sell_analysis.get("is_deep_loss")),
+            sell_ratio_override=effective_ratio,
         )
         sell_analysis = {**sell_analysis, "sell_shares": sell_shares}
 
@@ -1053,6 +1072,24 @@ def _apply_sell(
             sell_ratio_override=capped,
         )
         sell_analysis = {**sell_analysis, "sell_ratio": capped, "sell_shares": sell_shares}
+    elif sell_kind == "upper_band_trim" and sell_ratio_override is not None:
+        from agent_reach.daily_run.upper_band_trim import upper_band_trim_effective_sell_ratio
+
+        effective_ratio = upper_band_trim_effective_sell_ratio(
+            settings,
+            target,
+            base_ratio=float(sell_analysis.get("sell_ratio") or 1.0),
+            sell_ratio_override=sell_ratio_override,
+        )
+        code_norm = _normalize_code(str(target.get("code") or ""))
+        sell_shares = resolve_deep_loss_sell_shares(
+            min(int(target.get("shares") or 0), sellable),
+            code_norm,
+            settings,
+            is_deep_loss=bool(sell_analysis.get("is_deep_loss")),
+            sell_ratio_override=effective_ratio,
+        )
+        sell_analysis = {**sell_analysis, "sell_ratio": effective_ratio, "sell_shares": sell_shares}
 
     shares = min(int(sell_analysis["sell_shares"] or 0), sellable)
     # Ceiling for lot rounding is `sellable`, not the raw holding total: T+1-locked
@@ -1102,6 +1139,8 @@ def _apply_sell(
     sell_ratio = float(sell_analysis.get("sell_ratio") or 1.0)
     if sell_kind == "profit_lock" and sell_ratio < 0.999:
         sell_note = f"（动态止盈 sell_ratio={sell_ratio:.0%}）"
+    elif sell_kind == "upper_band_trim" and sell_ratio < 0.999:
+        sell_note = f"（预测上沿止盈 sell_ratio={sell_ratio:.0%}）"
     elif sell_ratio < 0.999:
         label = "深度套牢分批" if sell_analysis.get("is_deep_loss") else "非深亏分批"
         sell_note = f"（{label} sell_ratio={sell_ratio:.0%}）"

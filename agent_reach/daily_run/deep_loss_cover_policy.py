@@ -25,7 +25,7 @@ def cover_exempt_for_sell(
 ) -> bool:
     cfg = deep_loss_cover_cfg(settings)
     norm = _normalize_code(code)
-    if sell_kind == "defensive_trim" and cfg["defensive_trim_exempt_cover"]:
+    if sell_kind in ("defensive_trim", "upper_band_trim") and cfg["defensive_trim_exempt_cover"]:
         return True
     if cfg["plan_trim_exempt_cover"] and operation_plan_has_trim(norm, settings):
         return True

@@ -395,7 +395,7 @@ def playbook_contract_sell_block(
         return None
     if sell_shares <= 0:
         return None
-    if sell_kind not in (None, "defensive_trim", "partial_sell"):
+    if sell_kind not in (None, "defensive_trim", "partial_sell", "upper_band_trim"):
         return None
 
     norm = _normalize_code(code)
