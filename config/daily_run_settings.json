@@ -774,7 +774,10 @@
       "enabled": true,
       "index_miss_streak_warn": 2,
       "benchmark_underperform_streak_warn": 2,
-      "auto_tighten_deploy_on_streak": false
+      "auto_tighten_deploy_on_streak": false,
+      "deploy_step_per_week": 0.05,
+      "deploy_floor": 0.15,
+      "deploy_release_step_per_week": 0.05
     },
     "pm_session_symbol_accuracy_gate": true,
     "pm_session_symbol_accuracy_min": 0.45,
