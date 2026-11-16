@@ -131,6 +131,154 @@ def build_weekly_return_metrics(
     }
 
 
+def _format_pct_line(value: Optional[float]) -> str:
+    if value is None:
+        return "—"
+    sign = "+" if float(value) >= 0 else ""
+    return f"{sign}{float(value):.2f}%"
+
+
+def compute_weekly_benchmark_underperform_streak(
+    week_end: date,
+    *,
+    settings: Optional[dict[str, Any]] = None,
+    current_week_excess: Optional[float] = None,
+    max_weeks: int = 52,
+) -> dict[str, Any]:
+    """Count consecutive trading weeks with portfolio return below benchmark (excess < threshold)."""
+    from agent_reach.daily_run.weekly_report import trading_week_range
+    from agent_reach.daily_run.weekly_signals import portfolio_return_between
+
+    cfg = (settings or {}).get("weekly_report") or {}
+    threshold = float(cfg.get("benchmark_underperform_week_threshold_pct", 0.0))
+
+    streak = 0
+    weeks_detail: list[dict[str, Any]] = []
+
+    for offset in range(max_weeks):
+        ref = week_end - timedelta(days=7 * offset)
+        ws, we = trading_week_range(ref)
+
+        excess: Optional[float]
+        port_pct: Optional[float] = None
+        bench_pct: Optional[float] = None
+
+        if offset == 0 and current_week_excess is not None:
+            excess = float(current_week_excess)
+        else:
+            port_pct = portfolio_return_between(ws, we, settings=settings)
+            bench = fetch_benchmark_weekly_return(ws, we, settings=settings)
+            bench_pct = bench.get("return_pct") if bench.get("ok") else None
+            if port_pct is None or bench_pct is None:
+                break
+            excess = round(float(port_pct) - float(bench_pct), 2)
+
+        weeks_detail.append(
+            {
+                "week_start": ws.isoformat(),
+                "week_end": we.isoformat(),
+                "portfolio_return_pct": port_pct,
+                "benchmark_return_pct": bench_pct,
+                "excess_return_pct": excess,
+            }
+        )
+        if excess < threshold:
+            streak += 1
+        else:
+            break
+
+    return {
+        "underperform_week_streak": streak,
+        "threshold_pct": threshold,
+        "weeks": weeks_detail,
+    }
+
+
+def build_benchmark_alpha_visibility(
+    weekly_metrics: dict[str, Any],
+    *,
+    week_start: date,
+    week_end: date,
+    settings: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    """Headline fund vs CSI300 fields + consecutive underperform week count."""
+    _ = week_start
+    bench = weekly_metrics.get("benchmark") or {}
+    fund = weekly_metrics.get("absolute_return_pct")
+    bench_pct = bench.get("return_pct") if bench.get("ok") else None
+    excess = weekly_metrics.get("excess_return_pct")
+
+    streak_info = compute_weekly_benchmark_underperform_streak(
+        week_end,
+        settings=settings,
+        current_week_excess=excess,
+    )
+    streak = int(streak_info.get("underperform_week_streak") or 0)
+    verdict: Optional[str] = None
+    if streak >= 2:
+        verdict = (
+            f"已连续 **{streak}** 周跑输沪深300；建议收紧 deploy、抬现金护栏"
+            "（harness 反馈，不 bypass gate）"
+        )
+
+    return {
+        "fund_return_pct": fund,
+        "benchmark_return_pct": bench_pct,
+        "excess_return_pct": excess,
+        "underperform_week_streak": streak,
+        "verdict": verdict,
+        "benchmark_name": bench.get("name") or _DEFAULT_BENCHMARK_NAME,
+        "streak_detail": streak_info,
+    }
+
+
+def enrich_weekly_metrics_benchmark_alpha(
+    weekly_metrics: dict[str, Any],
+    *,
+    week_start: date,
+    week_end: date,
+    settings: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    out = dict(weekly_metrics)
+    alpha = build_benchmark_alpha_visibility(
+        weekly_metrics,
+        week_start=week_start,
+        week_end=week_end,
+        settings=settings,
+    )
+    out["benchmark_alpha"] = alpha
+    out["underperform_week_streak"] = alpha.get("underperform_week_streak")
+    return out
+
+
+def render_benchmark_alpha_banner(weekly_metrics: dict[str, Any]) -> list[str]:
+    """First-screen friendly summary for Saturday Feishu overview card."""
+    alpha = weekly_metrics.get("benchmark_alpha") or {}
+    if not alpha and weekly_metrics.get("excess_return_pct") is None:
+        return []
+
+    fund = alpha.get("fund_return_pct", weekly_metrics.get("absolute_return_pct"))
+    bench = alpha.get("benchmark_return_pct")
+    if bench is None:
+        bench_block = weekly_metrics.get("benchmark") or {}
+        bench = bench_block.get("return_pct") if bench_block.get("ok") else None
+    excess = alpha.get("excess_return_pct", weekly_metrics.get("excess_return_pct"))
+    name = alpha.get("benchmark_name") or _DEFAULT_BENCHMARK_NAME
+    streak = alpha.get("underperform_week_streak", weekly_metrics.get("underperform_week_streak"))
+
+    lines = [
+        "## 🎯 相对基准（首屏）",
+        f"- **组合周收益** {_format_pct_line(fund)} · **{name}** {_format_pct_line(bench)} · **超额** {_format_pct_line(excess)}",
+    ]
+    if streak is not None and int(streak) > 0:
+        lines.append(f"- **连续跑输基准：** {int(streak)} 周")
+    verdict = alpha.get("verdict")
+    if verdict:
+        lines.append(f"- ⚠️ {verdict}")
+    lines.append("")
+    return lines
+
+
 def flatten_ledger_trades(trades: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Flatten ledger entries to one row per executed action."""
     rows: list[dict[str, Any]] = []
@@ -438,7 +586,8 @@ def build_holdings_sector_snapshot(
 def render_weekly_return_markdown(metrics: dict[str, Any]) -> list[str]:
     if not metrics:
         return []
-    lines = ["## 💰 本周收益（实际净值）"]
+    lines = list(render_benchmark_alpha_banner(metrics))
+    lines.extend(["## 💰 本周收益（实际净值）"])
     start = metrics.get("start_total")
     end = metrics.get("end_total")
     abs_pct = metrics.get("absolute_return_pct")

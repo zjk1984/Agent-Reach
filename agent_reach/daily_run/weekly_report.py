@@ -1503,6 +1503,14 @@ def generate_weekly_report(
         weekly_pnl_pct=weekly_pnl_pct,
         settings=settings,
     )
+    from agent_reach.daily_run.weekly_card_metrics import enrich_weekly_metrics_benchmark_alpha
+
+    weekly_metrics = enrich_weekly_metrics_benchmark_alpha(
+        weekly_metrics,
+        week_start=week_start,
+        week_end=week_end,
+        settings=settings,
+    )
     risk_metrics = build_weekly_risk_metrics(
         week_start=week_start,
         week_end=week_end,

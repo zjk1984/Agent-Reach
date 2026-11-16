@@ -328,12 +328,22 @@ def build_performance_overview_table(
             "ytd": ytd_excess,
         },
     ]
+    from agent_reach.daily_run.weekly_card_metrics import build_benchmark_alpha_visibility
+
+    benchmark_alpha = build_benchmark_alpha_visibility(
+        weekly_metrics,
+        week_start=week_start,
+        week_end=week_end,
+        settings=settings,
+    )
+
     return {
         "rows": rows,
         "week_start": week_start.isoformat(),
         "week_end": week_end.isoformat(),
         "four_week_start": four_week_start.isoformat(),
         "ytd_start": ytd_start.isoformat(),
+        "benchmark_alpha": benchmark_alpha,
     }
 
 
@@ -740,12 +750,31 @@ def build_next_week_outlook(
 def render_performance_overview_markdown(table: dict[str, Any]) -> list[str]:
     if not table or not table.get("rows"):
         return []
-    lines = [
-        "## 📊 收益总览",
-        "",
-        "| 指标 | 本周 | 近4周 | 年初至今 |",
-        "|------|------|-------|----------|",
-    ]
+    from agent_reach.daily_run.weekly_card_metrics import render_benchmark_alpha_banner
+
+    alpha = table.get("benchmark_alpha") or {}
+    lines: list[str] = []
+    if alpha:
+        synthetic_metrics = {
+            "benchmark_alpha": alpha,
+            "absolute_return_pct": alpha.get("fund_return_pct"),
+            "excess_return_pct": alpha.get("excess_return_pct"),
+            "underperform_week_streak": alpha.get("underperform_week_streak"),
+            "benchmark": {
+                "ok": alpha.get("benchmark_return_pct") is not None,
+                "return_pct": alpha.get("benchmark_return_pct"),
+                "name": alpha.get("benchmark_name"),
+            },
+        }
+        lines.extend(render_benchmark_alpha_banner(synthetic_metrics))
+    lines.extend(
+        [
+            "## 📊 收益总览",
+            "",
+            "| 指标 | 本周 | 近4周 | 年初至今 |",
+            "|------|------|-------|----------|",
+        ]
+    )
     for row in table["rows"]:
         lines.append(
             f"| {row.get('metric')} | {_fmt_pct(row.get('week'))} | "
