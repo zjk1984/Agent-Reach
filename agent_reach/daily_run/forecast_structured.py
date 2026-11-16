@@ -133,6 +133,13 @@ def build_market_prediction(
     mid = round(mss_delta * 0.12 - bias * 0.25, 2)
     lo = round(mid - vol, 2)
     hi = round(mid + vol, 2)
+    downside_extra = 0.0
+    if settings is not None:
+        from agent_reach.daily_run.forecast_miss_overlay import macro_downside_band_extra
+
+        downside_extra = macro_downside_band_extra(settings)
+        if downside_extra > 0:
+            lo = round(lo - downside_extra, 2)
     text = (
         f"下周大盘（{index_name}）预测：{_fmt_pct(lo)} ~ {_fmt_pct(hi)}，中枢 {_fmt_pct(mid)}"
     )
@@ -142,6 +149,7 @@ def build_market_prediction(
         "change_pct_low": lo,
         "change_pct_high": hi,
         "change_pct_mid": mid,
+        "macro_downside_extra_pct": downside_extra,
         "text": sanitize_prediction_text(text),
     }
 
