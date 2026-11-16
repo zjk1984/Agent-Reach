@@ -1,5 +1,14 @@
 # -*- coding: utf-8
-"""Trading-day ops precheck (git, job_health, doctor smoke, disk)."""
+"""Trading-day ops precheck (git, job_health, doctor smoke, disk).
+
+Before open (cron ~06:50 CST), validates prod repo + runtime. When
+``ops.precheck_auto_sync.enabled`` is true (e.g. fund_ambush_watchlist profile),
+``run_precheck`` may ff-only ``git pull origin main`` on a clean ``main`` checkout
+that is behind ``origin/main``, reinstall ``pip install -c constraints.txt -e '.[dev]'``,
+and deep-merge only **missing** keys from ``profile_path`` into
+``~/.agent-reach/daily_run_settings.json`` — then re-run the git sync check.
+Refuses auto-sync when the tree is dirty or not on ``main``.
+"""
 
 from __future__ import annotations
 
@@ -7,9 +16,10 @@ import json
 import shutil
 import subprocess
 import sys
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Optional
 
 from agent_reach.daily_run.job_health import _load as load_job_health
 from agent_reach.daily_run.settings import load_settings
@@ -36,6 +46,239 @@ def _run_git(repo_root: Path, *args: str) -> subprocess.CompletedProcess[str]:
         text=True,
         check=False,
     )
+
+
+def _precheck_auto_sync_cfg(settings: dict[str, Any]) -> dict[str, Any]:
+    raw = (settings.get("ops") or {}).get("precheck_auto_sync") or {}
+    profile = raw.get("profile_path")
+    return {
+        "enabled": raw.get("enabled") is True,
+        "git_pull": raw.get("git_pull") is not False,
+        "pip_editable": raw.get("pip_editable") is not False,
+        "profile_path": str(profile).strip() if profile else None,
+    }
+
+
+def deep_merge_missing_keys(into: dict[str, Any], overlay: dict[str, Any], *, prefix: str = "") -> list[str]:
+    """Merge keys from overlay into into only where missing (user overrides preserved)."""
+    added: list[str] = []
+    for key, value in overlay.items():
+        if key.startswith("_"):
+            continue
+        dotted = f"{prefix}.{key}" if prefix else key
+        if key not in into:
+            into[key] = deepcopy(value)
+            added.append(dotted)
+        elif isinstance(value, dict) and isinstance(into.get(key), dict):
+            added.extend(deep_merge_missing_keys(into[key], value, prefix=dotted))
+    return added
+
+
+def _git_behind_ahead(repo_root: Path, *, fetch: bool) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    """Return (behind_count, ahead_count, error_detail) after optional fetch."""
+    if fetch:
+        fetch_r = _run_git(repo_root, "fetch", "origin", "main")
+        if fetch_r.returncode != 0:
+            err = (fetch_r.stderr or fetch_r.stdout or "fetch failed").strip()[:200]
+            return None, None, f"无法 fetch origin/main：{err}"
+
+    local = _run_git(repo_root, "rev-parse", "HEAD").stdout.strip()
+    remote = _run_git(repo_root, "rev-parse", "origin/main").stdout.strip()
+    if not local or not remote:
+        return None, None, "无法解析 HEAD 或 origin/main"
+    if local == remote:
+        return "0", "0", None
+
+    behind = _run_git(repo_root, "rev-list", "--count", f"HEAD..origin/main").stdout.strip()
+    ahead = _run_git(repo_root, "rev-list", "--count", f"origin/main..HEAD").stdout.strip()
+    return behind or "0", ahead or "0", None
+
+
+def _merge_profile_missing_keys(repo_root: Path, profile_rel: str) -> CheckResult:
+    from agent_reach.daily_run.settings import save_user_settings, user_settings_path
+
+    profile_path = (repo_root / profile_rel).resolve()
+    if not profile_path.is_file():
+        return CheckResult(
+            "auto_sync:profile",
+            False,
+            f"profile 不存在：{profile_rel}",
+            severity="warn",
+        )
+
+    user_path = user_settings_path()
+    if user_path.exists():
+        user_data = json.loads(user_path.read_text(encoding="utf-8"))
+        if not isinstance(user_data, dict):
+            return CheckResult("auto_sync:profile", False, f"用户配置非 object：{user_path}")
+    else:
+        user_data = {}
+
+    profile_data = json.loads(profile_path.read_text(encoding="utf-8"))
+    if not isinstance(profile_data, dict):
+        return CheckResult("auto_sync:profile", False, f"profile 非 object：{profile_rel}")
+
+    merged = deepcopy(user_data)
+    added = deep_merge_missing_keys(merged, profile_data)
+    if not added:
+        return CheckResult(
+            "auto_sync:profile",
+            True,
+            f"无需合并（{profile_rel} 键已齐全）",
+            severity="info",
+        )
+
+    save_user_settings(merged, path=user_path)
+    preview = ", ".join(added[:8])
+    if len(added) > 8:
+        preview += f" … +{len(added) - 8}"
+    return CheckResult(
+        "auto_sync:profile",
+        True,
+        f"已合并 {len(added)} 个缺失键 ({preview})",
+        severity="info",
+    )
+
+
+def _run_pip_editable(repo_root: Path) -> CheckResult:
+    constraints = repo_root / "constraints.txt"
+    pip_argv = [
+        sys.executable,
+        "-m",
+        "pip",
+        "install",
+        "-c",
+        str(constraints),
+        "-e",
+        ".[dev]",
+    ]
+    if not constraints.is_file():
+        return CheckResult(
+            "auto_sync:pip",
+            False,
+            f"缺少 constraints.txt：{constraints}",
+        )
+
+    try:
+        proc = subprocess.run(
+            pip_argv,
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        return CheckResult("auto_sync:pip", False, f"pip 不可用：{exc}")
+
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "pip failed").strip()[:300]
+        return CheckResult("auto_sync:pip", False, err)
+
+    return CheckResult(
+        "auto_sync:pip",
+        True,
+        "pip install -c constraints.txt -e '.[dev]' 完成",
+        severity="info",
+    )
+
+
+def maybe_auto_sync_repo(
+    repo_root: Path,
+    settings: dict[str, Any],
+    *,
+    fetch: bool = True,
+) -> list[CheckResult]:
+    """Attempt conservative prod auto-align when configured (see module docstring)."""
+    cfg = _precheck_auto_sync_cfg(settings)
+    if not cfg["enabled"]:
+        return []
+
+    results: list[CheckResult] = []
+    branch = _run_git(repo_root, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+    if branch != "main":
+        results.append(
+            CheckResult(
+                "auto_sync",
+                True,
+                f"跳过：当前分支 {branch!r}（仅 main 自动 pull）",
+                severity="info",
+            )
+        )
+        return results
+
+    dirty = _run_git(repo_root, "status", "--porcelain").stdout.strip()
+    if dirty:
+        results.append(
+            CheckResult(
+                "auto_sync",
+                True,
+                "跳过：工作区有未提交改动（拒绝 pull）",
+                severity="info",
+            )
+        )
+        return results
+
+    behind, ahead, err = _git_behind_ahead(repo_root, fetch=fetch)
+    if err:
+        results.append(CheckResult("auto_sync:git", False, err))
+        return results
+
+    assert behind is not None and ahead is not None
+    pulled = False
+
+    if behind != "0":
+        if ahead != "0":
+            results.append(
+                CheckResult(
+                    "auto_sync:git",
+                    False,
+                    f"分叉：超前 {ahead}、落后 {behind}，需人工对齐",
+                )
+            )
+            return results
+        if not cfg["git_pull"]:
+            results.append(
+                CheckResult(
+                    "auto_sync:git",
+                    True,
+                    f"落后 {behind} 提交（git_pull=false，未拉取）",
+                    severity="info",
+                )
+            )
+        else:
+            pull_r = _run_git(repo_root, "pull", "--ff-only", "origin", "main")
+            if pull_r.returncode != 0:
+                err = (pull_r.stderr or pull_r.stdout or "pull failed").strip()[:300]
+                results.append(CheckResult("auto_sync:git", False, f"git pull 失败：{err}"))
+                return results
+            pulled = True
+            short = _run_git(repo_root, "rev-parse", "--short", "HEAD").stdout.strip()
+            results.append(
+                CheckResult(
+                    "auto_sync:git",
+                    True,
+                    f"git pull --ff-only 完成 @ {short}",
+                    severity="info",
+                )
+            )
+    else:
+        results.append(
+            CheckResult(
+                "auto_sync:git",
+                True,
+                "已同步 origin/main（无需 pull）",
+                severity="info",
+            )
+        )
+
+    if cfg["pip_editable"] and pulled:
+        results.append(_run_pip_editable(repo_root))
+
+    profile_path = cfg.get("profile_path")
+    if profile_path and (pulled or behind == "0"):
+        results.append(_merge_profile_missing_keys(repo_root, profile_path))
+
+    return results
 
 
 def check_git_main_sync(repo_root: Path, *, fetch: bool = True) -> CheckResult:
@@ -271,6 +514,13 @@ def run_precheck(
 
     if skip_non_trading and not trading:
         return results, 0
+
+    if _precheck_auto_sync_cfg(settings)["enabled"]:
+        sync_results = maybe_auto_sync_repo(repo_root, settings, fetch=fetch_git)
+        results.extend(sync_results)
+        if any(not r.ok and r.severity == "fail" for r in sync_results):
+            failed = [r for r in results if not r.ok and r.severity == "fail"]
+            return results, 1 if failed else 0
 
     results.append(check_git_main_sync(repo_root, fetch=fetch_git))
     results.append(check_pip_editable(repo_root))

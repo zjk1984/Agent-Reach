@@ -1857,6 +1857,12 @@
 
   "ops": {
     "push_job_health_fail": true,
-    "auto_resume_close": true
+    "auto_resume_close": true,
+    "precheck_auto_sync": {
+      "enabled": false,
+      "git_pull": true,
+      "pip_editable": true,
+      "profile_path": null
+    }
   }
 }
