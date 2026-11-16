@@ -18,5 +18,19 @@
   },
   "plugins": {
     "eastmoney_screen_min_change_pct": 0.5
+  },
+  "intraday": {
+    "upper_band_trim": {
+      "enabled": true,
+      "near_upper_band_pct": 1.0,
+      "sell_ratio": 0.25,
+      "max_sell_ratio": 0.30,
+      "once_per_symbol_per_day": true,
+      "trigger_on_price_near_week_upper": true,
+      "trigger_on_change_near_day_upper": true,
+      "trigger_on_mss_near_forecast_upper": true,
+      "mss_near_upper_pts": 2.0,
+      "trigger_on_next_kronos_divergence_day": true
+    }
   }
 }
