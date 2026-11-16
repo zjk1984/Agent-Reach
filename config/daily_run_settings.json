@@ -770,6 +770,12 @@
     "macro_downside_extra_pct": 0.6,
     "macro_downside_streak_step_pct": 0.15,
     "macro_downside_max_extra_pct": 1.0,
+    "validation_harness": {
+      "enabled": true,
+      "index_miss_streak_warn": 2,
+      "benchmark_underperform_streak_warn": 2,
+      "auto_tighten_deploy_on_streak": false
+    },
     "pm_session_symbol_accuracy_gate": true,
     "pm_session_symbol_accuracy_min": 0.45,
     "split_push": true,

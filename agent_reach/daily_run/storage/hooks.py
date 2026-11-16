@@ -567,6 +567,32 @@ def on_forecast(forecast: dict[str, Any], *, source_path: str = "") -> None:
     )
 
 
+def on_forecast_validation(
+    record: dict[str, Any],
+    *,
+    source_path: str = "",
+    settings: Optional[dict[str, Any]] = None,
+) -> None:
+    ws = str(record.get("week_start") or "")
+    idx = record.get("index") or {}
+    summary = record.get("summary") or {}
+    on_l2_scenario(
+        "forecast_validation",
+        ws,
+        record,
+        at=ws,
+        title=f"forecast validation {ws}",
+        content=(
+            f"index_band_hit={idx.get('band_hit')} "
+            f"accuracy={summary.get('accuracy_pct')} "
+            f"interval={summary.get('interval_hit_rate_pct')}"
+        )[:4000],
+        source_path=source_path,
+        dedupe_key=f"l2:forecast_validation:{ws}",
+        settings=settings,
+    )
+
+
 def on_harness_snapshot(payload: dict[str, Any], *, snapshot_path: str = "") -> None:
     from agent_reach.daily_run.storage.config import storage_dual_write_enabled
 
