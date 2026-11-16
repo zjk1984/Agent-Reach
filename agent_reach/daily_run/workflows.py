@@ -280,6 +280,17 @@ def run_morning(
         steps.append("snapshot")
 
     evaluation = evaluate_snapshot(enriched, cfg, doctor_channels=doctor_channels)
+    try:
+        from agent_reach.daily_run.mss_tsp_arbitration import arbitrate_mss_tsp
+
+        arbitrate_mss_tsp(
+            evaluation,
+            settings=cfg,
+            job="morning",
+            snapshot=enriched,
+        )
+    except Exception:
+        pass
     steps.append("evaluate")
 
     audit = evaluation["audit"]

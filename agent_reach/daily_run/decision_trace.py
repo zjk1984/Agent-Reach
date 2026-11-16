@@ -502,6 +502,21 @@ def build_event_from_trade_eval(
         apply_dict,
     )
 
+    arbitration = report.get("mss_tsp_arbitration")
+    if isinstance(arbitration, dict):
+        context = {**context, "mss_tsp_arbitration": arbitration}
+        try:
+            from agent_reach.daily_run.mss_tsp_arbitration import mss_tsp_arbitration_cfg
+
+            if mss_tsp_arbitration_cfg(settings).get("log_to_decision_trace", True):
+                if arbitration.get("conflict"):
+                    d_reasoning = (
+                        f"{d_reasoning} [AR-2:{arbitration.get('winner')} wins: "
+                        f"{arbitration.get('rule_id')}]"
+                    ).strip()
+        except Exception:
+            pass
+
     return DecisionEvent(
         event_id=event_id,
         ts=_now_iso(),

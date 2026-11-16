@@ -605,6 +605,12 @@ def _run_scheduled_inner(
         attach_decision_closure_to_manifest_payload(result)
     except Exception:
         pass
+    try:
+        from agent_reach.daily_run.mss_tsp_arbitration import attach_mss_tsp_arbitration_to_manifest
+
+        attach_mss_tsp_arbitration_to_manifest(result)
+    except Exception:
+        pass
     manifest_path = save_run_manifest(job, result, feishu=feishu, duration_ms=duration_ms)
     result["manifest_path"] = str(manifest_path)
     return result
