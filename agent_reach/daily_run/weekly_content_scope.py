@@ -466,6 +466,11 @@ def render_weekly_prediction_verify_markdown(data: dict[str, Any]) -> list[str]:
 
         lines.extend(render_structured_week_verify_markdown(structured))
 
+    fv = data.get("forecast_validation") or {}
+    feishu_line = (fv.get("deploy_tighten") or {}).get("feishu_line") or ""
+    if feishu_line:
+        lines.extend(["", f"> {feishu_line}"])
+
     if not data or not data.get("summary_rows"):
         if lines:
             return lines

@@ -2302,6 +2302,12 @@ def resolve_harness_position_policy(
         if evolution_mode(settings, "deploy_ratio") == "harness":
             merged["deploy_ratio"] = max(float(merged.get("deploy_ratio", 1.0)), 0.55)
     merged = _restore_fixed_evolution_keys(merged, base, settings, _EVOLVED_POSITION_KEYS)
+    try:
+        from agent_reach.daily_run.validation_streak_deploy import apply_validation_streak_deploy_to_merged
+
+        merged = apply_validation_streak_deploy_to_merged(merged, settings=settings)
+    except Exception:
+        pass
     merged["deploy_ratio"] = max(0.05, min(1.0, float(merged.get("deploy_ratio", 1.0))))
     merged["max_position_pct"] = max(5.0, min(100.0, float(merged.get("max_position_pct", 35.0))))
     return merged

@@ -19,6 +19,11 @@
   "plugins": {
     "eastmoney_screen_min_change_pct": 0.5
   },
+  "week_forecast": {
+    "validation_harness": {
+      "auto_tighten_deploy_on_streak": true
+    }
+  },
   "intraday": {
     "upper_band_trim": {
       "enabled": true,

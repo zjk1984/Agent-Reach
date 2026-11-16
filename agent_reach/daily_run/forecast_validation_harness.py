@@ -19,6 +19,9 @@ def validation_harness_cfg(settings: Optional[dict[str, Any]] = None) -> dict[st
         "index_miss_streak_warn": max(1, int(block.get("index_miss_streak_warn", 2))),
         "benchmark_underperform_streak_warn": max(1, int(block.get("benchmark_underperform_streak_warn", 2))),
         "auto_tighten_deploy_on_streak": block.get("auto_tighten_deploy_on_streak", False) is True,
+        "deploy_step_per_week": float(block.get("deploy_step_per_week", 0.05)),
+        "deploy_floor": float(block.get("deploy_floor", 0.15)),
+        "deploy_release_step_per_week": float(block.get("deploy_release_step_per_week", 0.05)),
         "index_max_weeks": max(4, int(block.get("index_max_weeks", 52))),
     }
 
@@ -273,7 +276,7 @@ def build_deploy_tighten_signal(
         signal["note"] = "auto_tighten_deploy_on_streak=false — signal only, no settings mutation"
     elif active:
         signal["apply"] = True
-        signal["note"] = "auto_tighten enabled — consumer must apply via harness (not inline here)"
+        signal["note"] = "auto_tighten enabled — apply via validation_streak_deploy harness overlay"
     return signal
 
 
@@ -306,6 +309,22 @@ def persist_forecast_validation_closure(
     index_rows.sort(key=lambda r: str(r.get("week_start") or ""))
     save_validation_index(index_rows, max_weeks=cfg["index_max_weeks"])
 
+    deploy_tighten: dict[str, Any] = {}
+    try:
+        from agent_reach.daily_run.validation_streak_deploy import (
+            maybe_apply_validation_streak_deploy_tighten,
+        )
+
+        deploy_tighten = maybe_apply_validation_streak_deploy_tighten(record, signal, settings=settings)
+        if deploy_tighten and not deploy_tighten.get("skipped"):
+            record["deploy_tighten"] = deploy_tighten
+            week_path.write_text(
+                json.dumps(record, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+    except Exception:
+        deploy_tighten = {"skipped": True, "reason": "validation_streak_deploy error"}
+
     try:
         from agent_reach.daily_run.storage.hooks import on_forecast_validation
 
@@ -319,6 +338,7 @@ def persist_forecast_validation_closure(
         "week_start": record.get("week_start"),
         "record": record,
         "harness_signal": signal,
+        "deploy_tighten": deploy_tighten,
     }
 
 
