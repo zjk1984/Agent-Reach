@@ -9,6 +9,7 @@ from agent_reach.daily_run.close_cards import (
     collect_holdings_ledger_rows,
     render_close_card_sections,
     render_close_summary_markdown,
+    render_close_verdict_oneline_markdown,
     render_forecast_verify_markdown,
     render_harness_evolution_markdown,
     render_holdings_detail_markdown,
@@ -74,7 +75,13 @@ SYMBOL_ROWS = [
         "verdict": "观察",
         "shares": 100,
         "role": "持仓",
-        "verify": {"price_delta_pct": 0.015, "mss_delta": 2.0, "recommendations": ["守住 MA20"]},
+        "verify": {
+            "price_delta_pct": 0.015,
+            "mss_delta": 2.0,
+            "verdict_baseline": "可做",
+            "verdict_current": "观察",
+            "recommendations": ["守住 MA20"],
+        },
     },
     {
         "code": "300308",
@@ -85,7 +92,12 @@ SYMBOL_ROWS = [
         "verdict": "回避",
         "shares": 0,
         "role": "观察池",
-        "verify": {"price_delta_pct": -0.021, "mss_delta": -4.0},
+        "verify": {
+            "price_delta_pct": -0.021,
+            "mss_delta": -4.0,
+            "verdict_baseline": "回避",
+            "verdict_current": "回避",
+        },
     },
 ]
 
@@ -202,8 +214,31 @@ class TestCloseCardLayout:
         assert "当日盈亏" in md
         assert "+¥1,250（+1.20%）" in md
         assert "组合 **+1.20%** vs 沪深300 **+0.40%**（超额 **+0.80%**）" in md
-        assert "澜起科技" in md
+        assert "| 代码 | 涨跌 | 标签 |" in md
+        assert "| 688008 | +1.50% | 可做→观察 |" in md
+        assert "| 300308 | -2.10% | 回避 |" in md
+        assert "澜起科技" not in md
+        assert "角色" not in md
         assert "风控" in md
+
+    def test_close_verdict_oneline_uses_verify_fallback(self):
+        ctx = CloseCardContext(
+            portfolio_summary=PORTFOLIO_SUMMARY,
+            symbol_rows=[
+                {
+                    "code": "688008",
+                    "name": "澜起科技",
+                    "change_pct": 1.5,
+                    "verdict": "观察",
+                    "verify": {},
+                }
+            ],
+            verify_by_code={
+                "688008": {"verdict_baseline": "可做", "verdict_current": "观察"},
+            },
+        )
+        md = render_close_verdict_oneline_markdown(ctx)
+        assert "| 688008 | +1.50% | 可做→观察 |" in md
 
     def test_summary_pnl_pct_not_double_scaled(self):
         ctx = CloseCardContext(
