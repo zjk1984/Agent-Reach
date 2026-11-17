@@ -10,6 +10,12 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Optional
 
+from agent_reach.daily_run.dev_project_progress import (
+    dev_project_progress_feishu_card,
+    dev_project_progress_feishu_enabled,
+    load_dev_project_progress_markdown,
+    resolve_dev_project_progress_path,
+)
 from agent_reach.daily_run.project_progress import (
     load_and_build_project_progress,
     project_progress_feishu_card,
@@ -48,6 +54,26 @@ def add_ops_subparser(p_daily_sub: argparse._SubParsersAction) -> None:
         "--push",
         action="store_true",
         help="Push single Feishu summary card (requires ops.project_progress_feishu.enabled)",
+    )
+
+    p_dev = p_ops_sub.add_parser(
+        "dev-project-progress",
+        help="Daily 20:00 CST dev/coordinator progress (merged PRs, queue, blockers) for Feishu",
+    )
+    p_dev.add_argument(
+        "--file",
+        default="",
+        help="Markdown report path (default: ~/.agent-reach/daily_run/reports/dev-project-progress.md)",
+    )
+    p_dev.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print Feishu card body (markdown) only; do not send",
+    )
+    p_dev.add_argument(
+        "--push",
+        action="store_true",
+        help="Push single Feishu card (requires ops.dev_project_progress_feishu.enabled)",
     )
 
     p_digest = p_ops_sub.add_parser(
@@ -157,6 +183,47 @@ def cmd_ops(args: argparse.Namespace) -> None:
             except FeishuError as exc:
                 print(f"❌ Feishu push failed: {exc}", file=sys.stderr)
                 sys.exit(1)
+        return
+
+    if action == "dev-project-progress":
+        path = resolve_dev_project_progress_path(args.file or None)
+        try:
+            md = load_dev_project_progress_markdown(path)
+        except (FileNotFoundError, ValueError) as exc:
+            print(f"❌ dev-project-progress: {exc}", file=sys.stderr)
+            sys.exit(1)
+
+        title, body, tpl = dev_project_progress_feishu_card(md)
+
+        if args.dry_run:
+            print(body)
+            return
+
+        if not args.push:
+            print(md)
+            return
+
+        if not dev_project_progress_feishu_enabled(settings):
+            print(
+                "⏭ dev-project-progress Feishu skipped: "
+                "ops.dev_project_progress_feishu.enabled is false",
+                file=sys.stderr,
+            )
+            return
+
+        from agent_reach.config import Config
+        from agent_reach.integrations.feishu import FeishuError, feishu_mode, send_card
+
+        if feishu_mode(Config()) is None:
+            print("❌ Feishu push failed: not configured", file=sys.stderr)
+            sys.exit(1)
+
+        try:
+            send_card(Config(), title, body, template=tpl)
+            print(f"✅ Feishu dev-project-progress card sent ({path})", file=sys.stderr)
+        except FeishuError as exc:
+            print(f"❌ Feishu push failed: {exc}", file=sys.stderr)
+            sys.exit(1)
         return
 
     if action == "quant-digest":

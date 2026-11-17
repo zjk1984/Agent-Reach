@@ -1871,6 +1871,9 @@
       "git_pull": true,
       "pip_editable": true,
       "profile_path": null
+    },
+    "dev_project_progress_feishu": {
+      "enabled": false
     }
   }
 }
