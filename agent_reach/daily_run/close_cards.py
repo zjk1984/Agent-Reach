@@ -394,6 +394,33 @@ def build_single_close_card_context(
     )
 
 
+def _format_close_verify_verdict(verify: dict[str, Any], row: dict[str, Any]) -> str:
+    """One-cell verdict from morning→close verify (not weekly forecast)."""
+    baseline = str(verify.get("verdict_baseline") or "").strip()
+    current = str(
+        verify.get("verdict_current") or row.get("verdict") or ""
+    ).strip() or "—"
+    if baseline and baseline != current:
+        return f"{baseline}→{current}"
+    return current
+
+
+def render_close_verdict_oneline_markdown(ctx: CloseCardContext) -> str:
+    """Compact per-symbol close-verify verdict table for the summary card."""
+    if not ctx.symbol_rows:
+        return ""
+    lines = [
+        "| 代码 | 涨跌 | 标签 |",
+        "|------|------|------|",
+    ]
+    for row in ctx.symbol_rows:
+        code = str(row.get("code") or "—")
+        verify = row.get("verify") or ctx.verify_by_code.get(code) or {}
+        verdict_s = _format_close_verify_verdict(verify, row)
+        lines.append(f"| {code} | {_fmt_pct(row.get('change_pct'))} | {verdict_s} |")
+    return "\n".join(lines).strip()
+
+
 def render_close_summary_markdown(ctx: CloseCardContext) -> str:
     pf = ctx.portfolio_summary
     lines: list[str] = []
@@ -415,13 +442,9 @@ def render_close_summary_markdown(ctx: CloseCardContext) -> str:
     if cov_line:
         lines.extend(["", cov_line])
 
-    if ctx.symbol_rows:
-        lines.extend(["", "| 标的 | 代码 | 涨跌幅 | 角色 |", "|------|------|--------|------|"])
-        for row in ctx.symbol_rows:
-            lines.append(
-                f"| {row.get('name')} | {row.get('code')} | {_fmt_pct(row.get('change_pct'))} "
-                f"| {row.get('role')} |"
-            )
+    verdict_table = render_close_verdict_oneline_markdown(ctx)
+    if verdict_table:
+        lines.extend(["", verdict_table])
 
     lines.extend(["", f"**风控：** {_risk_summary(pf, ctx.technical_scenarios)}"])
     return "\n".join(lines).strip()
