@@ -44,6 +44,42 @@ def add_ops_subparser(p_daily_sub: argparse._SubParsersAction) -> None:
         help="Push single Feishu summary card (not full weekly close cards)",
     )
 
+    p_recon = p_ops_sub.add_parser(
+        "ledger-reconcile",
+        help="Read-only ledger ↔ portfolio reconcile (default dry-run)",
+    )
+    p_recon.add_argument(
+        "--as-of",
+        default="",
+        help="Reconcile as-of date (ISO, default: today Shanghai)",
+    )
+    p_recon.add_argument(
+        "--ledger",
+        default="",
+        help="trade_ledger.jsonl path (default: ~/.agent-reach/daily_run/)",
+    )
+    p_recon.add_argument(
+        "--portfolio",
+        default="",
+        help="portfolio.json path (default: ~/.agent-reach/daily_run/)",
+    )
+    p_recon.add_argument(
+        "--focus",
+        default="002583,000725",
+        help="Comma-separated codes for cost/mark section (default: 002583,000725)",
+    )
+    p_recon.add_argument(
+        "--mark-dates",
+        default="2026-10-22,2026-10-23",
+        help="Comma-separated dates for cost/mark probes",
+    )
+    p_recon.add_argument("--json", action="store_true", help="Print JSON payload instead of markdown")
+    p_recon.add_argument(
+        "--apply",
+        action="store_true",
+        help="Not implemented — reconcile is read-only; flag rejected if set",
+    )
+
 
 def cmd_ops(args: argparse.Namespace) -> None:
     action = args.ops_action
@@ -76,6 +112,33 @@ def cmd_ops(args: argparse.Namespace) -> None:
             except FeishuError as exc:
                 print(f"❌ Feishu push failed: {exc}", file=sys.stderr)
                 sys.exit(1)
+        return
+
+    if action == "ledger-reconcile":
+        if args.apply:
+            print("❌ ledger-reconcile is read-only; omit --apply", file=sys.stderr)
+            sys.exit(2)
+        from agent_reach.daily_run.ledger_reconcile import render_ledger_reconcile_markdown, run_ledger_reconcile
+
+        as_of: Optional[date] = date.fromisoformat(args.as_of) if args.as_of else None
+        ledger_path = Path(args.ledger).expanduser() if args.ledger else None
+        portfolio_path = Path(args.portfolio).expanduser() if args.portfolio else None
+        focus = [c.strip() for c in str(args.focus).split(",") if c.strip()]
+        mark_dates = [date.fromisoformat(d.strip()) for d in str(args.mark_dates).split(",") if d.strip()]
+        result = run_ledger_reconcile(
+            as_of=as_of,
+            settings=settings,
+            ledger_path=ledger_path,
+            portfolio_path=portfolio_path,
+            focus_codes=focus,
+            mark_dates=mark_dates,
+            dry_run=True,
+        )
+        if args.json:
+            print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
+        else:
+            print(render_ledger_reconcile_markdown(result))
+        sys.exit(0 if result.ok else 1)
         return
 
     print(f"Unknown ops action: {action}")
