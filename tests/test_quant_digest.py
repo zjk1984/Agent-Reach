@@ -185,6 +185,42 @@ class TestPlaybookDelta:
         assert touched[0]["title"] == "T1"
 
 
+class TestWatchlistExcessInDigest:
+    def test_render_includes_watchlist_section(self):
+        payload = build_quant_digest_payload(
+            as_of=date(2026, 7, 11),
+            pnl_rows=[DailyPnlRecord(date="2026-07-10", daily_pnl=10.0)],
+            trades=[],
+            job_health={"jobs": {}},
+            manifests=[],
+            refinements=[],
+            playbook_entries={},
+            watchlist_excess={
+                "enabled": True,
+                "message": "纳入 1 笔 · T+3可评 1",
+                "window_start": "2026-07-01",
+                "window_end": "2026-07-10",
+                "benchmark_name": "沪深300",
+                "events": [
+                    {
+                        "added_date": "2026-07-06",
+                        "code": "603986",
+                        "name": "兆易",
+                        "reason": "测试",
+                        "t3_status": "matured",
+                        "t3_excess_pct": 2.5,
+                        "t5_status": "pending",
+                    }
+                ],
+                "horizons": [{"horizon": 3, "matured": 1, "avg_excess_pct": 2.5}],
+            },
+        )
+        md = render_quant_digest_markdown(payload)
+        assert "观察池 T+3/T+5" in md
+        title, body, _tpl = quant_digest_feishu_card(payload)
+        assert "观察池 paper" in body
+
+
 class TestFeishuCard:
     def test_template_from_sign(self):
         payload = build_quant_digest_payload(

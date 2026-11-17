@@ -48,21 +48,21 @@ def _trading_days_between(start: date, end: date, *, settings: Optional[dict[str
     return days
 
 
-def fetch_benchmark_weekly_return(
-    week_start: date,
-    week_end: date,
+def fetch_benchmark_period_return(
+    period_start: date,
+    period_end: date,
     *,
     settings: Optional[dict[str, Any]] = None,
     index_key: str = _DEFAULT_BENCHMARK_KEY,
     index_name: str = _DEFAULT_BENCHMARK_NAME,
 ) -> dict[str, Any]:
-    """Same-period benchmark return using saved market_review index snapshots."""
+    """Benchmark return between two session days using saved market_review index snapshots."""
     cfg = (settings or {}).get("weekly_report") or {}
     index_key = str(cfg.get("benchmark_index_key") or index_key)
     index_name = str(cfg.get("benchmark_index_name") or index_name)
 
-    start_info = _index_info_on_day(week_start, index_key)
-    end_info = _index_info_on_day(week_end, index_key)
+    start_info = _index_info_on_day(period_start, index_key)
+    end_info = _index_info_on_day(period_end, index_key)
 
     start_px: Optional[float] = None
     end_px: Optional[float] = None
@@ -78,7 +78,7 @@ def fetch_benchmark_weekly_return(
             "return_pct": None,
             "start_price": start_px,
             "end_price": end_px,
-            "period": f"{week_start.isoformat()} ~ {week_end.isoformat()}",
+            "period": f"{period_start.isoformat()} ~ {period_end.isoformat()}",
             "source": "market_review",
             "ok": False,
             "error": "⚠️ 数据获取失败（缺少同期指数收盘/开盘）",
@@ -91,10 +91,28 @@ def fetch_benchmark_weekly_return(
         "return_pct": ret_pct,
         "start_price": round(start_px, 2),
         "end_price": round(end_px, 2),
-        "period": f"{week_start.isoformat()} ~ {week_end.isoformat()}",
+        "period": f"{period_start.isoformat()} ~ {period_end.isoformat()}",
         "source": "market_review",
         "ok": True,
     }
+
+
+def fetch_benchmark_weekly_return(
+    week_start: date,
+    week_end: date,
+    *,
+    settings: Optional[dict[str, Any]] = None,
+    index_key: str = _DEFAULT_BENCHMARK_KEY,
+    index_name: str = _DEFAULT_BENCHMARK_NAME,
+) -> dict[str, Any]:
+    """Same-period benchmark return using saved market_review index snapshots."""
+    return fetch_benchmark_period_return(
+        week_start,
+        week_end,
+        settings=settings,
+        index_key=index_key,
+        index_name=index_name,
+    )
 
 
 def build_weekly_return_metrics(

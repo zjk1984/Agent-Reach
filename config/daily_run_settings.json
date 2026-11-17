@@ -1224,6 +1224,14 @@
       "penalty_hot_chase": 20,
       "penalty_limit_up_chase": 15
     },
+    "excess_digest": {
+      "enabled": false,
+      "lookback_trading_days": 30,
+      "horizons": [3, 5],
+      "include_hold_period": true,
+      "quote_fallback": false,
+      "table_limit": 12
+    },
     "candidates": [
       {"code": "603986", "name": "兆易创新", "keywords": ["兆易", "存储", "芯片", "DDR", "半导体"]},
       {"code": "000725", "name": "京东方A", "keywords": ["京东方", "面板", "OLED", "显示"]},

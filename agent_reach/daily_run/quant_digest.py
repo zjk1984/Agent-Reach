@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Any, Optional
 
@@ -271,6 +271,7 @@ class QuantDigestPayload:
     job_health: dict[str, Any]
     recent_coverage: list[dict[str, Any]]
     playbook_delta: dict[str, Any]
+    watchlist_excess: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -282,6 +283,7 @@ class QuantDigestPayload:
             "job_health": self.job_health,
             "recent_coverage": self.recent_coverage,
             "playbook_delta": self.playbook_delta,
+            "watchlist_excess": self.watchlist_excess,
         }
 
 
@@ -296,6 +298,7 @@ def build_quant_digest_payload(
     playbook_entries: dict[str, Any],
     settings: Optional[dict[str, Any]] = None,
     recent_trading_day_count: int = 5,
+    watchlist_excess: Optional[dict[str, Any]] = None,
 ) -> QuantDigestPayload:
     d = as_of or date.today()
     week_start, week_end = trading_week_range(d)
@@ -368,6 +371,7 @@ def build_quant_digest_payload(
         job_health={"jobs": health_rows, "recent_trading_days": recent_trading_day_count},
         recent_coverage=coverage,
         playbook_delta=playbook_delta,
+        watchlist_excess=dict(watchlist_excess or {}),
     )
 
 
@@ -454,6 +458,18 @@ def render_quant_digest_markdown(payload: QuantDigestPayload | dict[str, Any]) -
         for ent in touched[:6]:
             lines.append(f"- 条目 **{ent.get('title')}** · {str(ent.get('updated_at') or '')[:10]}")
 
+    wl_excess = data.get("watchlist_excess") or {}
+    if wl_excess.get("enabled") and wl_excess.get("events"):
+        from agent_reach.daily_run.watchlist_excess_digest import render_watchlist_excess_markdown
+
+        md_block = render_watchlist_excess_markdown(
+            wl_excess,
+            table_limit=int(wl_excess.get("table_limit") or 8),
+        )
+        if md_block.strip():
+            lines.append("")
+            lines.extend(md_block.splitlines())
+
     lines.append("")
     return "\n".join(lines)
 
@@ -520,6 +536,11 @@ def quant_digest_feishu_card(payload: QuantDigestPayload | dict[str, Any]) -> tu
     n_pb = len(pb.get("refinements") or []) + len(pb.get("entries_touched") or [])
     if n_pb:
         body_lines.append(f"**Playbook Δ** {n_pb} 条")
+    wl_excess = data.get("watchlist_excess") or {}
+    if wl_excess.get("enabled") and wl_excess.get("events"):
+        from agent_reach.daily_run.watchlist_excess_digest import watchlist_excess_feishu_lines
+
+        body_lines.extend(watchlist_excess_feishu_lines(wl_excess))
     body_lines.append("")
     body_lines.append("_完整 digest 见本地 markdown / cron 日志_")
     return title, "\n".join(body_lines), tpl
@@ -557,6 +578,36 @@ def load_and_build_quant_digest(
     }
     refinements = [e.to_dict() for e in state.refinements]
 
+    watchlist_excess: dict[str, Any] = {}
+    try:
+        from agent_reach.daily_run.snapshot_builder import load_portfolio
+        from agent_reach.daily_run.trade_calendar import trading_day_before
+        from agent_reach.daily_run.watchlist_excess_digest import (
+            build_watchlist_excess_digest,
+            watchlist_excess_digest_cfg,
+            watchlist_excess_digest_enabled,
+        )
+        from agent_reach.daily_run.snapshot_builder import _normalize_code
+
+        if watchlist_excess_digest_enabled(cfg):
+            lookback = int(watchlist_excess_digest_cfg(cfg).get("lookback_trading_days") or 30)
+            ext_start = trading_day_before(week_end, lookback, settings=cfg)
+            ext_manifests = load_run_manifests_for_range(ext_start, week_end, settings=cfg)
+            pf = load_portfolio(settings=cfg)
+            wl_codes = {
+                _normalize_code(str(w.get("code", "")))
+                for w in (pf.get("watchlist") or [])
+                if _normalize_code(str(w.get("code", "")))
+            }
+            watchlist_excess = build_watchlist_excess_digest(
+                manifests=ext_manifests,
+                as_of=week_end,
+                settings=cfg,
+                current_watchlist_codes=wl_codes,
+            ).to_dict()
+    except Exception:
+        watchlist_excess = {}
+
     return build_quant_digest_payload(
         as_of=d,
         pnl_rows=pnl_rows,
@@ -566,4 +617,5 @@ def load_and_build_quant_digest(
         refinements=refinements,
         playbook_entries=playbook_entries,
         settings=cfg,
+        watchlist_excess=watchlist_excess,
     )
