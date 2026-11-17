@@ -41,6 +41,9 @@
       "enabled": true
     }
   },
+  "playbook_contract": {
+    "morning_handoff_close_fallback": true
+  },
   "intraday": {
     "upper_band_trim": {
       "enabled": true,

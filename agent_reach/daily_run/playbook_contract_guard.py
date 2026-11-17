@@ -22,6 +22,7 @@ def playbook_contract_cfg(settings: Optional[dict[str, Any]] = None) -> dict[str
     return {
         "enabled": raw.get("enabled", True) is not False,
         "require_morning_handoff": raw.get("require_morning_handoff", True) is not False,
+        "morning_handoff_close_fallback": raw.get("morning_handoff_close_fallback", False) is True,
         "total_stock_weight_cap_pct": float(raw.get("total_stock_weight_cap_pct") or 37.0),
         "target_tolerance_pp": float(raw.get("target_tolerance_pp") or 2.0),
         "watchlist_buy_codes": [
@@ -45,17 +46,33 @@ def playbook_contract_enabled(settings: Optional[dict[str, Any]] = None) -> bool
     return playbook_contract_cfg(settings)["enabled"]
 
 
-def _morning_handoff_loaded() -> Optional[dict[str, Any]]:
+def _playbook_handoff_loaded(settings: Optional[dict[str, Any]] = None) -> Optional[dict[str, Any]]:
     import os
 
     if os.environ.get("PYTEST_CURRENT_TEST"):
         flag = os.environ.get("AGENT_REACH_PLAYBOOK_USE_HANDOFF", "").strip().lower()
         if flag not in ("1", "true", "yes"):
             return None
+    cfg = playbook_contract_cfg(settings)
     try:
-        from agent_reach.daily_run.close_morning_handoff import load_morning_handoff
+        from agent_reach.daily_run.close_morning_handoff import (
+            load_close_handoff,
+            load_morning_handoff,
+            playbook_handoff_from_close,
+        )
 
-        return load_morning_handoff()
+        morning = load_morning_handoff()
+        if morning:
+            return morning
+        if not cfg["morning_handoff_close_fallback"]:
+            return None
+        close = load_close_handoff(settings=settings)
+        if not close:
+            return None
+        adapted = playbook_handoff_from_close(close)
+        if not adapted.get("action_checklist"):
+            return None
+        return adapted
     except Exception:
         return None
 
@@ -65,7 +82,7 @@ def playbook_contract_active(settings: Optional[dict[str, Any]] = None) -> bool:
     cfg = playbook_contract_cfg(settings)
     if not cfg["enabled"]:
         return False
-    if cfg["require_morning_handoff"] and not _morning_handoff_loaded():
+    if cfg["require_morning_handoff"] and not _playbook_handoff_loaded(settings):
         return False
     return True
 
@@ -81,7 +98,7 @@ def _parse_weight_from_label(text: str) -> Optional[float]:
 
 
 def _morning_contract_row(code: str, settings: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
-    handoff = _morning_handoff_loaded()
+    handoff = _playbook_handoff_loaded(settings)
     if not handoff:
         return None
     norm = _normalize_code(code)

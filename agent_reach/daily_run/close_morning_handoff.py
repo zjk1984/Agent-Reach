@@ -475,6 +475,31 @@ def load_morning_handoff(*, morning_day: Optional[date] = None) -> Optional[dict
     return _read_handoff(last_morning_handoff_path())
 
 
+def playbook_handoff_from_close(close: dict[str, Any]) -> dict[str, Any]:
+    """Morning-shaped handoff for playbook_contract when today's morning job did not run."""
+    checklist: list[dict[str, Any]] = []
+    for code, pos in (close.get("positions") or {}).items():
+        if not isinstance(pos, dict):
+            continue
+        norm = _normalize_code(str(code))
+        if not norm:
+            continue
+        current = _optional_float(pos.get("weight_pct"))
+        checklist.append(
+            {
+                "code": norm,
+                "name": str(pos.get("name") or norm),
+                "current_weight_pct": current,
+            }
+        )
+    return {
+        "morning_date": close.get("close_date"),
+        "source_close_date": close.get("close_date"),
+        "action_checklist": checklist,
+        "playbook_handoff_source": "close_fallback",
+    }
+
+
 def _symbol_row_map(ctx: Any) -> dict[str, Any]:
     by_code: dict[str, Any] = {}
     by_name: dict[str, Any] = {}
