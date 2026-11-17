@@ -14,6 +14,8 @@
 # Cron example (weekday 06:50 CST):
 #   50 6 * * 1-5 cd /path/to/Agent-Reach && ./scripts/ops-trading-day-precheck.sh >> ~/.agent-reach/daily_run/logs/precheck-$(date +\%F).log 2>&1
 #
+# Optional quote probe at 06:55 (see scripts/ops-quote-probe.sh) — WARN-only D1 smoke after precheck.
+#
 set -uo pipefail
 
 export TZ="${TZ:-Asia/Shanghai}"

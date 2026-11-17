@@ -39,6 +39,11 @@
     },
     "dev_project_progress_feishu": {
       "enabled": true
+    },
+    "quote_probe": {
+      "enabled": true,
+      "max_codes": 12,
+      "push_warn": true
     }
   },
   "playbook_contract": {
