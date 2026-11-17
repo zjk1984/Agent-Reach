@@ -1874,6 +1874,14 @@
     },
     "dev_project_progress_feishu": {
       "enabled": false
+    },
+    "quote_probe": {
+      "enabled": true,
+      "max_codes": 12,
+      "include_holdings": true,
+      "include_watchlist": true,
+      "push_warn": true,
+      "extra_codes": []
     }
   }
 }

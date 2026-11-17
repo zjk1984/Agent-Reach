@@ -33,7 +33,10 @@ Non-obvious environment notes:
   `bash scripts/daily-run-local-setup.sh` then `python3 -m agent_reach.cli daily-run schedule install`.
   Logs: `~/.agent-reach/daily_run/logs/cron-YYYY-MM-DD.log`. GHA workflow is manual-only (`workflow_dispatch`).
 - **Ops trading-day precheck (Phase A):** weekday ~06:50 CST run `bash scripts/ops-trading-day-precheck.sh`
-  (git main、pip editable、job_health close/morning、doctor smoke、磁盘；非交易日自动跳过).
+ (git main、pip editable、job_health close/morning、doctor smoke、磁盘；非交易日自动跳过).
+- **Ops quote probe (06:55 CST, AR-34):** after precheck run `bash scripts/ops-quote-probe.sh`
+ (small holdings+watchlist D1 pull; stale/missing → **WARN** + optional Feishu, **exit 0**;
+ manifest `runs/YYYY-MM-DD/quote_probe_*.json`; settings `ops.quote_probe`).
 - **Quant PM weekly digest** (no user input): after the Saturday `weekly` job (~08:30), schedule
   `30 9 * * 6 … python3 -m agent_reach.cli daily-run ops quant-digest -o ~/.agent-reach/daily_run/reports/quant-digest-latest.md --push`
   for a single Feishu summary card plus local markdown (distinct from the multi-card weekly close push).
