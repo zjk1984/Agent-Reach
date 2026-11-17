@@ -37,6 +37,13 @@ Non-obvious environment notes:
 - **Quant PM weekly digest** (no user input): after the Saturday `weekly` job (~08:30), schedule
   `30 9 * * 6 … python3 -m agent_reach.cli daily-run ops quant-digest -o ~/.agent-reach/daily_run/reports/quant-digest-latest.md --push`
   for a single Feishu summary card plus local markdown (distinct from the multi-card weekly close push).
+- **Project progress (20:00 CST, fund owner Feishu):** daily `bash scripts/ops-project-progress-cron.sh`
+  (or `python3 -m agent_reach.cli daily-run ops project-progress --push`). Enable on prod via
+  `ops.project_progress_feishu.enabled: true` in `config/profiles/fund_ambush_watchlist.json`
+  (merged into `~/.agent-reach/daily_run_settings.json`). Sources: `job_health.json`, portfolio
+  NAV/cash, git `HEAD` short in `AGENT_REACH_REPO_ROOT`. Cron: `CRON_TZ=Asia/Shanghai` +
+  `0 20 * * * …/scripts/ops-project-progress-cron.sh` (equiv. `50 19` UTC). Logs:
+  `~/.agent-reach/daily_run/logs/project-progress-YYYY-MM-DD.log`.
 - **Hot news (60s API)**: daily-run macro collection pulls multi-platform hot topics via
   [60s](https://github.com/vikiboss/60s). Auto-deploy (native, no Docker):
   `python3 -m agent_reach.cli daily-run hot-news install` — requires Node.js 22.6+, git, npm.

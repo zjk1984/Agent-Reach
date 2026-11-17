@@ -30,6 +30,9 @@
       "git_pull": true,
       "pip_editable": true,
       "profile_path": "config/profiles/fund_ambush_watchlist.json"
+    },
+    "project_progress_feishu": {
+      "enabled": true
     }
   },
   "intraday": {
