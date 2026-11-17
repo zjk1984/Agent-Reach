@@ -1,0 +1,42 @@
+{
+  "_profile": "fund_lean",
+  "_phase": "M4",
+  "_intent": "降研究/热点噪音：关 findskills、berkshire news_pulse 仅 weekly、日线少拉热榜与 close Exa；不改 gate/audit/ledger/cash 埋伏核心。",
+  "_prod_merge": "Deep-merge into ~/.agent-reach/daily_run_settings.json after W1 ambush (and optional C1 moderate cash). Ops-only overlay — does not change repo default config/daily_run_settings.json.",
+  "findskills": {
+    "enabled": false
+  },
+  "berkshire": {
+    "news_pulse": {
+      "enabled": true,
+      "workflows": ["weekly"]
+    }
+  },
+  "plugins": {
+    "exa_research_on_close": false,
+    "max_exa_queries": 2
+  },
+  "macro_collector": {
+    "hot_stock_limit": 6,
+    "hot_watch_stock_limit": 6,
+    "fetch_hot_watch_stocks": false,
+    "intraday_hot_cross_enabled": false,
+    "intraday_exa_new_hot_enabled": false,
+    "xueqiu_exa_research_enabled": false,
+    "xueqiu_exa_search_research_enabled": false
+  },
+  "hot_news": {
+    "platforms": ["60s", "weibo"],
+    "limit_per_platform": 12,
+    "base_urls": ["https://60s.viki.moe", "http://127.0.0.1:8787"],
+    "sentiment_boost_per_hit": 1
+  },
+  "weekly_report": {
+    "skill_learning": false,
+    "exa_skill_research": false,
+    "max_sector_queries": 2
+  },
+  "watchlist": {
+    "hot_topic_adjust_enabled": false
+  }
+}
