@@ -36,6 +36,9 @@
     },
     "project_progress_feishu": {
       "enabled": true
+    },
+    "dev_project_progress_feishu": {
+      "enabled": true
     }
   },
   "intraday": {
