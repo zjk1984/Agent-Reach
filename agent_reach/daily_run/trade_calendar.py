@@ -289,6 +289,36 @@ def next_trading_day(
     return (d or today_shanghai()) + timedelta(days=1)
 
 
+def trading_day_after(
+    start: date,
+    n: int,
+    *,
+    settings: Optional[dict] = None,
+) -> date:
+    """Calendar date that is exactly ``n`` trading sessions after ``start`` (n<=0 -> start)."""
+    if n <= 0:
+        return start
+
+    cfg = settings or {}
+    trade_dates = sorted(_load_trade_dates_akshare())
+    if trade_dates:
+        start_s = start.isoformat()
+        later = [d for d in trade_dates if d >= start_s]
+        if len(later) > n:
+            return date.fromisoformat(later[n])
+        if later:
+            return date.fromisoformat(later[-1])
+
+    cursor = start
+    counted = 0
+    while counted < n:
+        cursor += timedelta(days=1)
+        ok, _ = is_trading_day(cursor, settings=cfg)
+        if ok:
+            counted += 1
+    return cursor
+
+
 def shanghai_day_iso_bounds(day: date) -> tuple[str, str]:
     """Inclusive start / exclusive end ISO timestamps for one Shanghai calendar day."""
     start = datetime(day.year, day.month, day.day, tzinfo=_SH_TZ)

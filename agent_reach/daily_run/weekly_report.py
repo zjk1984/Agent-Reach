@@ -88,6 +88,7 @@ class WeeklyReport:
     strategy_health: dict[str, Any] = field(default_factory=dict)
     pending_issues: dict[str, Any] = field(default_factory=dict)
     overlay_stats: dict[str, Any] = field(default_factory=dict)
+    watchlist_excess_digest: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -160,6 +161,7 @@ class WeeklyReport:
             "strategy_health": self.strategy_health,
             "pending_issues": self.pending_issues,
             "overlay_stats": self.overlay_stats,
+            "watchlist_excess_digest": self.watchlist_excess_digest,
         }
 
 
@@ -1716,7 +1718,34 @@ def generate_weekly_report(
         prior_snapshot=prior_issues,
     )
 
-    return WeeklyReport(
+    watchlist_excess_digest: dict[str, Any] = {}
+    try:
+        from agent_reach.daily_run.trade_calendar import trading_day_before
+        from agent_reach.daily_run.watchlist_excess_digest import (
+            build_watchlist_excess_digest,
+            watchlist_excess_digest_cfg,
+            watchlist_excess_digest_enabled,
+        )
+
+        if watchlist_excess_digest_enabled(settings):
+            lookback = int(watchlist_excess_digest_cfg(settings).get("lookback_trading_days") or 30)
+            ext_start = trading_day_before(week_end, lookback, settings=settings)
+            ext_manifests = _load_week_manifests(ext_start, week_end)
+            wl_codes = {
+                _normalize_code(str(w.get("code", "")))
+                for w in watchlist
+                if _normalize_code(str(w.get("code", "")))
+            }
+            watchlist_excess_digest = build_watchlist_excess_digest(
+                manifests=ext_manifests,
+                as_of=week_end,
+                settings=settings,
+                current_watchlist_codes=wl_codes,
+            ).to_dict()
+    except Exception:
+        watchlist_excess_digest = {}
+
+    report = WeeklyReport(
         week_start=week_start,
         week_end=week_end,
         start_total=start_total,
@@ -1780,6 +1809,7 @@ def generate_weekly_report(
         brinson_attribution=brinson_attribution,
         strategy_health=strategy_health,
         pending_issues=pending_issues,
+        watchlist_excess_digest=watchlist_excess_digest,
     )
     try:
         from agent_reach.daily_run.overlay_telemetry import aggregate_week_overlay_stats
@@ -2363,6 +2393,18 @@ def render_weekly_sections(report: WeeklyReport) -> list[WeeklySection]:
     if intel_md.strip():
         intel_lines = _period_header_lines(report, continuation=True) + [intel_md]
         sections.append(WeeklySection("观察池情报", _join_section_lines(intel_lines)))
+
+    wl_excess = report.watchlist_excess_digest or {}
+    if wl_excess.get("enabled") and wl_excess.get("events"):
+        from agent_reach.daily_run.watchlist_excess_digest import render_watchlist_excess_markdown
+
+        excess_md = render_watchlist_excess_markdown(
+            wl_excess,
+            table_limit=int(wl_excess.get("table_limit") or 12),
+        )
+        if excess_md.strip():
+            excess_lines = _period_header_lines(report, continuation=True) + excess_md.splitlines()
+            sections.append(WeeklySection("观察池超额", _join_section_lines(excess_lines)))
 
     track_body = _render_mss_lines(report)
     if track_body:

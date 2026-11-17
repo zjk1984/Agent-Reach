@@ -14,7 +14,10 @@
     "weekly_candidates_enabled": true,
     "weekly_candidates_min": 5,
     "weekly_candidates_max": 10,
-    "eastmoney_screen_candidates_enabled": true
+    "eastmoney_screen_candidates_enabled": true,
+    "excess_digest": {
+      "enabled": true
+    }
   },
   "plugins": {
     "eastmoney_screen_min_change_pct": 0.5
