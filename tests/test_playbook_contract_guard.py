@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from agent_reach.daily_run.playbook_contract_guard import (
+    playbook_contract_active,
     playbook_contract_buy_block,
     playbook_contract_sell_block,
     resolve_symbol_contract,
@@ -76,6 +77,47 @@ def morning_handoff(tmp_path, monkeypatch):
     return payload
 
 
+@pytest.fixture
+def close_handoff_fallback(tmp_path, monkeypatch):
+    monkeypatch.setenv("AGENT_REACH_PLAYBOOK_USE_HANDOFF", "1")
+    payload = {
+        "close_date": "2026-09-21",
+        "positions": {
+            "002415": {
+                "name": "海康威视",
+                "weight_pct": 12.6,
+                "shares": 400,
+                "close_price": 32.58,
+            },
+            "688008": {
+                "name": "澜起科技",
+                "weight_pct": 20.3,
+                "shares": 100,
+                "close_price": 210.0,
+            },
+        },
+    }
+    handoff_dir = tmp_path / "handoff"
+    handoff_dir.mkdir()
+    close_path = handoff_dir / "close_2026-09-21.json"
+    close_path.write_text(json.dumps(payload), encoding="utf-8")
+    last = handoff_dir / "last_close_handoff.json"
+    last.write_text(json.dumps(payload), encoding="utf-8")
+
+    import agent_reach.daily_run.close_morning_handoff as cmh
+
+    monkeypatch.setattr(cmh, "_HANDOFF_DIR", handoff_dir)
+    monkeypatch.setattr(
+        "agent_reach.daily_run.trade_calendar.today_shanghai",
+        lambda: __import__("datetime").date(2026, 9, 22),
+    )
+    monkeypatch.setattr(
+        "agent_reach.daily_run.prior_close.prev_trading_day",
+        lambda day, **_: __import__("datetime").date(2026, 9, 21),
+    )
+    return payload
+
+
 def test_inactive_without_morning_handoff(playbook_settings):
     portfolio = {
         "total": 103_000,
@@ -89,6 +131,43 @@ def test_inactive_without_morning_handoff(playbook_settings):
         code="002415",
     )
     assert block is None
+
+
+def test_close_fallback_inactive_by_default_without_morning(playbook_settings, close_handoff_fallback):
+    assert playbook_contract_active(playbook_settings) is False
+
+
+def test_close_fallback_active_when_opted_in(playbook_settings, close_handoff_fallback):
+    playbook_settings["playbook_contract"]["morning_handoff_close_fallback"] = True
+    assert playbook_contract_active(playbook_settings) is True
+
+
+def test_close_fallback_merges_static_symbol_contract(playbook_settings, close_handoff_fallback):
+    playbook_settings["playbook_contract"]["morning_handoff_close_fallback"] = True
+    row = resolve_symbol_contract("002415", settings=playbook_settings)
+    assert row["block_add"] is True
+    assert row["target_weight_pct"] == 13.0
+
+
+def test_close_fallback_blocks_buy_like_morning(playbook_settings, close_handoff_fallback):
+    playbook_settings["playbook_contract"]["morning_handoff_close_fallback"] = True
+    portfolio = {
+        "total": 103_000,
+        "cash": 57_000,
+        "holdings": [
+            {"code": "002415", "name": "海康", "shares": 400, "price": 32.58, "cost": 32.57},
+            {"code": "688008", "name": "澜起", "shares": 100, "price": 210.0, "cost": 255.87},
+        ],
+    }
+    snapshot = {"code": "002415", "name": "海康威视", "price": 33.23}
+    block = playbook_contract_buy_block(
+        settings=playbook_settings,
+        portfolio=portfolio,
+        snapshot=snapshot,
+        code="002415",
+    )
+    assert block is not None
+    assert block.block_kind == "playbook_no_add"
 
 
 def test_resolve_symbol_contract_merges_handoff(playbook_settings, morning_handoff):

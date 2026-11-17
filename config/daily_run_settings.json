@@ -419,6 +419,7 @@
   "playbook_contract": {
     "enabled": true,
     "require_morning_handoff": true,
+    "morning_handoff_close_fallback": false,
     "total_stock_weight_cap_pct": 37.0,
     "target_tolerance_pp": 2.0,
     "watchlist_first_buy_enabled": true,

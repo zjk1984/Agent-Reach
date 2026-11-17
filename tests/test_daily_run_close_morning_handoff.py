@@ -10,6 +10,7 @@ from agent_reach.daily_run.close_morning_handoff import (
     collect_tomorrow_focus_items,
     collect_watch_risk_items,
     load_close_handoff,
+    playbook_handoff_from_close,
     render_morning_action_trace_markdown,
     render_yesterday_focus_validation_markdown,
     save_close_handoff,
@@ -117,6 +118,19 @@ class TestCloseMorningHandoff:
         risks = collect_watch_risk_items(CLOSE_CTX)
         assert any("冲高回落" in item["text"] for item in focus)
         assert any("118" in item["text"] for item in risks)
+
+    def test_playbook_handoff_from_close_maps_positions(self):
+        close = {
+            "close_date": "2026-09-21",
+            "positions": {
+                "002415": {"name": "海康威视", "weight_pct": 12.6},
+            },
+        }
+        adapted = playbook_handoff_from_close(close)
+        assert adapted["playbook_handoff_source"] == "close_fallback"
+        row = adapted["action_checklist"][0]
+        assert row["code"] == "002415"
+        assert row["current_weight_pct"] == 12.6
 
     def test_save_and_load_close_handoff(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
