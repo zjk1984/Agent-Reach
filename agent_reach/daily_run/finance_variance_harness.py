@@ -5,7 +5,10 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from agent_reach.daily_run.harness_finance import analyze_weekly_variance_bridge
+from agent_reach.daily_run.harness_finance import (
+    analyze_ledger_portfolio_pnl_dual_read,
+    analyze_weekly_variance_bridge,
+)
 from agent_reach.daily_run.harness_skill_base import apply_skill_refinement
 
 
@@ -16,6 +19,8 @@ def _variance_cfg(settings: Optional[dict[str, Any]]) -> dict[str, Any]:
 def finance_variance_to_harness_evidence(
     report: dict[str, Any],
     variance: dict[str, Any],
+    *,
+    ledger_pnl_dual: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     memory: list[str] = []
     policy: list[str] = []
@@ -54,6 +59,13 @@ def finance_variance_to_harness_evidence(
         policy.append("周盈亏 material：下周偏防御，减少激进新开仓")
         playbook.append("material 周盈亏：优先处理浮亏最大持仓")
 
+    dual = ledger_pnl_dual or {}
+    if not dual.get("skipped") and dual.get("flags"):
+        for flag in dual.get("flags") or []:
+            memory.append(str(flag))
+            playbook.append("周六 ledger 双读：核对周末持仓 cost 与 FIFO 回放")
+            plan.append("finance_variance：修复 cost/mark 后再调 weekly bridge")
+
     holdings = report.get("holdings") or []
     top = sorted(
         [h for h in holdings if h.get("week_chg") is not None],
@@ -87,8 +99,21 @@ def apply_finance_variance_harness_refinement(
         return {"skipped": True, "reason": "finance_variance disabled", "job": "finance_variance"}
 
     variance = analyze_weekly_variance_bridge(report, settings=settings)
-    evidence = finance_variance_to_harness_evidence(report, variance.to_dict())
-    domain = {"report": report, "variance": variance.to_dict()}
+    dual_pf = {
+        "as_of": report.get("week_end"),
+        "holdings": report.get("holdings") or [],
+        "realized_pnl": report.get("realized_pnl"),
+        "trades": report.get("trades") or [],
+    }
+    ledger_dual = analyze_ledger_portfolio_pnl_dual_read(dual_pf, settings=settings)
+    evidence = finance_variance_to_harness_evidence(
+        report, variance.to_dict(), ledger_pnl_dual=ledger_dual.to_dict()
+    )
+    domain = {
+        "report": report,
+        "variance": variance.to_dict(),
+        "ledger_pnl_dual": ledger_dual.to_dict(),
+    }
     evidence["forge_domain"] = domain
     evidence["rigor_domain"] = domain
     refine = apply_skill_refinement(
@@ -97,4 +122,9 @@ def apply_finance_variance_harness_refinement(
         settings=settings,
         enabled_flag="finance_variance",
     )
-    return {**refine, "job": "finance_variance", "variance": variance.to_dict()}
+    return {
+        **refine,
+        "job": "finance_variance",
+        "variance": variance.to_dict(),
+        "ledger_pnl_dual": ledger_dual.to_dict(),
+    }

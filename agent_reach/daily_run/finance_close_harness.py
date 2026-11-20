@@ -27,6 +27,13 @@ def finance_close_to_harness_evidence(
     reconcile = checks.get("reconcile") or {}
     variance = checks.get("variance") or {}
     snapshot = checks.get("reconcile_snapshot") or {}
+    dual = checks.get("ledger_pnl_dual") or {}
+
+    if not dual.get("skipped") and dual.get("flags"):
+        for flag in dual.get("flags") or []:
+            memory.append(str(flag))
+            playbook.append("ledger 回放 vs portfolio 成本/mark 不一致：ops ledger-reconcile + 查 cost_fallback")
+            plan.append("finance_close：修正持仓 cost 或 mark 后再推收盘卡")
 
     if risk.get("largest_position"):
         pos = risk["largest_position"]
@@ -115,6 +122,7 @@ def apply_finance_close_harness_refinement(
         "reconcile": checks.get("reconcile"),
         "reconcile_snapshot": checks.get("reconcile_snapshot"),
         "variance": checks.get("variance"),
+        "ledger_pnl_dual": checks.get("ledger_pnl_dual"),
     }
     evidence["rigor_domain"] = {
         **evidence["forge_domain"],

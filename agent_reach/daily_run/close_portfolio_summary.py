@@ -1268,6 +1268,24 @@ def build_close_portfolio_summary(
             f"({float(quote_cov['coverage_pct']):.1f}%) 低于阈值 "
             f"{float(quote_cov['threshold_pct']):.0f}%"
         )
+    if close_cfg.get("ledger_pnl_dual_read", True) is not False:
+        from agent_reach.daily_run.harness_finance import (
+            analyze_ledger_portfolio_pnl_dual_read,
+            format_ledger_pnl_dual_read_note,
+        )
+
+        dual_note = format_ledger_pnl_dual_read_note(
+            analyze_ledger_portfolio_pnl_dual_read(
+                summary.to_dict(),
+                settings=settings,
+                ledger_trades=ledger_trades,
+                prior_trades=prior_trades,
+                seed_holdings=list(morning_pf.get("holdings") or []),
+                opening_costs=morning_opening,
+            )
+        )
+        if dual_note:
+            summary.notes.append(dual_note)
     summary.reason_lines = _build_reason_lines(summary.to_dict())
     return summary
 
