@@ -400,13 +400,17 @@ def run_ledger_reconcile(
     mismatch = [v for v in variances if not v.shares_match or not v.cost_match]
     if mismatch:
         warnings.append(f"{len(mismatch)} 只持仓与 ledger 回放不一致")
-    if variances:
-        pnl_warn = []
-        for v in variances:
-            if v.portfolio_shares > 0 and v.cost_delta is not None and abs(v.cost_delta) > cost_tolerance:
-                pnl_warn.append(f"{v.code} cost Δ{v.cost_delta:+.4f}")
-        if pnl_warn:
-            warnings.append("ledger vs portfolio PnL 双读 warning: " + "; ".join(pnl_warn))
+
+    from agent_reach.daily_run.harness_finance import analyze_ledger_portfolio_pnl_dual_read
+
+    dual = analyze_ledger_portfolio_pnl_dual_read(
+        portfolio,
+        settings=settings,
+        ledger_trades=entries,
+        seed_holdings=seed_holdings,
+        opening_costs=opening or None,
+    )
+    warnings.extend(dual.flags)
 
     ok = not mismatch and not any("现金偏差" in w for w in warnings) and bool(journal.get("passed"))
 

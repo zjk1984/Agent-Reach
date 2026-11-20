@@ -578,6 +578,194 @@ def build_close_management_plan(
     }
 
 
+def _ledger_pnl_dual_cfg(settings: Optional[dict[str, Any]]) -> dict[str, float]:
+    from agent_reach.daily_run.finance_tolerance_policy import finance_tolerance_cfg
+
+    block = dict((settings or {}).get("ledger_reconcile") or {})
+    tolerances = finance_tolerance_cfg(settings)
+    return {
+        "cost_per_share": float(block.get("cost_tolerance", 0.02)),
+        "pnl_tolerance_cny": float(
+            block.get("pnl_tolerance_cny") or tolerances.get("variance_tolerance_cny", 1.0)
+        ),
+        "materiality_cny": float(
+            block.get("pnl_materiality_cny") or tolerances.get("variance_materiality_cny", 500)
+        ),
+    }
+
+
+@dataclass
+class LedgerPortfolioPnlDualReadResult:
+    """Compare FIFO ledger-replay costs/PnL vs portfolio marks (AR-7)."""
+
+    skipped: bool = False
+    skip_reason: Optional[str] = None
+    unrealized_portfolio: float = 0.0
+    unrealized_ledger: float = 0.0
+    unrealized_delta: float = 0.0
+    realized_portfolio: Optional[float] = None
+    realized_ledger: Optional[float] = None
+    realized_delta: Optional[float] = None
+    within_tolerance: bool = True
+    material: bool = False
+    flags: list[str] = field(default_factory=list)
+    holding_flags: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "skipped": self.skipped,
+            "skip_reason": self.skip_reason,
+            "unrealized_portfolio": self.unrealized_portfolio,
+            "unrealized_ledger": self.unrealized_ledger,
+            "unrealized_delta": self.unrealized_delta,
+            "realized_portfolio": self.realized_portfolio,
+            "realized_ledger": self.realized_ledger,
+            "realized_delta": self.realized_delta,
+            "within_tolerance": self.within_tolerance,
+            "material": self.material,
+            "flags": list(self.flags),
+            "holding_flags": list(self.holding_flags),
+        }
+
+
+def format_ledger_pnl_dual_read_note(result: LedgerPortfolioPnlDualReadResult | dict[str, Any]) -> Optional[str]:
+    data = result if isinstance(result, dict) else result.to_dict()
+    if data.get("skipped") or not data.get("flags"):
+        return None
+    for flag in data.get("flags") or []:
+        if "双读" in flag:
+            return str(flag)
+    return str((data.get("flags") or [""])[0])
+
+
+def analyze_ledger_portfolio_pnl_dual_read(
+    portfolio_summary: dict[str, Any],
+    *,
+    settings: Optional[dict[str, Any]] = None,
+    ledger_trades: Optional[list[dict[str, Any]]] = None,
+    prior_trades: Optional[list[dict[str, Any]]] = None,
+    seed_holdings: Optional[list[dict[str, Any]]] = None,
+    opening_costs: Optional[dict[str, float]] = None,
+) -> LedgerPortfolioPnlDualReadResult:
+    """Ledger FIFO replay vs portfolio cost marks on the same prices (unrealized + day realized)."""
+    holdings = list(portfolio_summary.get("holdings") or [])
+    if not holdings:
+        return LedgerPortfolioPnlDualReadResult(skipped=True, skip_reason="no holdings")
+
+    from agent_reach.daily_run.snapshot_builder import _normalize_code
+
+    cfg = _ledger_pnl_dual_cfg(settings)
+    trades = ledger_trades if ledger_trades is not None else list(portfolio_summary.get("trades") or [])
+
+    seed = seed_holdings
+    costs = dict(opening_costs or {})
+    if seed is None:
+        from agent_reach.daily_run.ledger_reconcile import _load_seed_portfolio
+
+        seed, _, _ = _load_seed_portfolio(settings)
+    if not costs and seed:
+        from agent_reach.daily_run.realized_pnl import opening_costs_from_portfolio
+
+        costs = opening_costs_from_portfolio({"holdings": seed}) or {}
+
+    from agent_reach.daily_run.ledger_reconcile import replay_holdings_from_ledger
+
+    ledger_holdings = replay_holdings_from_ledger(
+        trades,
+        seed_holdings=seed,
+        opening_costs=costs or None,
+    )
+
+    pf_unreal = 0.0
+    led_unreal = 0.0
+    holding_flags: list[str] = []
+    has_mark = False
+
+    for row in holdings:
+        shares = int(row.get("shares") or 0)
+        if shares <= 0:
+            continue
+        code = _normalize_code(str(row.get("code") or ""))
+        mark = row.get("price") or row.get("week_end_price")
+        pf_cost = row.get("cost")
+        if mark is None:
+            continue
+        has_mark = True
+        mark_f = float(mark)
+        led = ledger_holdings.get(code) or {}
+        led_sh = int(led.get("shares") or 0)
+        led_cost = led.get("avg_cost")
+
+        if pf_cost is not None:
+            pf_unreal += (mark_f - float(pf_cost)) * shares
+        if led_cost is not None and led_sh > 0:
+            use_sh = shares if led_sh == shares else led_sh
+            led_unreal += (mark_f - float(led_cost)) * use_sh
+        if led_sh != shares:
+            holding_flags.append(f"{code} 股数 pf={shares} ledger={led_sh}")
+        elif pf_cost is not None and led_cost is not None:
+            cost_delta = float(pf_cost) - float(led_cost)
+            unreal_delta = abs(cost_delta * shares)
+            if abs(cost_delta) > cfg["cost_per_share"] and unreal_delta > cfg["pnl_tolerance_cny"]:
+                holding_flags.append(f"{code} cost Δ{cost_delta:+.4f} → 浮盈差 ¥{unreal_delta:,.2f}")
+
+    if not has_mark:
+        return LedgerPortfolioPnlDualReadResult(skipped=True, skip_reason="holdings missing mark price")
+
+    unrealized_delta = _round(pf_unreal - led_unreal)
+    flags: list[str] = []
+    if abs(unrealized_delta) > cfg["pnl_tolerance_cny"]:
+        flags.append(
+            f"ledger vs portfolio PnL 双读 warning: 浮盈合计差 ¥{unrealized_delta:+,.2f} "
+            f"(pf ¥{pf_unreal:+,.0f} vs ledger ¥{led_unreal:+,.0f})"
+        )
+    for hf in holding_flags:
+        if hf not in flags:
+            flags.append(f"ledger vs portfolio PnL 双读 warning: {hf}")
+
+    realized_portfolio: Optional[float] = None
+    realized_ledger: Optional[float] = None
+    realized_delta: Optional[float] = None
+    pf_realized = portfolio_summary.get("realized_pnl")
+    if pf_realized is not None and trades:
+        from agent_reach.daily_run.realized_pnl import compute_day_realized_pnl
+
+        realized_portfolio = float(pf_realized)
+        realized_ledger = float(
+            compute_day_realized_pnl(
+                trades,
+                prior_trades=prior_trades,
+                opening_costs=costs or None,
+                use_stored=False,
+            )
+        )
+        realized_delta = _round(realized_portfolio - realized_ledger)
+        if abs(realized_delta) > cfg["pnl_tolerance_cny"]:
+            flags.append(
+                f"ledger vs portfolio PnL 双读 warning: 当日已实现差 ¥{realized_delta:+,.2f} "
+                f"(pf ¥{realized_portfolio:+,.0f} vs ledger ¥{realized_ledger:+,.0f})"
+            )
+
+    material = abs(unrealized_delta) >= cfg["materiality_cny"] or (
+        realized_delta is not None and abs(realized_delta) >= cfg["materiality_cny"]
+    )
+    within_tolerance = not flags
+
+    return LedgerPortfolioPnlDualReadResult(
+        skipped=False,
+        unrealized_portfolio=_round(pf_unreal),
+        unrealized_ledger=_round(led_unreal),
+        unrealized_delta=unrealized_delta,
+        realized_portfolio=realized_portfolio,
+        realized_ledger=realized_ledger,
+        realized_delta=realized_delta,
+        within_tolerance=within_tolerance,
+        material=material,
+        flags=flags,
+        holding_flags=holding_flags,
+    )
+
+
 def run_finance_close_checks(
     portfolio_summary: dict[str, Any],
     *,
@@ -587,17 +775,21 @@ def run_finance_close_checks(
     reconcile = reconcile_close_portfolio(portfolio_summary, settings=settings)
     variance = analyze_close_variance_bridge(portfolio_summary, settings=settings)
     snapshot = analyze_reconciliation_snapshot(portfolio_summary, reconcile, settings=settings)
+    dual = analyze_ledger_portfolio_pnl_dual_read(portfolio_summary, settings=settings)
     blocking = [
         *([f"risk:{f}" for f in risk.flags]),
         *([f"reconcile:{f}" for f in reconcile.flags if not reconcile.reconciled]),
         *([f"variance:{f}" for f in variance.flags if not variance.reconciled]),
         *([f"snapshot:{f}" for f in snapshot.stale_flags]),
     ]
+    if not dual.skipped and not dual.within_tolerance and dual.material:
+        blocking.extend(f"ledger_pnl_dual:{flag}" for flag in dual.flags)
     return {
         "risk": risk.to_dict(),
         "reconcile": reconcile.to_dict(),
         "reconcile_snapshot": snapshot.to_dict(),
         "variance": variance.to_dict(),
+        "ledger_pnl_dual": dual.to_dict(),
         "passed": not blocking,
         "blocking_flags": blocking,
     }
