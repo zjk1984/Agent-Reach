@@ -118,6 +118,12 @@ def boot_catchup_script() -> Path:
     return Path(__file__).resolve().parents[2] / "scripts" / "daily-run-boot-catchup.sh"
 
 
+def morning_catchup_script() -> Path:
+    from agent_reach.daily_run.morning_catchup import morning_catchup_script as _path
+
+    return _path()
+
+
 def has_premarket_s1_today() -> bool:
     """True when today's intraday state already contains scan S1."""
     from agent_reach.daily_run.intraday import load_state
@@ -179,9 +185,16 @@ def _cron_run_cmd(job: str) -> str:
 
 def default_entries() -> list[CronEntry]:
     """Default Asia/Shanghai trading schedule (CRON_TZ=Asia/Shanghai)."""
+    morning_catchup = morning_catchup_script()
+    catchup_cmd = (
+        str(morning_catchup)
+        if morning_catchup.is_file()
+        else f"{sys.executable} -m agent_reach.daily_run.morning_catchup"
+    )
     entries = [
         CronEntry("0", "7", "1-5", _cron_run_cmd("intraday"), "daily-run 盘前 S1 7:00"),
         CronEntry("0", "8", "1-5", _cron_run_cmd("morning"), "daily-run 早盘 8:00"),
+        CronEntry("5", "8", "1-5", catchup_cmd, "daily-run 早盘补跑 8:05 (L1-B)"),
         CronEntry("30", "12", "1-5", _cron_run_cmd("midday"), "daily-run 午盘分析 12:30"),
     ]
     for i, (minute, hour) in enumerate(INTRADAY_SCAN_TIMES, start=3):
@@ -226,6 +239,9 @@ def render_crontab_block(entries: Optional[list[CronEntry]] = None) -> str:
     ]
     if script.is_file():
         lines.append(f"# wrapper: {script}")
+    mc = morning_catchup_script()
+    if mc.is_file():
+        lines.append(f"# morning catchup log: ~/.agent-reach/daily_run/logs/morning-catchup-YYYY-MM-DD.log")
     catchup = boot_catchup_script()
     if catchup.is_file():
         lines.append(f"# boot catchup log: ~/.agent-reach/daily_run/logs/boot-catchup-YYYY-MM-DD.log")
@@ -247,9 +263,9 @@ def install_crontab(entries: Optional[list[CronEntry]] = None, *, dry_run: bool 
     script = local_cron_script()
     if script.is_file():
         script.chmod(script.stat().st_mode | 0o111)
-    catchup = boot_catchup_script()
-    if catchup.is_file():
-        catchup.chmod(catchup.stat().st_mode | 0o111)
+    for script in (morning_catchup_script(), boot_catchup_script()):
+        if script.is_file():
+            script.chmod(script.stat().st_mode | 0o111)
 
     crontab_bin = shutil_which("crontab")
     if not crontab_bin:
@@ -611,6 +627,9 @@ def _run_scheduled_inner(
         attach_mss_tsp_arbitration_to_manifest(result)
     except Exception:
         pass
+    if job == "morning" and _truthy_env("AGENT_REACH_MORNING_CATCHUP"):
+        result["morning_catchup"] = True
+        result.setdefault("schedule_meta", {})["morning_catchup"] = True
     manifest_path = save_run_manifest(job, result, feishu=feishu, duration_ms=duration_ms)
     result["manifest_path"] = str(manifest_path)
     return result

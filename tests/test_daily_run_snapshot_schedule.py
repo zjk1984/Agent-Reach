@@ -339,11 +339,13 @@ class TestSchedule:
         assert "daily-run-local-cron.sh midday" in block
         assert "S12/13" in block
         assert "daily-run-boot-catchup.sh" in block
+        assert "daily-run-morning-catchup.sh" in block
+        assert "5 8 * * 1-5" in block
         assert "@reboot sleep" in block
         assert block.count("daily-run-local-cron.sh intraday") == 11
 
     def test_default_entries_count(self):
-        assert len(default_entries()) == 17  # premarket + morning + midday + 10 scans + close + weekly + forecast + alerts
+        assert len(default_entries()) == 18  # + morning 08:05 catchup
 
     @patch("agent_reach.daily_run.trade_calendar.is_trading_day", return_value=(True, ""))
     @patch("agent_reach.daily_run.midday_harness.apply_midday_harness_refinement")
@@ -564,6 +566,58 @@ class TestRunManifest:
         path = save_run_manifest("morning", {"job": "morning"})
         assert path.parent.name == "2026-07-11"
         assert path.name.startswith("morning_0730")
+
+
+class TestMorningCatchup:
+    def test_needs_morning_catchup_outside_window(self):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        from agent_reach.daily_run.morning_catchup import needs_morning_catchup
+
+        sh = ZoneInfo("Asia/Shanghai")
+        ok, reason = needs_morning_catchup(now=datetime(2026, 8, 24, 8, 4, tzinfo=sh))
+        assert ok is False
+        assert "outside catchup window" in reason
+
+    def test_morning_manifest_needs_catchup_on_error(self):
+        from agent_reach.daily_run.morning_catchup import morning_manifest_needs_catchup
+
+        need, reason = morning_manifest_needs_catchup(
+            {"payload": {"error": "D1 timeout", "job": "morning"}}
+        )
+        assert need is True
+        assert "error" in reason
+
+    def test_morning_manifest_needs_catchup_ok(self):
+        from agent_reach.daily_run.morning_catchup import morning_manifest_needs_catchup
+
+        need, _reason = morning_manifest_needs_catchup(
+            {
+                "payload": {
+                    "evaluation": {"audit": {"passed": True}, "report": {}},
+                    "snapshot": {"quote_fetch": {"coverage_pct": 95.0}},
+                }
+            }
+        )
+        assert need is False
+
+    @patch("agent_reach.daily_run.morning_catchup.has_morning_catchup_today", return_value=False)
+    @patch("agent_reach.daily_run.morning_catchup.primary_morning_manifest_today")
+    @patch("agent_reach.daily_run.trade_calendar.is_trading_day", return_value=(True, "ok"))
+    def test_needs_morning_catchup_when_audit_fails(self, _trading, mock_primary, _already):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        from agent_reach.daily_run.morning_catchup import needs_morning_catchup
+
+        mock_primary.return_value = {
+            "payload": {"evaluation": {"audit": {"passed": False}}},
+        }
+        sh = ZoneInfo("Asia/Shanghai")
+        ok, reason = needs_morning_catchup(now=datetime(2026, 8, 24, 8, 5, tzinfo=sh))
+        assert ok is True
+        assert "audit failed" in reason
 
 
 class TestBootCatchup:

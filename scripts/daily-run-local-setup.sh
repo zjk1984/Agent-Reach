@@ -62,6 +62,7 @@ fi
 
 chmod +x "${REPO_ROOT}/scripts/daily-run-local-cron.sh"
 chmod +x "${REPO_ROOT}/scripts/daily-run-boot-catchup.sh"
+chmod +x "${REPO_ROOT}/scripts/daily-run-morning-catchup.sh"
 chmod +x "${REPO_ROOT}/scripts/60s-local-setup.sh"
 chmod +x "${REPO_ROOT}/scripts/60s-reboot-start.sh"
 chmod +x "${REPO_ROOT}/scripts/enable-team-first.sh"
