@@ -260,6 +260,67 @@ def load_run_manifests_for_range(
     return records
 
 
+def infer_schedule_exit(record: dict[str, Any]) -> int:
+    """Map a run manifest to cron/CLI exit semantics (0 ok, 1 failed)."""
+    payload = record.get("payload")
+    if payload is None or not isinstance(payload, dict):
+        payload = record
+    if payload.get("error"):
+        return 1
+    if payload.get("skipped"):
+        if payload.get("guard") == "trade_date_backfill":
+            return 1
+        return 0
+    return 0
+
+
+def list_job_manifest_records(
+    job: str,
+    *,
+    day: Optional[date] = None,
+) -> list[dict[str, Any]]:
+    """On-disk manifests for one job on a Shanghai session day (filename order)."""
+    session = day or today_shanghai()
+    out_dir = runs_dir() / session.isoformat()
+    if not out_dir.is_dir():
+        return []
+    rows: list[dict[str, Any]] = []
+    for path in sorted(out_dir.glob(f"{job}_*.json")):
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        if isinstance(record, dict):
+            record = dict(record)
+            record["_path"] = str(path)
+            record.setdefault("date", session.isoformat())
+            rows.append(record)
+    return rows
+
+
+def latest_job_manifest_record(
+    job: str,
+    *,
+    day: Optional[date] = None,
+) -> Optional[dict[str, Any]]:
+    rows = list_job_manifest_records(job, day=day)
+    if not rows:
+        return None
+    return rows[-1]
+
+
+def canonical_schedule_exit(
+    job: str,
+    *,
+    day: Optional[date] = None,
+) -> Optional[int]:
+    """Exit code implied by the latest on-disk manifest for ``job`` on ``day``."""
+    record = latest_job_manifest_record(job, day=day)
+    if record is None:
+        return None
+    return infer_schedule_exit(record)
+
+
 class StepTimer:
     """Context manager for step timing + logging."""
 

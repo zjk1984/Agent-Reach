@@ -590,6 +590,16 @@ def _run_scheduled_inner(
                     heal_hint = "无可用 checkpoint；请手动 `schedule run close`"
                 elif reason != "auto_resume_close_disabled":
                     heal_hint = f"未续跑：{reason}"
+        if heal_result and heal_result.get("resumed"):
+            resumed = dict(heal_result.get("result") or {})
+            meta = dict(resumed.get("schedule_meta") or {})
+            meta["recovered_from_close_failure"] = True
+            meta["initial_error"] = job_error[:500]
+            resumed["schedule_meta"] = meta
+            logger.warning(
+                "close recovered after failure (auto_resume_close); skipping fail manifest"
+            )
+            return resumed
         notify_scheduled_job_failure(
             job,
             error=job_error,
