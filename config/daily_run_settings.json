@@ -664,6 +664,9 @@
   "confidence_levels": ["高", "中", "低"],
 
   "report": {
+    "card_tier": {
+      "executive_enabled": true
+    },
     "split_push": true,
     "split_push_interval_seconds": 0.3,
     "morning_split_push": true,

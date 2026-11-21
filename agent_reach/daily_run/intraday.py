@@ -1282,18 +1282,48 @@ def run_intraday(
             for w in audit.warnings:
                 warn_lines.append(f"- {w}")
             md_parts.insert(0, "\n".join(warn_lines) + "\n\n---\n\n")
+        from agent_reach.daily_run.executive_block import executive_block_enabled
+
+        exec_enabled = executive_block_enabled(cfg)
         if trade_result:
             tier_line = trade_result.get("decision_closure_line")
-            if tier_line:
+            if tier_line and not exec_enabled:
                 md_parts.append("\n---\n\n" + tier_line)
             md_parts.append("\n---\n\n" + trade_result["markdown"])
             trace_md = trade_result.get("decision_trace_markdown")
             if trace_md and trace_md not in (trade_result.get("markdown") or ""):
                 md_parts.append("\n---\n\n" + trace_md)
         try:
+            from agent_reach.daily_run.executive_block import build_executive_context, prepend_executive_block
             from agent_reach.daily_run.panel.config import prepend_panel_card_header
 
-            full_card_md = prepend_panel_card_header("\n".join(md_parts), settings=cfg)
+            evaluation = scan_result.get("evaluation") or {}
+            report = (evaluation.get("report") or {}) if evaluation else {}
+            snap = enriched if isinstance(enriched, dict) else snapshot
+            anomalies: list[str] = []
+            if skip_reason:
+                anomalies.append(f"skip: {skip_reason}")
+            audit_obj = (evaluation or {}).get("audit") if evaluation else None
+            if audit_obj and not getattr(audit_obj, "passed", True):
+                anomalies.extend(list(getattr(audit_obj, "issues", []) or [])[:2])
+            exec_ctx = build_executive_context(
+                "intraday",
+                settings=cfg,
+                portfolio_summary=snap.get("portfolio") if isinstance(snap, dict) else None,
+                primary_report=report,
+                decision_closure_line=(trade_result or {}).get("decision_closure_line")
+                if exec_enabled
+                else None,
+                anomalies=anomalies,
+            )
+            full_card_md = "\n".join(md_parts)
+            full_card_md = prepend_executive_block(
+                full_card_md,
+                report_type="intraday",
+                settings=cfg,
+                context=exec_ctx,
+            )
+            full_card_md = prepend_panel_card_header(full_card_md, settings=cfg)
             feishu_result = send_card(cfg_obj, card_title, full_card_md, template=tpl)
             steps.append("push")
             from agent_reach.daily_run.report_narrative import push_intraday_narrative_card
