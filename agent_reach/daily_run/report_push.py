@@ -736,6 +736,7 @@ def push_report_sections(
     fallback_title: str,
     template: Optional[str] = None,
     split: bool = True,
+    executive_context: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Push one combined card or multiple category cards to Feishu."""
     from agent_reach.config import Config
@@ -744,6 +745,23 @@ def push_report_sections(
     bodies = [s for s in sections if s.body.strip()]
     if not bodies:
         raise FeishuError("无可推送的报告内容")
+
+    if executive_context:
+        from agent_reach.daily_run.executive_block import (
+            executive_block_enabled,
+            format_executive_block,
+        )
+
+        if executive_block_enabled(settings):
+            block = format_executive_block(
+                report_type=report_type,
+                settings=settings,
+                context=executive_context,
+                split=split,
+                section_count=len(bodies),
+            )
+            if block:
+                bodies[0].body = f"{block}\n\n---\n\n{bodies[0].body.lstrip()}"
 
     try:
         from agent_reach.daily_run.panel.config import prepend_panel_card_header
