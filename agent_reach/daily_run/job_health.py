@@ -299,6 +299,29 @@ def notify_ops_precheck_fail(
         return {"skipped": True, "reason": "feishu_error"}
 
 
+def job_health_aligned_with_manifest_exit(
+    job: str,
+    *,
+    settings: dict[str, Any],
+    jobs: Optional[dict[str, Any]] = None,
+    day: Optional[date] = None,
+) -> tuple[bool, str]:
+    """True when assess_job_health_entry agrees with latest manifest exit (if any today)."""
+    from agent_reach.daily_run.run_manifest import canonical_schedule_exit
+
+    jobs_map = jobs if jobs is not None else ((_load().get("jobs")) or {})
+    assess_ok, assess_detail = assess_job_health_entry(job, settings=settings, jobs=jobs_map)
+    manifest_exit = canonical_schedule_exit(job, day=day)
+    if manifest_exit is None:
+        return True, assess_detail
+    manifest_ok = manifest_exit == 0
+    if assess_ok == manifest_ok:
+        return True, assess_detail
+    if assess_ok and not manifest_ok:
+        return False, f"job_health ok 但当日末次 manifest exit={manifest_exit}（{assess_detail}）"
+    return False, f"job_health 未过但末次 manifest exit=0（{assess_detail}）"
+
+
 def close_has_resumable_checkpoint(*, day: Optional[str] = None) -> bool:
     from agent_reach.daily_run.job_checkpoint import checkpoint_path, list_done_steps, load_checkpoint
 
