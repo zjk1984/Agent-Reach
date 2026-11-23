@@ -1568,21 +1568,27 @@ def prepare_close_run(
     steps.append("verify")
 
     wl_result = None
+    wl_adjust_error: str | None = None
     portfolio_dirty = False
     wl_enabled = is_watchlist_adjust_enabled(cfg)
     if wl_enabled:
-        wl_result = adjust_watchlist(
-            pf_work,
-            snap,
-            cfg,
-            "close",
-            verify=verify_out,
-            sold_codes=collect_intraday_sold_codes(cfg),
-        )
-        if wl_result.applied:
-            pf_work = wl_result.portfolio
-            portfolio_dirty = True
-            steps.append("watchlist_adjust")
+        try:
+            wl_result = adjust_watchlist(
+                pf_work,
+                snap,
+                cfg,
+                "close",
+                verify=verify_out,
+                sold_codes=collect_intraday_sold_codes(cfg),
+            )
+        except Exception as exc:
+            wl_adjust_error = str(exc)
+            logger.exception("watchlist adjust failed during prepare_close_run")
+        else:
+            if wl_result.applied:
+                pf_work = wl_result.portfolio
+                portfolio_dirty = True
+                steps.append("watchlist_adjust")
 
     code_review_result = run_close_code_review(
         portfolio=pf_work,
@@ -1602,14 +1608,29 @@ def prepare_close_run(
         steps.append("portfolio_save")
 
     from agent_reach.daily_run.watchlist_manager import watchlist_adjust_manifest_summary
+    from agent_reach.daily_run.watchlist_adjust_manifest import record_watchlist_adjust_for_manifest
 
-    wl_summary = watchlist_adjust_manifest_summary(wl_result, enabled=wl_enabled)
+    wl_summary = watchlist_adjust_manifest_summary(
+        wl_result, enabled=wl_enabled, error=wl_adjust_error
+    )
+    wl_adjust_dict = wl_result.to_dict() if wl_result else None
+    if wl_adjust_error and wl_adjust_dict is None:
+        wl_adjust_dict = {
+            "applied": False,
+            "message": wl_summary.get("message") or wl_adjust_error,
+            "changes": [],
+            "error": wl_adjust_error[:500],
+        }
+    record_watchlist_adjust_for_manifest(
+        watchlist_adjust=wl_adjust_dict,
+        watchlist_adjust_summary=wl_summary,
+    )
     return {
         "snapshot": snap,
         "portfolio": pf_work,
         "verify": verify_out,
         "pre_verify": verify_out,
-        "watchlist_adjust": wl_result.to_dict() if wl_result else None,
+        "watchlist_adjust": wl_adjust_dict,
         "watchlist_adjust_summary": wl_summary,
         "code_review": code_review_result.to_dict(),
         "steps": steps,
