@@ -101,7 +101,17 @@ def run_morning_for_symbols(
     from agent_reach.daily_run.berkshire.pipeline import maybe_adjust_watchlist_morning
     from agent_reach.daily_run.snapshot_builder import build_and_save as _build_preview
 
+    from agent_reach.daily_run.watchlist_adjust_manifest import record_watchlist_adjust_for_manifest
+    from agent_reach.daily_run.watchlist_manager import (
+        is_watchlist_adjust_enabled,
+        watchlist_adjust_manifest_summary,
+        watchlist_adjust_result_from_dict,
+    )
+
     watchlist_adjust: dict[str, Any] | None = None
+    watchlist_adjust_summary: dict[str, Any] = watchlist_adjust_manifest_summary(
+        None, enabled=is_watchlist_adjust_enabled(cfg)
+    )
     if targets:
         preview_snap, _ = _build_preview(
             report_type="premarket",
@@ -112,7 +122,20 @@ def run_morning_for_symbols(
         pf, wl_result = maybe_adjust_watchlist_morning(pf, preview_snap, cfg)
         if wl_result is not None:
             watchlist_adjust = wl_result
+            err = wl_result.get("error")
+            if err:
+                watchlist_adjust_summary = watchlist_adjust_manifest_summary(
+                    None, enabled=True, error=str(err)
+                )
+            else:
+                watchlist_adjust_summary = watchlist_adjust_manifest_summary(
+                    watchlist_adjust_result_from_dict(wl_result), enabled=True
+                )
         targets = symbols or resolve_target_symbols(pf, cfg, workflow="morning")
+    record_watchlist_adjust_for_manifest(
+        watchlist_adjust=watchlist_adjust,
+        watchlist_adjust_summary=watchlist_adjust_summary,
+    )
 
     merge_push = _should_merge_push(cfg)
     defer_narrative = _defer_narrative_to_merge(cfg)
@@ -357,6 +380,7 @@ def run_morning_for_symbols(
         "symbol_results": symbol_results,
         "errors": errors,
         "watchlist_adjust": watchlist_adjust,
+        "watchlist_adjust_summary": watchlist_adjust_summary,
         "feishu": feishu_result or (symbol_results[-1]["feishu"] if symbol_results else None),
     }
 
@@ -704,6 +728,15 @@ def run_close_for_symbols(
     pf = load_portfolio()
     targets = symbols or resolve_target_symbols(pf, cfg, workflow="close")
     merge_push = _should_merge_push(cfg)
+    from agent_reach.daily_run.watchlist_manager import (
+        is_watchlist_adjust_enabled,
+        watchlist_adjust_manifest_summary,
+    )
+
+    wl_result = None
+    wl_adjust_summary = watchlist_adjust_manifest_summary(
+        None, enabled=is_watchlist_adjust_enabled(cfg)
+    )
     defer_narrative = _defer_narrative_to_merge(cfg)
     defer_harness_layer_b = _defer_harness_layer_b_to_merge(cfg)
     symbol_results: list[dict[str, Any]] = []
@@ -805,13 +838,6 @@ def run_close_for_symbols(
         )
 
         use_six_cards = close_card_layout_enabled(cfg)
-        wl_result = None
-        from agent_reach.daily_run.watchlist_manager import watchlist_adjust_manifest_summary
-
-        wl_adjust_summary = watchlist_adjust_manifest_summary(
-            None,
-            enabled=is_watchlist_adjust_enabled(cfg),
-        )
         merged: list[ReportSection] = []
         sections_retitle_done = False
         if not use_six_cards:
@@ -860,23 +886,30 @@ def run_close_for_symbols(
             save_portfolio(pf_work)
             sync_snapshot_portfolio(primary_snap, pf_work)
 
-        wl_result = None
+        wl_adjust_error: str | None = None
         wl_enabled = is_watchlist_adjust_enabled(cfg)
         if wl_enabled:
             sync_snapshot_portfolio(primary_snap, pf_work)
-            wl_result = adjust_watchlist(
-                pf_work,
-                primary_snap,
-                cfg,
-                "close",
-                verify=verify_dict,
-                sold_codes=collect_intraday_sold_codes(cfg),
-            )
-            if wl_result.applied:
-                pf_work = wl_result.portfolio
-                save_portfolio(pf_work)
-                sync_snapshot_portfolio(primary_snap, pf_work)
-        wl_adjust_summary = watchlist_adjust_manifest_summary(wl_result, enabled=wl_enabled)
+            try:
+                wl_result = adjust_watchlist(
+                    pf_work,
+                    primary_snap,
+                    cfg,
+                    "close",
+                    verify=verify_dict,
+                    sold_codes=collect_intraday_sold_codes(cfg),
+                )
+            except Exception as exc:
+                wl_adjust_error = str(exc)
+                wl_result = None
+            else:
+                if wl_result.applied:
+                    pf_work = wl_result.portfolio
+                    save_portfolio(pf_work)
+                    sync_snapshot_portfolio(primary_snap, pf_work)
+        wl_adjust_summary = watchlist_adjust_manifest_summary(
+            wl_result, enabled=wl_enabled, error=wl_adjust_error
+        )
 
         from agent_reach.daily_run.berkshire.pipeline import run_close_berkshire
 
@@ -1096,6 +1129,8 @@ def run_close_for_symbols(
 
         clear_checkpoint("close")
 
+    from agent_reach.daily_run.watchlist_adjust_manifest import record_watchlist_adjust_for_manifest
+
     close_payload: dict[str, Any] = {
         "job": "close",
         "symbol_push_mode": symbol_push_mode(cfg),
@@ -1103,9 +1138,12 @@ def run_close_for_symbols(
         "symbol_results": symbol_results,
         "errors": errors,
         "feishu": feishu_result or (symbol_results[-1]["feishu"] if symbol_results else None),
+        "watchlist_adjust_summary": wl_adjust_summary,
     }
-    if merge_push:
-        close_payload["watchlist_adjust_summary"] = wl_adjust_summary
-        if wl_result is not None:
-            close_payload["watchlist_adjust"] = wl_result.to_dict()
+    if wl_result is not None:
+        close_payload["watchlist_adjust"] = wl_result.to_dict()
+    record_watchlist_adjust_for_manifest(
+        watchlist_adjust=close_payload.get("watchlist_adjust"),
+        watchlist_adjust_summary=wl_adjust_summary,
+    )
     return close_payload

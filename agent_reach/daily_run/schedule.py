@@ -625,7 +625,14 @@ def _run_scheduled_inner(
             job, job_error, "failure", settings, consecutive_failures=streak, result=fail_payload
         )
         _attach_manifest_harness_summary(fail_payload)
+        from agent_reach.daily_run.watchlist_adjust_manifest import (
+            attach_watchlist_adjust_to_manifest_payload,
+            clear_watchlist_adjust_manifest_pending,
+        )
+
+        attach_watchlist_adjust_to_manifest_payload(fail_payload)
         save_run_manifest(job, fail_payload, duration_ms=duration_ms)
+        clear_watchlist_adjust_manifest_pending()
         raise
 
     duration_ms = (time.perf_counter() - t0) * 1000
@@ -646,7 +653,14 @@ def _run_scheduled_inner(
     if job == "morning" and _truthy_env("AGENT_REACH_MORNING_CATCHUP"):
         result["morning_catchup"] = True
         result.setdefault("schedule_meta", {})["morning_catchup"] = True
+    from agent_reach.daily_run.watchlist_adjust_manifest import (
+        attach_watchlist_adjust_to_manifest_payload,
+        clear_watchlist_adjust_manifest_pending,
+    )
+
+    attach_watchlist_adjust_to_manifest_payload(result)
     manifest_path = save_run_manifest(job, result, feishu=feishu, duration_ms=duration_ms)
+    clear_watchlist_adjust_manifest_pending()
     result["manifest_path"] = str(manifest_path)
     return result
 

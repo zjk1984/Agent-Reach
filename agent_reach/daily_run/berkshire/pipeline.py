@@ -21,7 +21,15 @@ def maybe_adjust_watchlist_morning(
 
     if not is_watchlist_adjust_enabled(settings):
         return portfolio, None
-    wl = adjust_watchlist(portfolio, snapshot, settings, "morning")
+    try:
+        wl = adjust_watchlist(portfolio, snapshot, settings, "morning")
+    except Exception as exc:
+        return portfolio, {
+            "applied": False,
+            "message": f"观察池调整异常：{exc}",
+            "changes": [],
+            "error": str(exc)[:500],
+        }
     if wl.applied:
         save_portfolio(wl.portfolio)
         return wl.portfolio, wl.to_dict()

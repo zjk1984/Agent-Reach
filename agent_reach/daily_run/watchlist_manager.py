@@ -213,11 +213,32 @@ def _can_remove_watchlist_entry(
     return _watchlist_only_count(pf, held_codes) > target_min
 
 
+def watchlist_adjust_result_from_dict(data: dict[str, Any]) -> WatchlistAdjustResult:
+    changes = [WatchlistChange(**c) for c in (data.get("changes") or []) if isinstance(c, dict)]
+    return WatchlistAdjustResult(
+        applied=bool(data.get("applied")),
+        portfolio={},
+        changes=changes,
+        message=str(data.get("message") or ""),
+        unchanged_reasons=list(data.get("unchanged_reasons") or []),
+    )
+
+
 def watchlist_adjust_manifest_summary(
     result: Optional[WatchlistAdjustResult],
     *,
     enabled: bool = True,
+    error: Optional[str] = None,
 ) -> dict[str, Any]:
+    if error:
+        msg = str(error).strip()[:500] or "观察池调整失败"
+        return {
+            "status": "error",
+            "applied": False,
+            "change_count": 0,
+            "message": msg,
+            "changes": [],
+        }
     if not enabled:
         return {
             "status": "disabled",
