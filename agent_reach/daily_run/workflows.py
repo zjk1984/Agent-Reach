@@ -433,6 +433,8 @@ def run_morning(
                 macro_signals=enriched.get("macro_signals"),
                 news_pulse_markdown=news_pulse_md,
             )
+        from agent_reach.daily_run.executive_block import build_executive_context
+
         feishu_result = push_report_sections(
             sections,
             settings=cfg,
@@ -440,6 +442,12 @@ def run_morning(
             report_type="premarket",
             fallback_title=title or _morning_title(report),
             split=split_push_enabled(cfg, report_kind="morning"),
+            executive_context=build_executive_context(
+                "morning",
+                settings=cfg,
+                portfolio_summary=enriched.get("portfolio"),
+                primary_report=report,
+            ),
         )
         steps.append("push")
         if feishu_result.get("mode") == "split":
@@ -1410,6 +1418,8 @@ def run_close(
             macro_signals=enriched.get("macro_signals"),
             news_pulse_markdown=news_pulse_md,
         )
+        from agent_reach.daily_run.executive_block import build_executive_context
+
         feishu_result = push_report_sections(
             sections,
             settings=cfg,
@@ -1418,6 +1428,14 @@ def run_close(
             fallback_title=title or f"🧠 收盘复盘 · {verify.name or verify.code or '大盘'}",
             template=cfg.get("report", {}).get("feishu_template_verify", "purple"),
             split=split_push_enabled(cfg, report_kind="close"),
+            executive_context=build_executive_context(
+                "close",
+                settings=cfg,
+                portfolio_summary=portfolio_summary_obj.to_dict()
+                if portfolio_summary_obj
+                else None,
+                primary_report=verify_dict,
+            ),
         )
 
     from agent_reach.daily_run.prior_close import save_close_baseline

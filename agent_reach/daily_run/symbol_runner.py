@@ -266,6 +266,9 @@ def run_morning_for_symbols(
             from agent_reach.daily_run.berkshire.news_pulse import append_news_pulse_section
 
             merged = append_news_pulse_section(merged, pf, settings=cfg, workflow="morning")
+            from agent_reach.daily_run.executive_block import build_executive_context
+
+            primary_report = decision_entries[0][2] if decision_entries else {}
             feishu_result = push_report_sections(
                 merged,
                 settings=cfg,
@@ -273,6 +276,12 @@ def run_morning_for_symbols(
                 report_type="premarket",
                 fallback_title="🌅 早盘 · 全持仓",
                 split=split_push_enabled(cfg, report_kind="morning"),
+                executive_context=build_executive_context(
+                    "morning",
+                    settings=cfg,
+                    portfolio_summary=pf,
+                    primary_report=primary_report,
+                ),
             )
         else:
             merged = merge_sections_by_category(
@@ -314,6 +323,9 @@ def run_morning_for_symbols(
             from agent_reach.daily_run.berkshire.news_pulse import append_news_pulse_section
 
             merged = append_news_pulse_section(merged, pf, settings=cfg, workflow="morning")
+            from agent_reach.daily_run.executive_block import build_executive_context
+
+            primary_report = decision_entries[0][2] if decision_entries else {}
             feishu_result = push_report_sections(
                 merged,
                 settings=cfg,
@@ -321,6 +333,12 @@ def run_morning_for_symbols(
                 report_type="premarket",
                 fallback_title="🌅 早盘 · 全持仓",
                 split=split_push_enabled(cfg, report_kind="morning"),
+                executive_context=build_executive_context(
+                    "morning",
+                    settings=cfg,
+                    portfolio_summary=pf,
+                    primary_report=primary_report,
+                ),
             )
 
     if not defer_narrative:
@@ -503,8 +521,29 @@ def run_intraday_for_symbols(
             title = f"📊 盘中 {scan_id} · {len(scan_bodies)}只"
         tpl = cfg.get("report", {}).get("feishu_template_intraday", "blue")
         from agent_reach.integrations.feishu import send_card
+        from agent_reach.daily_run.executive_block import build_executive_context, prepend_executive_block
         from agent_reach.daily_run.panel.config import prepend_panel_card_header
 
+        primary_report: dict[str, Any] = {}
+        closure_line = None
+        for row in ordered_results:
+            inner = (row.get("result") or {}).get("trade") or {}
+            if inner.get("decision_closure_line"):
+                closure_line = inner.get("decision_closure_line")
+            ev = ((row.get("result") or {}).get("scan") or {}).get("evaluation") or {}
+            rep = ev.get("report") or {}
+            if rep and not primary_report:
+                primary_report = rep
+        exec_ctx = build_executive_context(
+            "intraday",
+            settings=cfg,
+            portfolio_summary=pf,
+            primary_report=primary_report,
+            decision_closure_line=closure_line,
+        )
+        body = prepend_executive_block(
+            body, report_type="intraday", settings=cfg, context=exec_ctx
+        )
         body = prepend_panel_card_header(body, settings=cfg)
         feishu_result = send_card(config or Config(), title, body, template=tpl)
         from agent_reach.daily_run.macro_collector import fetch_intraday_xueqiu_cross_alerts
@@ -1032,6 +1071,10 @@ def run_close_for_symbols(
         from agent_reach.daily_run.berkshire.news_pulse import append_news_pulse_section
 
         merged = append_news_pulse_section(merged, pf_work, settings=cfg, workflow="close")
+        from agent_reach.daily_run.executive_block import build_executive_context
+
+        primary_inner = symbol_results[0]["result"] if symbol_results else {}
+        verify_report = (primary_inner.get("verify") or {}) if primary_inner else {}
         feishu_result = push_report_sections(
             merged,
             settings=cfg,
@@ -1040,6 +1083,12 @@ def run_close_for_symbols(
             fallback_title="🧠 收盘复盘 · 全持仓",
             template=cfg.get("report", {}).get("feishu_template_verify", "purple"),
             split=split_push_enabled(cfg, report_kind="close"),
+            executive_context=build_executive_context(
+                "close",
+                settings=cfg,
+                portfolio_summary=portfolio_summary_obj.to_dict(),
+                primary_report=verify_report,
+            ),
         )
 
     if not errors:
