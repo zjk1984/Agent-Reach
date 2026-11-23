@@ -60,7 +60,7 @@ agent-reach daily-run schedule run forecast
 | 时间 | 任务 |
 |------|------|
 | 07:00 | 盘前 S1 扫描 + 飞书（smart 模式推送） |
-| 08:00 | 早盘全量分析 + S2 + 飞书 + 保存基线 |
+| 08:00:30 | 早盘全量分析 + S2 + 飞书 + 保存基线（cron 槽 08:00 + sleep 30s，错开整点 Worker） |
 | **12:30** | **午盘轻分析**：宏观/舆情 refresh + Lookback 锚点 → 飞书（写入 intraday，source=midday） |
 | 09:30–15:00 **11 次**扫描 | 盘中 S3–S15 + 条件调仓 T_n（smart 推送：S1/S2/S12 或调仓时） |
 | 18:00 | 收盘复盘（Team + 曲线 + Exa + 验证 + 预测校准） |
