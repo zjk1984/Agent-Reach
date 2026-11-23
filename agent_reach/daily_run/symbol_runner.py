@@ -218,15 +218,16 @@ def run_morning_for_symbols(
             primary_snap = symbol_results[0]["result"]["snapshot"]
             narrative: dict[str, Any] = {"skipped": True}
             if defer_narrative and decision_entries:
-                from agent_reach.daily_run.report_narrative import (
-                    generate_merged_morning_narrative,
-                    persist_morning_narrative,
+                from agent_reach.daily_run.hot_news_morning_isolation import (
+                    generate_merged_morning_narrative_resilient,
                 )
+                from agent_reach.daily_run.report_narrative import persist_morning_narrative
 
-                narrative = generate_merged_morning_narrative(
+                narrative = generate_merged_morning_narrative_resilient(
                     decision_entries,
                     primary_snapshot=primary_snap,
                     settings=cfg,
+                    doctor_channels=doctor_channels,
                 )
                 symbol_results[0]["result"]["llm_narrative"] = narrative
                 persist_morning_narrative(narrative)
@@ -324,14 +325,17 @@ def run_morning_for_symbols(
                     symbol_count=len(decision_entries),
                 )
             if defer_narrative and decision_entries:
-                from agent_reach.daily_run.report_narrative import generate_merged_morning_narrative
+                from agent_reach.daily_run.hot_news_morning_isolation import (
+                    generate_merged_morning_narrative_resilient,
+                )
                 from agent_reach.daily_run.report_push import append_merged_narrative_section
 
                 primary_snap = symbol_results[0]["result"]["snapshot"]
-                narrative = generate_merged_morning_narrative(
+                narrative = generate_merged_morning_narrative_resilient(
                     decision_entries,
                     primary_snapshot=primary_snap,
                     settings=cfg,
+                    doctor_channels=doctor_channels,
                 )
                 merged = append_merged_narrative_section(
                     merged,

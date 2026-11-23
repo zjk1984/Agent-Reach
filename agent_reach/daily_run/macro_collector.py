@@ -306,23 +306,27 @@ def collect_macro_context(
         hot_summary = ""
         hot_headline = ""
         try:
-            from agent_reach.daily_run.hot_news_collector import collect_hot_news
+            from agent_reach.daily_run.hot_news_morning_isolation import (
+                collect_hot_news_isolated,
+                hot_news_source_from_result,
+            )
 
-            hot = collect_hot_news(portfolio, settings=cfg)
+            hot, hot_meta = collect_hot_news_isolated(
+                portfolio,
+                settings=cfg,
+                workflow=workflow,
+            )
             if hot.items:
                 signals["hot_topics"] = hot.items
                 signals["hot_topics_matched"] = hot.matched
                 signals["hot_topic_hits"] = len(hot.matched)
                 hot_summary = hot.summary
                 hot_headline = hot.headline_summary
-                sources["hot_news"] = {
-                    "summary": hot.summary or hot.headline_summary,
-                    "backend": "60s_api",
-                    "platforms": hot.platforms_ok,
-                    "text_feed": hot.text_feed,
-                }
-                if hot.text_feed:
-                    sources["hot_news"]["detail"] = hot.text_feed[:2000]
+            src = hot_news_source_from_result(hot, hot_meta)
+            if src:
+                sources["hot_news"] = src
+                if hot_meta.get("status") == "degraded":
+                    signals["hot_news_degraded"] = True
         except Exception:
             pass
 
