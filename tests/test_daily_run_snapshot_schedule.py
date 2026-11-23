@@ -333,7 +333,9 @@ class TestSchedule:
         assert "Asia/Shanghai" in block
         assert "daily-run-local-cron.sh" in block
         assert "SHELL=/bin/bash" in block
+        assert "sleep 30 &&" in block
         assert "daily-run-local-cron.sh morning" in block
+        assert "8:00:30" in block
         assert "daily-run-local-cron.sh close" in block
         assert "0 18 * * 1-5" in block
         assert "daily-run-local-cron.sh midday" in block

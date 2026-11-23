@@ -26,9 +26,11 @@ except ImportError:  # pragma: no cover
 MARKER_BEGIN = "# agent-reach daily-run schedule BEGIN"
 MARKER_END = "# agent-reach daily-run schedule END"
 BOOT_CATCHUP_SLEEP_SECONDS = 60
+# Avoid colliding with Private Worker / other :00 cron at 08:00 (cron has minute granularity).
+MORNING_CRON_STAGGER_SECONDS = 30
 _SH_TZ = ZoneInfo("Asia/Shanghai")
 
-# 13 scans/day: S1 07:00 + S2 08:00 + midday 12:30 + S3–S12 session (A-share aligned)
+# 13 scans/day: S1 07:00 + S2 08:00:30 + midday 12:30 + S3–S12 session (A-share aligned)
 # Morning T slots: S4 09:45 / S5 10:15 / S6 10:45 / S7 11:20 (inside 09:30–11:30)
 # Afternoon T slots: S8 13:05 / S9 13:35 / S10 14:10 / S11 14:40 (inside 13:00–14:57)
 INTRADAY_SCAN_TIMES: list[tuple[str, str]] = [
@@ -179,8 +181,12 @@ def _cron_run_cmd(job: str) -> str:
     """Cron-safe command: prefer local wrapper script over bare CLI name."""
     script = local_cron_script()
     if script.is_file():
-        return f"{script} {job}"
-    return f"{_agent_reach_cmd()} daily-run schedule run {job}"
+        inner = f"{script} {job}"
+    else:
+        inner = f"{_agent_reach_cmd()} daily-run schedule run {job}"
+    if job == "morning" and MORNING_CRON_STAGGER_SECONDS > 0:
+        return f"sleep {MORNING_CRON_STAGGER_SECONDS} && {inner}"
+    return inner
 
 
 def default_entries() -> list[CronEntry]:
@@ -193,7 +199,7 @@ def default_entries() -> list[CronEntry]:
     )
     entries = [
         CronEntry("0", "7", "1-5", _cron_run_cmd("intraday"), "daily-run 盘前 S1 7:00"),
-        CronEntry("0", "8", "1-5", _cron_run_cmd("morning"), "daily-run 早盘 8:00"),
+        CronEntry("0", "8", "1-5", _cron_run_cmd("morning"), "daily-run 早盘 8:00:30"),
         CronEntry("5", "8", "1-5", catchup_cmd, "daily-run 早盘补跑 8:05 (L1-B)"),
         CronEntry("30", "12", "1-5", _cron_run_cmd("midday"), "daily-run 午盘分析 12:30"),
     ]
