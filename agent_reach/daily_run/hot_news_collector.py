@@ -117,7 +117,12 @@ def collect_hot_news(
     keywords = portfolio_keywords(portfolio, settings) if match_kw else []
 
     out = HotNewsResult()
-    base_url = _resolve_base_url(base_urls, timeout=timeout)
+    local_probe = cfg.get("local_probe_timeout_seconds")
+    base_url = _resolve_base_url(
+        base_urls,
+        timeout=timeout,
+        local_probe_timeout=int(local_probe) if local_probe is not None else None,
+    )
     if not base_url:
         logger.debug("hot_news: no reachable 60s base_url in {}", base_urls)
         return out
@@ -180,13 +185,28 @@ def render_hot_news_text(result: HotNewsResult, *, max_lines: int = 12) -> str:
     return "\n".join(lines).strip()
 
 
-def _resolve_base_url(base_urls: list[str], *, timeout: int) -> Optional[str]:
+def _is_local_base_url(url: str) -> bool:
+    lowered = str(url or "").lower()
+    return "127.0.0.1" in lowered or "localhost" in lowered
+
+
+def _resolve_base_url(
+    base_urls: list[str],
+    *,
+    timeout: int,
+    local_probe_timeout: Optional[int] = None,
+) -> Optional[str]:
     health_paths = ("/health", "/v2/health")
     for base in base_urls:
         base = base.rstrip("/")
+        probe_timeout = (
+            int(local_probe_timeout)
+            if local_probe_timeout is not None and _is_local_base_url(base)
+            else timeout
+        )
         for hp in health_paths:
             try:
-                r = requests.get(f"{base}{hp}", timeout=min(timeout, 5))
+                r = requests.get(f"{base}{hp}", timeout=min(probe_timeout, 5))
                 if r.status_code == 200:
                     return base
             except Exception:
@@ -196,7 +216,7 @@ def _resolve_base_url(base_urls: list[str], *, timeout: int) -> Optional[str]:
             r = requests.get(
                 f"{base}/v2/60s",
                 params={"encoding": "json"},
-                timeout=timeout,
+                timeout=probe_timeout,
             )
             if r.status_code == 200:
                 return base

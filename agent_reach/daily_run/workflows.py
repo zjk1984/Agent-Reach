@@ -352,9 +352,22 @@ def run_morning(
         )
     morning_narrative: dict[str, Any] = {"skipped": True, "reason": "deferred"}
     if not skip_narrative:
-        from agent_reach.daily_run.report_narrative import generate_morning_narrative
+        from agent_reach.daily_run.hot_news_morning_isolation import (
+            generate_morning_narrative_resilient,
+        )
 
-        morning_narrative = generate_morning_narrative(enriched, report, settings=cfg)
+        morning_narrative = generate_morning_narrative_resilient(
+            enriched,
+            report,
+            settings=cfg,
+            doctor_channels=doctor_channels,
+        )
+        if morning_narrative.get("degraded"):
+            _workflow_harness_error(
+                morning_harness_errors,
+                "morning_narrative",
+                RuntimeError(str(morning_narrative.get("degraded_reason") or "degraded")),
+            )
     push_harness_summary = _harness_push_summary_enabled(cfg, report_kind="morning")
     harness_md = ""
     if push_harness_summary:

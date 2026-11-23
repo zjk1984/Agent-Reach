@@ -110,15 +110,15 @@ class TestCollectHotNews:
 
 
 class TestMacroIntegration:
-    @patch("agent_reach.daily_run.hot_news_collector.collect_hot_news")
+    @patch("agent_reach.daily_run.hot_news_morning_isolation.collect_hot_news_isolated")
     @patch("agent_reach.daily_run.macro_collector._fetch_xueqiu_hot_stocks", return_value=[])
     @patch("agent_reach.daily_run.macro_collector._fetch_index_change", return_value=0.5)
     @patch("agent_reach.daily_run.macro_collector._fetch_northbound_flow", return_value=12.0)
     @patch("agent_reach.daily_run.macro_collector._fetch_xueqiu_sentiment", return_value=("", [], []))
-    def test_macro_includes_hot_news(self, mock_xq, mock_nb, mock_idx, mock_hot_stocks, mock_hot_news):
+    def test_macro_includes_hot_news(self, mock_xq, mock_nb, mock_idx, mock_hot_stocks, mock_hot_iso):
         from agent_reach.daily_run.macro_collector import collect_macro_context
 
-        mock_hot_news.return_value = HotNewsResult(
+        hot = HotNewsResult(
             items=[{"title": "芯片", "platform": "weibo"}],
             matched=[{"title": "芯片", "platform": "weibo"}, {"title": "存储", "platform": "60s"}],
             daily_headlines=["宏观要闻"],
@@ -127,6 +127,7 @@ class TestMacroIntegration:
             text_feed="feed",
             platforms_ok=["60s", "weibo"],
         )
+        mock_hot_iso.return_value = (hot, {"status": "ok"})
         pf = {"mss_breakdown": {"fx": 50, "flow": 50, "global": 50, "sentiment": 50}}
         ctx = collect_macro_context(pf, settings=load_settings())
         assert "hot_news" in ctx["sources"]

@@ -1006,6 +1006,12 @@
       "mode": "native",
       "host_port": 8787,
       "repo_url": "https://github.com/vikiboss/60s.git"
+    },
+    "morning_isolation": {
+      "enabled": true,
+      "skip_local_when_native_down": true,
+      "local_probe_timeout_seconds": 2,
+      "degraded_on_empty": true
     }
   },
 

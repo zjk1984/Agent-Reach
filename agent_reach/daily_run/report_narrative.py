@@ -694,6 +694,7 @@ def build_morning_context(
         macro_signals=macro_signals,
         code=code or None,
     )
+    doctor_warns = list(snapshot.get("doctor_morning_warnings") or [])
     ctx = {
         "job": "morning",
         "portfolio_scope": "symbol",
@@ -716,6 +717,11 @@ def build_morning_context(
         "mss_breakdown": snapshot.get("mss_breakdown") or {},
         "invalidation": (report.get("invalidation") or "")[:120],
     }
+    if doctor_warns:
+        ctx["doctor_warnings"] = doctor_warns
+    hot_src = (snapshot.get("sources") or {}).get("hot_news") or {}
+    if isinstance(hot_src, dict) and hot_src.get("status") == "degraded":
+        ctx["hot_news_degraded"] = str(hot_src.get("summary") or "")[:100]
     _attach_berkshire_context(ctx, snapshot, report, settings=settings)
     return ctx
 
@@ -903,7 +909,9 @@ def build_merged_morning_context(
         snapshot=primary_snapshot,
         macro_signals=macro_signals,
     )
-    return {
+    doctor_warns = list((primary_snapshot or {}).get("doctor_morning_warnings") or [])
+    hot_src = ((primary_snapshot or {}).get("sources") or {}).get("hot_news") or {}
+    merged_ctx: dict[str, Any] = {
         "job": "morning",
         "portfolio_scope": "merged",
         "symbol_count": len(symbols),
@@ -916,6 +924,11 @@ def build_merged_morning_context(
         "portfolio_hot_post_summary": portfolio_hot_post_summary(macro_signals),
         **supplements,
     }
+    if doctor_warns:
+        merged_ctx["doctor_warnings"] = doctor_warns
+    if isinstance(hot_src, dict) and hot_src.get("status") == "degraded":
+        merged_ctx["hot_news_degraded"] = str(hot_src.get("summary") or "")[:100]
+    return merged_ctx
 
 
 def _merged_morning_deterministic(ctx: dict[str, Any]) -> dict[str, Any]:
