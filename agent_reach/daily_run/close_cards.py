@@ -226,10 +226,20 @@ def _risk_summary(
     return "风控：按 MSS / macro_veto 纪律执行，无额外阻断"
 
 
+def _ledger_enriched_map(ctx: CloseCardContext) -> dict[str, dict[str, Any]]:
+    if not ctx.primary_snapshot:
+        return {}
+    from agent_reach.daily_run.symbols import build_enriched_symbols
+
+    return build_enriched_symbols(ctx.primary_snapshot)
+
+
 def _collect_symbol_rows(
     symbol_results: list[dict[str, Any]],
     portfolio_summary: dict[str, Any],
 ) -> list[dict[str, Any]]:
+    from agent_reach.daily_run.quote_coverage import holding_close_mark_price
+
     rows: list[dict[str, Any]] = []
     seen: set[str] = set()
     holdings = {
@@ -255,11 +265,15 @@ def _collect_symbol_rows(
         watch = watchlist.get(code) or {}
         shares = int(holding.get("shares") or 0)
         role = "持仓" if shares > 0 else "观察池"
+        mark_px = holding_close_mark_price(holding) if shares > 0 else None
         rows.append(
             {
                 "code": code,
                 "name": entry.get("name") or snap.get("name") or holding.get("name") or code,
-                "price": holding.get("price") or snap.get("price") or verify.get("price_current"),
+                "price": mark_px
+                or holding.get("price")
+                or snap.get("price")
+                or verify.get("price_current"),
                 "change_pct": holding.get("change_pct") if holding.get("change_pct") is not None else snap.get("change_pct"),
                 "mss": snap.get("mss_final") or verify.get("mss_current"),
                 "verdict": verify.get("verdict_current") or snap.get("verdict"),
@@ -275,11 +289,12 @@ def _collect_symbol_rows(
         if code in seen:
             continue
         seen.add(code)
+        mark_px = holding_close_mark_price(holding)
         rows.append(
             {
                 "code": code,
                 "name": holding.get("name") or code,
-                "price": holding.get("price"),
+                "price": mark_px or holding.get("price"),
                 "change_pct": holding.get("change_pct"),
                 "mss": None,
                 "verdict": "—",
@@ -459,9 +474,10 @@ def render_holdings_ledger_markdown_from_summary(
     total_label: str = "收盘净值",
     watchlist_hint: str = "见「持仓详情」卡，非本台账",
     enriched: Optional[dict[str, dict[str, Any]]] = None,
+    settings: Optional[dict[str, Any]] = None,
 ) -> str:
     pf = portfolio_summary or {}
-    ledger_rows = collect_holdings_ledger_rows(pf, enriched=enriched)
+    ledger_rows = collect_holdings_ledger_rows(pf, enriched=enriched, settings=settings)
     lines: list[str] = []
     if as_of:
         lines.append(f"- **{as_of}**")
@@ -518,7 +534,12 @@ def render_holdings_ledger_markdown_from_summary(
 
 
 def render_holdings_ledger_markdown(ctx: CloseCardContext) -> str:
-    return render_holdings_ledger_markdown_from_summary(ctx.portfolio_summary or {})
+    enriched = _ledger_enriched_map(ctx)
+    return render_holdings_ledger_markdown_from_summary(
+        ctx.portfolio_summary or {},
+        enriched=enriched or None,
+        settings=ctx.settings,
+    )
 
 
 def render_holdings_detail_markdown(ctx: CloseCardContext) -> str:
