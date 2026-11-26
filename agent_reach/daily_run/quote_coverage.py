@@ -75,22 +75,15 @@ def symbol_has_live_quote(row: dict[str, Any], enriched: dict[str, dict[str, Any
     price = merged.get("price")
     if price is None:
         return False
-    if merged.get("quote_source") == "cost_fallback":
-        cost = merged.get("cost")
-        if cost is not None and float(cost) == float(price):
-            return False
     cost = merged.get("cost")
     if cost is not None and float(cost) == float(price):
-        source = str(merged.get("quote_source") or merged.get("source") or "").strip()
-        if not source or source in {"cost_fallback"}:
-            return False
+        # Never treat average cost as a live mark, even if a stale row still carries
+        # a named quote_source (regression: 海能达/京东方 台账收盘=成本 on Feishu).
+        return False
     source = str(merged.get("quote_source") or merged.get("source") or "").strip()
     if source and source not in {"cost_fallback"}:
         return True
     if merged.get("change_pct") is not None:
-        cost = merged.get("cost")
-        if cost is not None and float(cost) == float(price):
-            return False
         return True
     return True
 
